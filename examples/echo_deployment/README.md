@@ -2,11 +2,11 @@
 
 A controller, one runner offering an `echo` operative, and a message that goes
 in and comes back. The runner is the standalone Python hello world in
-[`sdk/python/examples/echo`](../../../sdk/python/examples/echo), and this folder
+[`examples/echo`](../echo), and this folder
 is the deployment around it.
 
 This is the same `echo` the guides build by hand in
-[`docs/guides/runner_deployment.md`](../../../docs/guides/runner_deployment.md).
+[`docs/guides/runner_deployment.md`](../../../../docs/guides/runner_deployment.md).
 Running it here first is the fast way to see the pieces move; the guide is
 where you learn what each one is.
 
@@ -54,7 +54,7 @@ and the first run becomes immediate.
 ## Without Docker
 
 Against a controller you are already running, follow the README in
-[`sdk/python/examples/echo`](../../../sdk/python/examples/echo): the same
+[`examples/echo`](../echo): the same
 `flz operative start` and `flz operative send` as above then apply.
 
 **Do not background it with its standard input closed.** The SDK treats end of

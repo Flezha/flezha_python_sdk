@@ -27,9 +27,9 @@ services:
 
   runner:
     build:
-      # The repository root: the wheel is built from this checkout's sources.
-      context: ../../..
-      dockerfile: examples/python/echo/Dockerfile
+      # The package root: the wheel is built from this checkout's sources.
+      context: ../..
+      dockerfile: examples/echo_deployment/Dockerfile
     depends_on:
       controller:
         # The image's own healthcheck is `flz boot await`, so this waits for a

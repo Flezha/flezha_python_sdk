@@ -70,6 +70,9 @@ python-source = "src"
 # The wrapper's own name for the tier, which forwards to the veneer's.
 features = ["python-extension"]
 include = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+# The wheel's module is the one this build produced. A module a checkout holds
+# from a release, and the bytecode a local run leaves, never ride along.
+exclude = ["src/flezha/flz_core_ffi*.so", "src/flezha/flz_core_ffi*.pyd", "**/__pycache__/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

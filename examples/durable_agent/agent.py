@@ -29,8 +29,10 @@ What each piece is doing, and why it is not the obvious thing:
 
 Run it against a live controller with::
 
-    scripts/build-python-sdk.sh
-    sdk/python/.venv/bin/python examples/python/durable_agent/agent.py
+    .venv/bin/python examples/durable_agent/agent.py
+
+from the package root, once `.venv` holds the package: `scripts/ci.sh` makes it
+in this repository, `scripts/build-python-sdk.sh` in the core's.
 """
 
 from __future__ import annotations

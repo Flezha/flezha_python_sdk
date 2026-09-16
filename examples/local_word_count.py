@@ -1,7 +1,9 @@
 """The two-procedure word count, run in this process with no controller.
 
-    scripts/build-python-sdk.sh
-    sdk/python/.venv/bin/python examples/python/local_word_count.py
+    .venv/bin/python examples/local_word_count.py
+
+from the package root, once `.venv` holds the package: `scripts/ci.sh` makes it
+in this repository, `scripts/build-python-sdk.sh` in the core's.
 
 `split` and `Tally` are ordinary procedures with nothing local-mode about
 them: the same declaration deploys against a controller unchanged. What local

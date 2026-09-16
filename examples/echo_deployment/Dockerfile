@@ -1,4 +1,4 @@
-# The echo runner: the three files of sdk/python/examples/echo, and the SDK
+# The echo runner: the three files of examples/echo, and the SDK
 # they need.
 #
 # Two stages, because the flezha wheel is BUILT here rather than installed.
@@ -11,7 +11,7 @@
 # interpreter, so the build stage's Python version does not have to match the
 # runtime image's.
 #
-# Build context is the repository root, because the wheel is built from this
+# Build context is the package root, because the wheel is built from this
 # checkout's own sources. See compose.yaml.
 
 FROM rust:1-slim AS wheel
@@ -27,8 +27,7 @@ WORKDIR /src
 COPY . .
 
 # `python-abi3` is what makes one wheel serve every supported interpreter.
-RUN cd sdk/python \
- && /opt/build/bin/maturin build --release --out /wheels \
+RUN /opt/build/bin/maturin build --release --out /wheels \
       --features python-extension,python-abi3
 
 
@@ -41,7 +40,7 @@ RUN useradd --create-home --uid 1000 runner
 COPY --from=wheel /wheels/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl && rm -f /tmp/*.whl
 
-COPY sdk/python/examples/echo/*.py /app/
+COPY examples/echo/*.py /app/
 
 USER runner
 WORKDIR /app

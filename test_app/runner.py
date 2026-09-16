@@ -22,7 +22,7 @@ from pathlib import Path
 
 # The SDK from this checkout, so the app runs against what was just built
 # rather than against whatever is installed.
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "sdk" / "python" / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import conformance

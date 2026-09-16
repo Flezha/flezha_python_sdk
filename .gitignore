@@ -1,0 +1,18 @@
+# The compiled veneer, installed here from a release by scripts/fetch-core.sh
+# (or by the core's own build script) so a checkout imports it exactly as the
+# wheel does.
+src/flezha/flz_core_ffi*.so
+src/flezha/flz_core_ffi*.pyd
+# The wrapper crate's build output.
+native/target/
+__pycache__/
+# If you run "pytest --cov", the coverage data file ends up here.
+.coverage
+.pytest_cache/
+.venv/
+dist/
+*.egg-info/
+# Fetched from a core release and checked against its manifest: the fake
+# controller, and the contract set the fixture tests resolve against.
+/.core/
+/contract/

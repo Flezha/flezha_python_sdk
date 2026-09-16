@@ -10,9 +10,8 @@ from __future__ import annotations
 import pytest
 
 import flezha
-from flezha.testing import ProcedureTestHarness
-
 from agent import Conversation, agent, durable_agent
+from flezha.testing import ProcedureTestHarness
 
 
 def harness() -> ProcedureTestHarness[Conversation]:

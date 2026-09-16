@@ -42,11 +42,10 @@ and defaults to `default`: `.venv/bin/python runner.py my_app`.
 
 ## Building from a checkout
 
-The package is not on PyPI yet. From the repository root, build a wheel for
+The package is not on PyPI yet. From the package root, build a wheel for
 this platform once:
 
 ```sh
-cd sdk/python
 pip install "maturin>=1.9,<2.0"
 maturin build --release --out dist --features python-extension,python-abi3
 ```
@@ -69,5 +68,5 @@ Once the package is published, the step goes away.
 [`docs/guides/runner_deployment.md`](../../../../docs/guides/runner_deployment.md)
 walks through what each of the three parts is and why the split is the way it
 is. [`docs/sdk/python_sdk.md`](../../../../docs/sdk/python_sdk.md) covers the
-rest of the SDK. [`examples/python/echo`](../../../../examples/python/echo)
+rest of the SDK. [`examples/echo_deployment`](../echo_deployment)
 starts a controller and this runner together with Docker.
