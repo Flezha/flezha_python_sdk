@@ -16,3 +16,5 @@ dist/
 # controller, and the contract set the fixture tests resolve against.
 /.core/
 /contract/
+# The tag in native/Cargo.toml decides the core's commit; a lock would pin it a second time.
+/native/Cargo.lock
