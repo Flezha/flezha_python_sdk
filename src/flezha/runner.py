@@ -33,6 +33,7 @@ from .executor import build as build_executor
 from .logger import logger
 from .native import ACTIVATION_SCHEMA_VERSION, Core, build_tier, load_extension
 from .operative import Operative
+from .procedure import Procedure
 
 __all__ = ["Runner", "create_runner", "ACTIVATION_SCHEMA_VERSION"]
 
@@ -45,6 +46,24 @@ _STDIN_EOF_GRACE_MS = 5_000
 #: connection and a connection lives in one process. Any number of unstarted
 #: runners may exist.
 _started_slot = threading.Lock()
+
+
+def _operative_of(value: Operative | Procedure[Any, Any]) -> Operative:
+    """The operative a registration call was handed.
+
+    An :class:`Operative` is itself; a short-form procedure carries the one it
+    generates. A procedure with no `sink` generates none, and saying so here is
+    what keeps the refusal at the call the author wrote.
+    """
+    if isinstance(value, Operative):
+        return value
+    generated = value.operative if isinstance(value, Procedure) else None
+    if generated is None:
+        raise FlezhaError(
+            f"`{getattr(value, 'name', value)}` is a procedure with no `sink`, so it declares no "
+            f"operative; register the operative that wires it, or declare a `sink` on it"
+        )
+    return generated
 
 
 class Runner:
@@ -73,29 +92,22 @@ class Runner:
         """The factory ids this runner currently declares."""
         return self._registry.ids() if self._started else [o.factory_id for o in self._operatives]
 
-    def define_stream(self, operative: Operative) -> Runner:
-        """Register a stream operative type.
+    def register_factory(self, operative: Operative | Procedure[Any, Any]) -> Runner:
+        """Register an operative type of either kind, or a short-form procedure.
 
+        The kind is read from what is handed in, never named by the call.
         Legal both before and after :meth:`start`; a post-start declaration
         reaches the core immediately and the controller at the next bind.
         """
-        return self._define(operative)
+        return self._define(_operative_of(operative))
 
-    def define_workflow(self, operative: Operative) -> Runner:
-        """Register a workflow operative type.
-
-        The same registration as a stream, and deliberately the same code: what
-        a class declares is read from the class, so the two names are for the
-        reader rather than for the runner.
-        """
-        return self._define(operative)
-
-    def define_modules(self, *modules: str) -> Runner:
+    def register_modules(self, *modules: str) -> Runner:
         """Import the named modules and register everything they declare.
 
-        No implicit package scanning and no filesystem discovery: the modules
-        are named, and one that cannot be imported says so with the original
-        error chained.
+        Every :class:`~flezha.operative.Operative` the module holds, and the
+        operative every short-form procedure in it carries. No implicit package
+        scanning and no filesystem discovery: the modules are named, and one
+        that cannot be imported says so with the original error chained.
         """
         for name in modules:
             try:
@@ -108,10 +120,16 @@ class Runner:
             for value in vars(module).values():
                 if isinstance(value, Operative):
                     self._define(value)
+                elif isinstance(value, Procedure) and value.operative is not None:
+                    self._define(value.operative)
         return self
 
-    def remove_operative(self, factory_id: str) -> Runner:
-        """Undeclare a type. Refuses one with live instances, and one never declared."""
+    def unregister_factory(self, operative: Operative | Procedure[Any, Any]) -> Runner:
+        """Undeclare a type — the inverse of :meth:`register_factory`, taking what it took.
+
+        Refuses one with live instances, and one never declared.
+        """
+        factory_id = _operative_of(operative).factory_id
         if not any(o.factory_id == factory_id for o in self._operatives):
             raise FlezhaError(f"no operative type `{factory_id}` is declared on this runner")
         if self._started:
@@ -287,7 +305,8 @@ class Runner:
     def _define(self, operative: Operative) -> Runner:
         if any(o.factory_id == operative.factory_id for o in self._operatives):
             raise FlezhaError(
-                f"duplicate factory id `{operative.factory_id}`: a runner declares each once"
+                f"DuplicateFactoryId: `{operative.factory_id}` is already declared on this "
+                f"runner; a runner declares each factory id once"
             )
         self._operatives.append(operative)
         if self._started:
@@ -327,7 +346,7 @@ class Runner:
 
 
 def create_runner(namespace: str) -> Runner:
-    """Start here: ``flezha.create_runner("default").define_stream(op).run()``.
+    """Start here: ``flezha.create_runner("default").register_factory(op).run()``.
 
     Creating a runner connects nothing, claims no slot and spawns no thread.
     """

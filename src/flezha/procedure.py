@@ -90,6 +90,11 @@ class Procedure(Generic[I, O]):
     __slots__ = (
         "name",
         "handler",
+        "kind",
+        "sink",
+        "entry",
+        "entry_codec",
+        "_operative",
         "clock",
         "entity_keys",
         "dynamic",
@@ -132,6 +137,10 @@ class Procedure(Generic[I, O]):
         min_readable_schema_version: int | None = None,
         state: type | None = None,
         change: type | None = None,
+        kind: str | None = None,
+        sink: str | None = None,
+        input: str | None = None,
+        codec: str | None = None,
     ) -> None:
         self._target = target
         instance: Any = target() if inspect.isclass(target) else None
@@ -183,6 +192,16 @@ class Procedure(Generic[I, O]):
         self.state_codec = _codec.codec_for(self.state_type, "state")
         self.change_codec = _codec.codec_for(self.change_type, "change")
 
+        # The §5 short form: a `sink` makes this one procedure a whole
+        # operative of its `kind`, built on the same `Channels` path a
+        # hand-written one is built on.
+        self.kind = kind
+        self.sink = sink
+        self.entry = input or "input"
+        self.entry_codec = codec
+        self._operative: Any = None
+        self._refuse_short_form(name, input)
+
         self._validate()
 
     # -- the ordinary callable -------------------------------------------
@@ -205,6 +224,85 @@ class Procedure(Generic[I, O]):
 
     def __repr__(self) -> str:
         return f"<flezha procedure {self.name}>"
+
+    # -- the short form ---------------------------------------------------
+
+    def _refuse_short_form(self, written_name: str | None, written_input: str | None) -> None:
+        """Every rule about what a `sink` needs and what needs a `sink`.
+
+        Each refusal carries the contract's name (`authoring_contract.md` §5.2)
+        in `refusals` and at the start of the message, so an author reads the
+        same word here as in the other six SDKs.
+        """
+        if self.sink is None:
+            keys = [
+                key
+                for key, written in (
+                    ("input", written_input),
+                    ("kind", self.kind),
+                    ("codec", self.entry_codec),
+                )
+                if written is not None
+            ]
+            if keys:
+                raise DeclarationError(
+                    "<procedure>",
+                    self.name,
+                    f"ShorthandKeyWithoutSink: `{'`, `'.join(keys)}` name(s) of the operative a "
+                    f"`sink` generates; this procedure declares no `sink`, so there is nothing "
+                    f"for them to describe",
+                    refusals=["ShorthandKeyWithoutSink"],
+                )
+            return
+        if written_name is None:
+            raise DeclarationError(
+                "<procedure>",
+                self.name,
+                "SinkWithoutId: a `sink` makes this procedure a whole operative, whose factory "
+                'id is an address an operator types; write it as `name="..."` rather than '
+                "deriving it from the function name",
+                refusals=["SinkWithoutId"],
+            )
+        if self.kind not in ("stream", "workflow"):
+            raise DeclarationError(
+                "<procedure>",
+                self.name,
+                "SinkWithoutKind: a `sink` makes this procedure a whole operative; write "
+                '`kind="stream"` or `kind="workflow"`',
+                refusals=["SinkWithoutKind"],
+            )
+        returned = _codec.type_hints(self.handler).get("return")
+        if returned is None or returned is type(None):
+            raise DeclarationError(
+                "<procedure>",
+                self.name,
+                "SinkWithoutOutput: a `sink` requires an output type to feed the plugin; "
+                "annotate the handler's return",
+                refusals=["SinkWithoutOutput"],
+            )
+
+    @property
+    def operative(self) -> Any:
+        """The operative this short form generates, or ``None`` for a plain procedure.
+
+        Built on first use, as an operative's own spec is: declaring opens no
+        socket and starts no thread.
+        """
+        if self.sink is None:
+            return None
+        if self._operative is None:
+            from .operative import Operative
+
+            entry, codec, sink, this = self.entry, self.entry_codec, self.sink, self
+
+            def channels(c: Any) -> None:
+                c.input(entry, codec=codec).into(this).sink(sink)
+
+            channels.__name__ = self.name
+            channels.__doc__ = self.doc
+            options: dict[str, Any] = {"persistent": True}
+            self._operative = Operative(self.name, cast("str", self.kind), channels, options)
+        return self._operative
 
     # -- what the dispatcher and the graph ask ---------------------------
 
@@ -458,6 +556,10 @@ def procedure(
     min_readable_schema_version: int | None = ...,
     state: type | None = ...,
     change: type | None = ...,
+    kind: str | None = ...,
+    sink: str | None = ...,
+    input: str | None = ...,
+    codec: str | None = ...,
 ) -> Callable[[Any], Procedure[Any, Any]]: ...
 
 
@@ -468,6 +570,12 @@ def procedure(target: Any = None, /, **declarations: Any) -> Any:
     and whose other methods are the hooks. Declaring performs no I/O, opens no
     socket and starts no thread: it builds one :class:`Procedure` and returns
     it.
+
+    With ``sink``, the declaration is the §5 short form: this one procedure is
+    a whole operative of the written ``kind``, wiring an entry channel named
+    ``input`` (or ``"input"``) into it and it to the ``sink`` plugin channel.
+    ``codec`` is the entry codec ``Channels.input`` takes. Hand the procedure
+    itself to :meth:`~flezha.runner.Runner.register_factory`.
     """
     if target is None:
         return lambda inner: Procedure(inner, **declarations)

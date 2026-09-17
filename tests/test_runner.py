@@ -57,7 +57,7 @@ def test_creating_a_runner_connects_nothing(runner: Any) -> None:
 
 def test_start_declares_then_connects(runner: Any) -> None:
     core = FakeCore()
-    r = runner("my_app").define_stream(demo).start(core=core)
+    r = runner("my_app").register_factory(demo).start(core=core)
     try:
         assert r is not None
         assert core.started == "my_app"
@@ -72,7 +72,7 @@ def test_start_declares_then_connects(runner: Any) -> None:
 def test_run_is_start_plus_await_termination(runner: Any) -> None:
     core = FakeCore()
     r = runner()
-    r.define_stream(demo)
+    r.register_factory(demo)
 
     def stop_soon() -> None:
         while core.started is None:
@@ -97,7 +97,7 @@ def test_zero_declared_types_is_legal(runner: Any) -> None:
 
 def test_a_second_start_on_the_same_runner_is_refused(runner: Any) -> None:
     core = FakeCore()
-    r = runner().define_stream(demo).start(core=core)
+    r = runner().register_factory(demo).start(core=core)
     try:
         with pytest.raises(FlezhaError, match="already started"):
             r.start(core=FakeCore())
@@ -107,7 +107,7 @@ def test_a_second_start_on_the_same_runner_is_refused(runner: Any) -> None:
 
 
 def test_only_one_runner_may_be_started_per_process(runner: Any) -> None:
-    first = runner().define_stream(demo).start(core=FakeCore())
+    first = runner().register_factory(demo).start(core=FakeCore())
     try:
         second = runner()
         with pytest.raises(FlezhaError, match="already started in this process"):
@@ -127,7 +127,7 @@ def test_a_declaration_that_fails_releases_the_slot(runner: Any) -> None:
         c.input("dangling")
 
     with pytest.raises(FlezhaError):
-        runner().define_stream(broken).start(core=FakeCore())
+        runner().register_factory(broken).start(core=FakeCore())
     later = runner().start(core=FakeCore())
     later.stop()
     later.drain()
@@ -135,9 +135,9 @@ def test_a_declaration_that_fails_releases_the_slot(runner: Any) -> None:
 
 def test_a_post_start_define_reaches_the_core(runner: Any) -> None:
     core = FakeCore()
-    r = runner().define_stream(demo).start(core=core)
+    r = runner().register_factory(demo).start(core=core)
     try:
-        r.define_stream(other_op)
+        r.register_factory(other_op)
         assert [json.loads(body)["factory_id"] for body in core.declared] == ["demo", "other"]
         assert r.operatives() == ["demo", "other"]
     finally:
@@ -146,21 +146,21 @@ def test_a_post_start_define_reaches_the_core(runner: Any) -> None:
 
 
 def test_removing_an_undeclared_type_is_refused_naming_it(runner: Any) -> None:
-    r = runner().define_stream(demo)
-    with pytest.raises(FlezhaError, match="absent"):
-        r.remove_operative("absent")
+    r = runner().register_factory(demo)
+    with pytest.raises(FlezhaError, match="other"):
+        r.unregister_factory(other_op)
 
 
 def test_removing_a_type_with_live_instances_is_refused(runner: Any) -> None:
     from flezha.dispatch import dispatch_now
 
     core = FakeCore()
-    r = runner().define_stream(demo).start(core=core)
+    r = runner().register_factory(demo).start(core=core)
     try:
         deps = r._executor._deps  # type: ignore[attr-defined]
         dispatch_now(work_activation(1, "abc"), core, deps)
         with pytest.raises(FlezhaError, match="live instances"):
-            r.remove_operative("demo")
+            r.unregister_factory(demo)
         assert r.operatives() == ["demo"]
     finally:
         r.stop()
@@ -169,9 +169,9 @@ def test_removing_a_type_with_live_instances_is_refused(runner: Any) -> None:
 
 def test_removing_a_type_with_no_instances_succeeds(runner: Any) -> None:
     core = FakeCore()
-    r = runner().define_stream(demo).define_stream(other_op).start(core=core)
+    r = runner().register_factory(demo).register_factory(other_op).start(core=core)
     try:
-        r.remove_operative("other")
+        r.unregister_factory(other_op)
         assert r.operatives() == ["demo"]
     finally:
         r.stop()
@@ -179,16 +179,16 @@ def test_removing_a_type_with_no_instances_succeeds(runner: Any) -> None:
 
 
 def test_a_duplicate_factory_id_is_refused(runner: Any) -> None:
-    r = runner().define_stream(demo)
-    with pytest.raises(FlezhaError, match="duplicate factory id"):
-        r.define_stream(demo)
+    r = runner().register_factory(demo)
+    with pytest.raises(FlezhaError, match="DuplicateFactoryId"):
+        r.register_factory(demo)
 
 
-def test_define_modules_imports_and_registers(runner: Any) -> None:
+def test_register_modules_imports_and_registers(runner: Any) -> None:
     core = FakeCore()
-    r = runner().define_modules("declaring_module").start(core=core)
+    r = runner().register_modules("declaring_module").start(core=core)
     try:
-        assert r.operatives() == ["from_module"]
+        assert r.operatives() == ["from_module", "from_module_short_form"]
     finally:
         r.stop()
         r.drain()
@@ -196,14 +196,14 @@ def test_define_modules_imports_and_registers(runner: Any) -> None:
 
 def test_an_unimportable_module_names_it_and_chains_the_original(runner: Any) -> None:
     with pytest.raises(FlezhaError) as caught:
-        runner().define_modules("no_such_module_anywhere")
+        runner().register_modules("no_such_module_anywhere")
     assert "no_such_module_anywhere" in str(caught.value)
     assert isinstance(caught.value.__cause__, ImportError)
 
 
 def test_the_context_manager_drains_on_exit(runner: Any) -> None:
     core = FakeCore()
-    with runner().define_stream(demo).start(core=core) as r:
+    with runner().register_factory(demo).start(core=core) as r:
         assert r.operatives() == ["demo"]
     assert core.shut_down
     assert core.freed
@@ -214,7 +214,7 @@ def test_the_startup_line_names_the_tier_the_executor_and_the_sizing(
 ) -> None:
     core = FakeCore()
     with caplog.at_level(logging.INFO, logger="flezha.runner"):
-        r = runner().define_stream(demo).start(core=core)
+        r = runner().register_factory(demo).start(core=core)
     try:
         line = caplog.text
         assert "tier" in line
@@ -228,7 +228,7 @@ def test_the_startup_line_names_the_tier_the_executor_and_the_sizing(
 def test_the_executor_is_an_axis_of_the_run(monkeypatch: pytest.MonkeyPatch, runner: Any) -> None:
     monkeypatch.setenv("FLEZHA_PYTHON_EXECUTOR", "asyncio")
     core = FakeCore()
-    r = runner().define_stream(demo).start(core=core)
+    r = runner().register_factory(demo).start(core=core)
     try:
         assert r._executor.name == "asyncio"  # type: ignore[attr-defined]
     finally:
@@ -239,7 +239,7 @@ def test_the_executor_is_an_axis_of_the_run(monkeypatch: pytest.MonkeyPatch, run
 def test_an_unknown_executor_is_refused(monkeypatch: pytest.MonkeyPatch, runner: Any) -> None:
     monkeypatch.setenv("FLEZHA_PYTHON_EXECUTOR", "goroutines")
     with pytest.raises(FlezhaError, match="unknown executor"):
-        runner().define_stream(demo).start(core=FakeCore())
+        runner().register_factory(demo).start(core=FakeCore())
 
 
 def test_a_controller_initiated_shutdown_ends_the_runners_own_wait(runner: Any) -> None:
@@ -250,7 +250,7 @@ def test_a_controller_initiated_shutdown_ends_the_runners_own_wait(runner: Any) 
     was going to signal.
     """
     core = FakeCore()
-    r = runner().define_stream(demo)
+    r = runner().register_factory(demo)
 
     def close_from_the_controller() -> None:
         while core.started is None:
@@ -264,7 +264,7 @@ def test_a_controller_initiated_shutdown_ends_the_runners_own_wait(runner: Any) 
 
 def test_the_drain_frees_the_context(runner: Any) -> None:
     core = FakeCore()
-    r = runner().define_stream(demo).start(core=core)
+    r = runner().register_factory(demo).start(core=core)
     r.stop()
     r.drain()
     assert core.shut_down
@@ -278,7 +278,7 @@ def test_a_boot_with_no_terminal_asks_the_core_to_watch_for_end_of_file(
     stopped asking would be one nothing can stop."""
     monkeypatch.setattr(sys, "stdin", io.StringIO())
     core = FakeCore()
-    runner().define_stream(demo).start(core=core)
+    runner().register_factory(demo).start(core=core)
     assert core.stdin_watch_grace_ms is not None
 
 
@@ -345,3 +345,38 @@ def test_one_call_turns_diagnostics_on() -> None:
             if not isinstance(handler, logging.NullHandler):
                 root.removeHandler(handler)
         root.setLevel(logging.NOTSET)
+
+
+@flezha.procedure(name="short_stream", kind="stream", sink="out", codec="text")
+def short_stream(value: str) -> str:
+    return value
+
+
+@flezha.procedure(name="short_workflow", kind="workflow", sink="placed", codec="text")
+def short_workflow(value: str) -> str:
+    return value
+
+
+def test_register_factory_takes_a_short_form_of_either_kind(runner: Any) -> None:
+    r = runner().register_factory(short_stream).register_factory(short_workflow)
+    assert r.operatives() == ["short_stream", "short_workflow"]
+
+    r.unregister_factory(short_workflow)
+    assert r.operatives() == ["short_stream"]
+    r.unregister_factory(short_stream)
+    assert r.operatives() == []
+
+
+def test_register_modules_collects_a_short_form(runner: Any) -> None:
+    core = FakeCore()
+    r = runner().register_modules("declaring_module").start(core=core)
+    try:
+        assert "from_module_short_form" in r.operatives()
+    finally:
+        r.stop()
+        r.drain()
+
+
+def test_registering_a_procedure_with_no_sink_is_refused(runner: Any) -> None:
+    with pytest.raises(FlezhaError, match="no `sink`"):
+        runner().register_factory(other)

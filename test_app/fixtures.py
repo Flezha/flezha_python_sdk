@@ -151,15 +151,18 @@ def mixed_operative(c: flezha.Channels) -> None:
     ).sink("kafka")
 
 
-# -- sugar_do_nothing / sugar_store_input ------------------------------------
+# -- the §5 short forms ------------------------------------------------------
+#
+# One declaration each: the `sink` makes the procedure a whole operative of its
+# `kind`, and `runner.py` registers it as it registers any operative. No
+# hand-written operative stands beside them.
 
 
-sugar_do_nothing = passthrough("sugar_do_nothing")
-
-
-@flezha.stream_operative("sugar_do_nothing")
-def sugar_do_nothing_operative(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(sugar_do_nothing).sink("sugar_do_nothing_echo")
+@flezha.procedure(
+    name="sugar_do_nothing", kind="stream", sink="sugar_do_nothing_echo", codec="text"
+)
+def sugar_do_nothing(value: str) -> str:
+    return value
 
 
 class SugarStoreInput:
@@ -174,12 +177,35 @@ class SugarStoreInput:
         state["text_inputs"].append(change["push"])
 
 
-sugar_store_input = flezha.procedure(SugarStoreInput, name="sugar_store_input")
+sugar_store_input = flezha.procedure(
+    SugarStoreInput,
+    name="sugar_store_input",
+    kind="stream",
+    sink="sugar_store_sink",
+    codec="text",
+)
 
 
-@flezha.stream_operative("sugar_store_input")
-def sugar_store_input_operative(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(sugar_store_input).sink("sugar_store_sink")
+@flezha.procedure(
+    name="sugar_named_input",
+    kind="stream",
+    sink="sugar_named_input_sink",
+    input="prices",
+    codec="text",
+)
+def sugar_named_input(value: str) -> str:
+    return value
+
+
+@flezha.procedure(
+    name="sugar_workflow",
+    kind="workflow",
+    sink="sugar_workflow_placed",
+    input="order",
+    codec="text",
+)
+def sugar_workflow(order: str) -> str:
+    return order
 
 
 # -- hybrid_channel ----------------------------------------------------------
@@ -549,6 +575,15 @@ def spawn_requester_operative(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(spawn_requester).sink("out")
 
 
+#: The §5 short forms this app registers: each is the procedure itself, whose
+#: `sink` makes it a whole operative.
+SHORTHAND: list[Any] = [
+    sugar_do_nothing,
+    sugar_store_input,
+    sugar_named_input,
+    sugar_workflow,
+]
+
 #: Every operative this app registers, in declaration order.
 ALL: list[flezha.Operative] = [
     do_nothing_operative,
@@ -557,8 +592,6 @@ ALL: list[flezha.Operative] = [
     static_entity_operative,
     sugar_static_entity_operative,
     mixed_operative,
-    sugar_do_nothing_operative,
-    sugar_store_input_operative,
     hybrid_channel_operative,
     merged_input_operative,
     transform_chain_operative,

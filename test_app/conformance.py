@@ -40,7 +40,15 @@ FIXTURE = "test/fixtures/reference_topologies.txt"
 # `conformance.json` declares. A row needing anything else is skipped BY NAME,
 # which is what makes the skip checkable. The class flag a typed builder cannot
 # spell is a plain builder call here.
-SURFACES = ("merge", "branch", "workflow", "sync_durability")
+SURFACES = (
+    "merge",
+    "branch",
+    "workflow",
+    "sync_durability",
+    "shorthand",
+    "shorthand_typed_output",
+    "shorthand_omittable_sink",
+)
 
 # The two topologies the fixture cites rather than re-spells: this app's own
 # fixtures, the twins of its seven-column table.
@@ -310,6 +318,95 @@ def channels_of(derived: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# The §5 short form. Python refuses a malformed declaration where it is
+# decorated and a duplicate factory id where it is registered, so every row
+# boots for real here — nothing is cited.
+
+
+def shorthand_steps(row: dict[str, str]) -> list[dict[str, Any]]:
+    """The `shorthand(<id>|-, <kind>|-, <sink>|-, <input>|-)` steps of a row."""
+    parsed: list[dict[str, Any]] = []
+    for step in row["steps"].split(";"):
+        step = step.strip()
+        noout = step.endswith(".noout")
+        body = step[: -len(".noout")] if noout else step
+        verb, args = split_call(body)
+        if verb != "shorthand":
+            continue
+        fields = [field.strip() for field in args.split(",")]
+        if len(fields) != 4:
+            raise AssertionError(f"a shorthand step declares four fields: read `{step}`")
+        parsed.append(
+            {
+                "name": None if fields[0] == "-" else fields[0],
+                "kind": None if fields[1] == "-" else fields[1],
+                "sink": None if fields[2] == "-" else fields[2],
+                "input": None if fields[3] == "-" else fields[3],
+                "noout": noout,
+            }
+        )
+    return parsed
+
+
+def declare_shorthand(declaration: dict[str, Any]) -> Any:
+    """Declare one short form exactly as an author writes it.
+
+    A `.noout` row's handler is annotated `-> None`, which is what an SDK that
+    reads the return hint sees as "declares no output".
+    """
+    if declaration["noout"]:
+
+        def handler(value: str) -> None:
+            del value
+
+    else:
+
+        def handler(value: str) -> str:  # type: ignore[misc]
+            return value
+
+    return flezha.procedure(
+        handler,
+        name=declaration["name"],
+        kind=declaration["kind"],
+        sink=declaration["sink"],
+        input=declaration["input"],
+    )
+
+
+def drive_shorthand(declarations: list[dict[str, Any]]) -> None:
+    """Declare and register the row's short forms; the refusal is what it raises."""
+    runner = flezha.create_runner("conformance_shorthand")
+    for declaration in declarations:
+        runner.register_factory(declare_shorthand(declaration))
+
+
+def refusal_name(message: str) -> str:
+    """The leading refusal name of a message the contract requires to begin with one."""
+    return message.split(":", 1)[0].strip()
+
+
+def judge_shorthand(row: dict[str, str], declarations: list[dict[str, Any]]) -> dict[str, Any]:
+    """A short-form row's verdict: what declaring and registering it answered."""
+    try:
+        drive_shorthand(declarations)
+    except flezha.DeclarationError as refusal:
+        return {
+            "topology": row["topology"],
+            "outcome": "refused",
+            "names": list(refusal.refusals),
+            "defect": str(refusal),
+        }
+    except flezha.FlezhaError as refusal:
+        return {
+            "topology": row["topology"],
+            "outcome": "refused",
+            "names": [refusal_name(str(refusal))],
+            "defect": str(refusal),
+        }
+    return {"topology": row["topology"], "outcome": "accepted"}
+
+
 def judge(row: dict[str, str], core: Core) -> dict[str, Any]:
     """One row's verdict, in the report's shape.
 
@@ -318,6 +415,9 @@ def judge(row: dict[str, str], core: Core) -> dict[str, Any]:
     """
     if row["needs"] != "-" and row["needs"] not in SURFACES:
         return {"topology": row["topology"], "outcome": "skipped", "needs": row["needs"]}
+    declarations = shorthand_steps(row)
+    if declarations:
+        return judge_shorthand(row, declarations)
     try:
         derived = graph.validate(operative_for(row).spec, core)
     except flezha.DeclarationError as refusal:
@@ -357,4 +457,8 @@ def register_only(runner: flezha.Runner, topology: str) -> None:
     row = next((candidate for candidate in rows() if candidate["topology"] == topology), None)
     if row is None:
         raise AssertionError(f"{FIXTURE} has no row `{topology}`")
-    runner.define_stream(operative_for(row))
+    declarations = shorthand_steps(row)
+    if declarations:
+        drive_shorthand(declarations)
+        return
+    runner.register_factory(operative_for(row))

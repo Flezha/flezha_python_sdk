@@ -217,7 +217,7 @@ if __name__ == "__main__":
     flezha.configure_logging("info")
     (
         flezha.create_runner(os.environ.get("FLEZHA_NAMESPACE", "default"))
-        .define_stream(durable_agent)
-        .define_workflow(agent_session)
+        .register_factory(durable_agent)
+        .register_factory(agent_session)
         .run()
     )

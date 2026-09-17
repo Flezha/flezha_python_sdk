@@ -22,7 +22,7 @@ def echo_operative(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(echo).sink("out")
 
 
-flezha.create_runner("default").define_stream(echo_operative).run()
+flezha.create_runner("default").register_factory(echo_operative).run()
 ```
 
 - **Run a graph with no controller.** `LocalOperative.start` takes the same

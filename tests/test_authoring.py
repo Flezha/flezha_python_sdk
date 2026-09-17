@@ -226,7 +226,7 @@ def test_an_event_time_clock_without_an_extractor_is_refused() -> None:
 def test_an_extractor_without_an_event_time_clock_is_refused() -> None:
     """A procedure-local defect is refused when the decorator builds it.
 
-    Earlier than the `define_stream` call site and with the traceback on the
+    Earlier than the `register_factory` call site and with the traceback on the
     handler — which is why every procedure-local refusal lives on `Procedure`
     and `graph.validate` holds only the defects that need the graph.
     """
@@ -665,3 +665,94 @@ def test_a_codec_and_a_callable_together_are_refused() -> None:
     ):
         with pytest.raises(DeclarationError, match=f"codecs: {channel}: names both a codec"):
             _codec_slots(input_options, sink_options)
+
+
+# ---------------------------------------------------------------------------
+# The §5 short form
+# ---------------------------------------------------------------------------
+
+
+def _short_form_spec(procedure: Any) -> Any:
+    """The spec the short form's generated operative builds."""
+    return procedure.operative.spec
+
+
+def test_a_stream_short_form_is_its_hand_written_twin() -> None:
+    @flezha.procedure(name="upcase", kind="stream", sink="out", codec="text")
+    def upcase(value: str) -> str:
+        return value.upper()
+
+    @flezha.procedure(name="upcase_twin")
+    def upcase_twin(value: str) -> str:
+        return value.upper()
+
+    @flezha.stream_operative("upcase_twin")
+    def twin(c: flezha.Channels) -> None:
+        c.input("input", codec="text").into(upcase_twin).sink("out")
+
+    short, hand = _short_form_spec(upcase), twin.spec
+    assert short.kind == hand.kind == "stream"
+    assert short.factory_id == "upcase"
+    assert [(c.name, c.kind) for c in short.channels] == [(c.name, c.kind) for c in hand.channels]
+
+
+def test_a_workflow_short_form_is_a_once_workflow() -> None:
+    @flezha.procedure(name="place", kind="workflow", sink="placed", input="order", codec="text")
+    def place(value: str) -> str:
+        return value
+
+    spec = _short_form_spec(place)
+    assert spec.kind == "workflow"
+    assert spec.workflow["loop_mode"] == "once"
+    assert [c.name for c in spec.channels] == ["order", "placed"]
+
+
+def test_a_sink_without_a_name_is_refused() -> None:
+    with pytest.raises(DeclarationError) as caught:
+
+        @flezha.procedure(kind="stream", sink="out")
+        def upcase(value: str) -> str:
+            return value
+
+    assert "SinkWithoutId" in caught.value.refusals
+    assert str(caught.value.defect).startswith("SinkWithoutId")
+
+
+def test_a_sink_without_a_kind_is_refused() -> None:
+    with pytest.raises(DeclarationError) as caught:
+
+        @flezha.procedure(name="upcase", sink="out")
+        def upcase(value: str) -> str:
+            return value
+
+    assert "SinkWithoutKind" in caught.value.refusals
+
+
+def test_a_sink_on_a_procedure_with_no_output_is_refused() -> None:
+    with pytest.raises(DeclarationError) as caught:
+
+        @flezha.procedure(name="log", kind="stream", sink="out")
+        def log(value: str) -> None:
+            del value
+
+    assert "SinkWithoutOutput" in caught.value.refusals
+
+
+def test_a_short_form_key_without_a_sink_is_refused() -> None:
+    with pytest.raises(DeclarationError) as caught:
+
+        @flezha.procedure(name="upcase", kind="stream", input="prices")
+        def upcase(value: str) -> str:
+            return value
+
+    assert "ShorthandKeyWithoutSink" in caught.value.refusals
+    assert "`kind`" in caught.value.defect
+    assert "`input`" in caught.value.defect
+
+
+def test_a_procedure_with_no_sink_carries_no_operative() -> None:
+    @flezha.procedure(name="plain")
+    def plain(value: str) -> str:
+        return value
+
+    assert plain.operative is None

@@ -49,9 +49,11 @@ def main() -> None:
         conformance.register_only(runner, refusal_fixture)
     else:
         for operative in fixtures.ALL:
-            runner.define_stream(operative)
+            runner.register_factory(operative)
+        for short_form in fixtures.SHORTHAND:
+            runner.register_factory(short_form)
         for operative in fixtures_workflow.ALL:
-            runner.define_workflow(operative)
+            runner.register_factory(operative)
 
     # The configuration this run is under, before it starts: readiness is the
     # SDK's own startup line, which reports the wheel tier, the executor and the

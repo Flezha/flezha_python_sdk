@@ -18,7 +18,7 @@ idiomatic errors.
     def echo_operative(c: flezha.Channels) -> None:
         c.input("input").into(echo).sink("out")
 
-    flezha.create_runner("default").define_stream(echo_operative).run()
+    flezha.create_runner("default").register_factory(echo_operative).run()
 """
 
 from __future__ import annotations

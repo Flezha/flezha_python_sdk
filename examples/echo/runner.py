@@ -2,7 +2,7 @@
 operatives.
 
 Declare every operative you want served before `start`. One runner can serve
-several, and `define_workflow` is the same call for the workflow kind.
+several, and `register_factory` is the same call for the workflow kind.
 """
 
 import sys
@@ -16,7 +16,7 @@ def main() -> None:
     namespace = sys.argv[1] if len(sys.argv) > 1 else "default"
     flezha.configure_logging("info")
 
-    runner = flezha.create_runner(namespace).define_stream(echo_operative)
+    runner = flezha.create_runner(namespace).register_factory(echo_operative)
 
     # `run()` is `start()` followed by `await_termination()`. Splitting them
     # leaves room for the admin calls below, and still blocks until shutdown.

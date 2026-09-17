@@ -30,8 +30,10 @@ fixtures_state = app.module("fixtures_state")
 prefix = app.module("fixture_support").prefix
 
 #: The app's own registration list, keyed by the id `conformance.json` names.
+#: A short form registers the operative it carries, so it is keyed by that one.
 _REGISTERED: dict[str, Operative] = {
-    operative.spec.factory_id: operative for operative in fixtures.ALL
+    operative.spec.factory_id: operative
+    for operative in [*fixtures.ALL, *(p.operative for p in fixtures.SHORTHAND)]
 }
 
 
@@ -82,9 +84,9 @@ def declares(capability: str, factory_id: str) -> Operative:
     return _REGISTERED[factory_id]
 
 
-def test_graph_builder_a_declared_graph_is_built_and_run_with_no_controller() -> None:
+def test_shorthand_a_short_form_is_built_and_run_with_no_controller() -> None:
     released = release(
-        declares("graph_builder", "sugar_do_nothing"),
+        declares("shorthand", "sugar_do_nothing"),
         "input",
         "sugar_do_nothing_echo",
         ["alpha", "beta"],
