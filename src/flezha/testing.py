@@ -11,6 +11,8 @@ agrees with it.
 
 from __future__ import annotations
 
+import base64
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
@@ -19,7 +21,7 @@ from . import codec as _codec
 from .builder import Channels, ClassSpec
 from .dispatch import DispatchDeps, RegisteredClass, emit_returned, invoke, run_now
 from .entity_state import fold_restore
-from .errors import FlezhaError
+from .errors import CoreError, FlezhaError
 from .procedure import Procedure
 
 __all__ = ["ProcedureTestHarness", "ReplayMismatch", "Outcome", "replay_equals"]
@@ -92,6 +94,10 @@ class ProcedureTestHarness(Generic[S]):
         self.log: list[bytes] = []
         self._timers: list[dict[str, Any]] = []
         self._change_seq = 0
+        # Answers by handle, until the invocation that made them ends, as the
+        # core releases them.
+        self._spawns: dict[int, str] = {}
+        self._spawn_count = 0
         if initial_state is not None:
             self._entity.state = initial_state
 
@@ -181,20 +187,43 @@ class ProcedureTestHarness(Generic[S]):
 
     # -- the spawn bridge a `Ctx` asks ---------------------------------------
 
-    def spawn_workflow(self, *args: Any, **kwargs: Any) -> str:
-        """A harness has no controller, so a spawn answers what one would have."""
-        del args, kwargs
-        return "spawned"
+    def spawn_request(
+        self, token: int, factory_id: str, id: str, payload: bytes, if_running: str, replay: bool
+    ) -> int:
+        """A harness has no controller, so a spawn resolves at once to what one
+        would answer for a free id: ``spawned`` under the given id, or under a
+        deterministic one shaped like a generated id. A replay answers
+        ``skipped_on_replay`` with the given id, or an empty one."""
+        del token, payload, if_running
+        self._spawn_count += 1
+        if replay:
+            answer = {"id": id, "outcome": "skipped_on_replay"}
+        else:
+            suffix = base64.b32encode(self._spawn_count.to_bytes(10, "big")).decode().lower()
+            answer = {"id": id or f"{factory_id}-{suffix}", "outcome": "spawned"}
+        self._spawns[self._spawn_count] = json.dumps(answer)
+        return self._spawn_count
+
+    def spawn_result(self, handle: int, timeout_ms: int) -> str | None:
+        del timeout_ms
+        answer = self._spawns.get(handle)
+        if answer is None:
+            raise CoreError(f"spawn handle {handle} was released")
+        return answer
 
     # -- internals -----------------------------------------------------------
 
     def _run(self, now: int, replay: bool, body: Any) -> Outcome:
         activation = {
+            "token": 0,
             "operative": self._operative,
             "entity_key": self._entity_key,
             "change_seq": self._change_seq,
         }
-        ctx, returned = run_now(invoke(self._entity, activation, self._deps, now, replay, body))
+        try:
+            ctx, returned = run_now(invoke(self._entity, activation, self._deps, now, replay, body))
+        finally:
+            self._spawns.clear()
         emit_returned(ctx, returned)
         self.log.extend(ctx.changes)
         self._change_seq += len(ctx.changes)

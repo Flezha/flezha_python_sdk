@@ -23,10 +23,10 @@ idiomatic errors.
 
 from __future__ import annotations
 
-from .admin import Admin
+from .admin import Admin, StartResult
 from .builder import DROPPED, Channels, Edge, Merge
 from .codec import ChannelCodec, TypeCodec, ValueCodec
-from .ctx import Ctx, WorkflowCtx
+from .ctx import Ctx, SpawnHandle, SpawnResult, WorkflowCtx
 from .entity_state import state
 from .errors import (
     CoreError,
@@ -37,6 +37,12 @@ from .errors import (
     ForkError,
     NonRetryableError,
     SchemaMismatchError,
+    SpawnAlreadyRunningError,
+    SpawnError,
+    SpawnFactoryUnknownError,
+    SpawnRefusedError,
+    SpawnTimeoutError,
+    SpawnUnavailableError,
     UnrepresentableValueError,
 )
 from .local import LocalOperative, SinkOutput
@@ -48,6 +54,7 @@ from .version import __version__
 
 __all__ = [
     "Admin",
+    "StartResult",
     # authoring
     "procedure",
     "state",
@@ -58,6 +65,8 @@ __all__ = [
     "Merge",
     "Ctx",
     "WorkflowCtx",
+    "SpawnHandle",
+    "SpawnResult",
     "Procedure",
     "Operative",
     "DROPPED",
@@ -80,6 +89,12 @@ __all__ = [
     "UnrepresentableValueError",
     "NonRetryableError",
     "ForkError",
+    "SpawnError",
+    "SpawnAlreadyRunningError",
+    "SpawnFactoryUnknownError",
+    "SpawnRefusedError",
+    "SpawnTimeoutError",
+    "SpawnUnavailableError",
     "DeterminismWarning",
     # versions
     "__version__",

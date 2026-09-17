@@ -32,6 +32,7 @@ from fixtures_state import (
     store_input_operative,
     tier_store_operative,
 )
+from fixtures_workflow import stateless_loop_workflow
 
 # -- do_nothing / bench_echo -------------------------------------------------
 
@@ -521,6 +522,33 @@ def dynamic_entity_operative(c: flezha.Channels) -> None:
     ).key_by(prefix).into(dynamic_entity).sink("kafka")
 
 
+# -- spawn_requester ---------------------------------------------------------
+#
+# On each input it spawns `stateless_loop_workflow` once with no id and once
+# under the input as its id, and prints both answers, because a handle's answer
+# is observable nowhere but in the procedure that read it.
+
+
+@flezha.procedure(name="spawn_requester")
+def spawn_requester(value: str, ctx: flezha.Ctx[None]) -> None:
+    factory = stateless_loop_workflow.factory_id
+    handles = [
+        ("unnamed", ctx.spawn_workflow(factory, value)),
+        ("named", ctx.spawn_workflow(factory, value, id=value)),
+    ]
+    for label, handle in handles:
+        try:
+            result = handle.wait()
+            print(f"spawn_result {label} {result.id} {result.outcome}", flush=True)
+        except flezha.SpawnError as error:
+            print(f"spawn_result {label} error {error}", flush=True)
+
+
+@flezha.stream_operative("spawn_requester")
+def spawn_requester_operative(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(spawn_requester).sink("out")
+
+
 #: Every operative this app registers, in declaration order.
 ALL: list[flezha.Operative] = [
     do_nothing_operative,
@@ -555,4 +583,5 @@ ALL: list[flezha.Operative] = [
     *BOUNDED_MAILBOX,
     partition_relay_operative,
     dynamic_entity_operative,
+    spawn_requester_operative,
 ]

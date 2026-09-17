@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import ClassVar
+
 __all__ = [
     "FlezhaError",
     "CoreError",
@@ -11,6 +14,12 @@ __all__ = [
     "UnrepresentableValueError",
     "NonRetryableError",
     "ForkError",
+    "SpawnError",
+    "SpawnAlreadyRunningError",
+    "SpawnFactoryUnknownError",
+    "SpawnRefusedError",
+    "SpawnTimeoutError",
+    "SpawnUnavailableError",
     "DeterminismWarning",
 ]
 
@@ -105,6 +114,58 @@ class NonRetryableError(FlezhaError):
 
 class ForkError(FlezhaError):
     """A core call from a process that did not start the core."""
+
+
+class SpawnError(FlezhaError):
+    """Why a spawn reached no instance.
+
+    Raised by a read of the :class:`~flezha.ctx.SpawnHandle`, never by
+    ``ctx.spawn_workflow`` itself, so a refusal faults the procedure only when
+    it asks. Each kind is a subclass; ``reason`` is its word on the wire.
+    """
+
+    reason: ClassVar[str] = ""
+
+    def __init__(self, message: str, id: str = "") -> None:
+        super().__init__(message)
+        #: The id the request named; empty when it asked for a generated one.
+        self.id = id
+
+    @staticmethod
+    def of(answer: Mapping[str, str]) -> SpawnError:
+        """The error a failed spawn answer names, as the core renders it."""
+        kinds = {kind.reason: kind for kind in SpawnError.__subclasses__()}
+        return kinds.get(answer["error"], SpawnError)(answer["message"], answer["id"])
+
+
+class SpawnAlreadyRunningError(SpawnError):
+    """The id is taken and the request carried ``if_running="error"``."""
+
+    reason = "already_running"
+
+
+class SpawnFactoryUnknownError(SpawnError):
+    """No connected runner registers the requested factory."""
+
+    reason = "factory_unknown"
+
+
+class SpawnRefusedError(SpawnError):
+    """The controller declined: authorization, quota, or a failed start."""
+
+    reason = "refused"
+
+
+class SpawnTimeoutError(SpawnError):
+    """No answer arrived within the core's deadline for the request."""
+
+    reason = "timeout"
+
+
+class SpawnUnavailableError(SpawnError):
+    """No control plane to request a spawn on."""
+
+    reason = "unavailable"
 
 
 class DeterminismWarning(UserWarning):

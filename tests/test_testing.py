@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 import pytest
@@ -223,3 +224,33 @@ def test_the_router_delivers_each_document_once_on_each_keys_own_traffic() -> No
     assert fed(1, {"symbol": "A"}) == [["A", changed]]
     assert harness.state["version"] == 2
     assert harness.replay_equals()
+
+
+def test_the_harness_answers_a_spawn_already_resolved() -> None:
+    results: list[flezha.SpawnResult | None] = []
+    again: list[flezha.SpawnResult] = []
+    unread: list[flezha.SpawnHandle] = []
+
+    @flezha.procedure
+    def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
+        results.append(ctx.spawn_workflow("worker", value).try_result())
+        named = ctx.spawn_workflow("worker", value, id="w1")
+        results.append(named.try_result())
+        again.append(named.wait())
+        unread.append(ctx.spawn_workflow("worker", value))
+
+    harness: ProcedureTestHarness[None] = ProcedureTestHarness(spawner)
+    harness.feed("a")
+    harness.feed("a", replay=True)
+    generated, named, replayed, replayed_named = results
+    assert generated is not None
+    assert re.fullmatch(r"worker-[a-z2-7]{16}", generated.id)
+    assert (generated.outcome, named) == ("spawned", flezha.SpawnResult("w1", "spawned"))
+    assert (replayed, replayed_named) == (
+        flezha.SpawnResult("", "skipped_on_replay"),
+        flezha.SpawnResult("w1", "skipped_on_replay"),
+    )
+    assert again == [named, replayed_named]
+    # As live: a handle is read inside the invocation that made it.
+    with pytest.raises(flezha.CoreError, match="released"):
+        unread[0].wait()

@@ -306,6 +306,7 @@ async def invoke(
         replay=replay,
         state=entity.state,
         bridge=deps.bridge,
+        token=activation["token"],
     )
     try:
         with determinism.invocation():

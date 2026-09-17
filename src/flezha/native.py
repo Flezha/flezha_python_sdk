@@ -85,7 +85,8 @@ class Core:
         "workflow_emit",
         "workflow_recv",
         "workflow_cancelled",
-        "spawn_workflow",
+        "spawn_request",
+        "spawn_result",
         "admin_call",
         "last_error",
     )
@@ -215,10 +216,16 @@ class Core:
     def workflow_cancelled(self, instance_id: str) -> bool:
         return bool(self._call("workflow_cancelled", instance_id))
 
-    def spawn_workflow(
-        self, instance_id: str, factory_id: str, payload: bytes, if_running: str
-    ) -> str:
-        return str(self._call("spawn_workflow", instance_id, factory_id, payload, if_running))
+    def spawn_request(
+        self, token: int, factory_id: str, id: str, payload: bytes, if_running: str, replay: bool
+    ) -> int:
+        """Request a spawn from the activation ``token``; answers its handle at once."""
+        return int(self._call("spawn_request", token, factory_id, id, payload, if_running, replay))
+
+    def spawn_result(self, handle: int, timeout_ms: int) -> str | None:
+        """A handle's answer as JSON, or ``None`` while it is pending."""
+        answer = self._call("spawn_result", handle, timeout_ms)
+        return None if answer is None else str(answer)
 
     def admin_call(self, verb: str, args: str) -> str:
         return str(self._call("admin_call", verb, args))

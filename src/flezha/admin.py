@@ -15,11 +15,25 @@ verb travels as data. Adding a verb costs a method and no native work.
 from __future__ import annotations
 
 import json
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from .native import Core
 
-__all__ = ["Admin"]
+__all__ = ["Admin", "StartResult", "StartOutcome"]
+
+#: What a start did: started the operative, or found a live instance already
+#: holding the id it named and left it untouched.
+StartOutcome = Literal["started", "already_running"]
+
+
+@dataclass(frozen=True, slots=True)
+class StartResult:
+    """What a start answered: the id the operative runs under, the generated one
+    when the start named none, and what the start did."""
+
+    id: str
+    outcome: StartOutcome
 
 
 class Admin:
@@ -32,22 +46,31 @@ class Admin:
 
     def start_operative(
         self,
-        operative_id: str,
         factory_id: str,
         *,
+        id: str | None = None,
         kind: str | None = None,
         init_values: Any = None,
         opts: Any = None,
-    ) -> Any:
-        """Start an operative, on the specification ``flz operative start`` takes."""
-        fields: dict[str, Any] = {"id": operative_id, "factory_id": factory_id}
+    ) -> StartResult:
+        """Start an operative, on the specification ``flz operative start`` takes.
+
+        Without ``id`` the controller generates one, and the answer carries it.
+        A start without an id that is retried after a lost answer starts a second
+        operative, and a second stream runs until it is stopped; passing an id
+        prevents it, because a start of a live id answers ``already_running``.
+        """
+        fields: dict[str, Any] = {"factory_id": factory_id}
+        if id is not None:
+            fields["id"] = id
         if kind is not None:
             fields["kind"] = kind
         if init_values is not None:
             fields["init_values"] = init_values
         if opts is not None:
             fields["opts"] = opts
-        return self.call("Operative.start", fields)
+        answer = self.call("Operative.start", fields)
+        return StartResult(answer["id"], answer["outcome"])
 
     def stop_operative(self, operative_id: str) -> Any:
         """Stop an operative, or the whole partition group it names."""

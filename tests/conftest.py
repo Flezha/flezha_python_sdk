@@ -109,6 +109,12 @@ class FakeCore:
         self.complete_gate: threading.Event | None = None
         self.dispatch_threads: set[int] = set()
         self.stdin_watch_grace_ms: int | None = None
+        self.spawns: list[dict[str, Any]] = []
+        #: What a spawn resolves to beside its id: an outcome, or an error and
+        #: its message. ``None`` spawns under the requested or a generated id.
+        self.spawn_answer: dict[str, str] | None = None
+        #: How long after its request a spawn is answered, as a controller takes.
+        self.spawn_answer_after_s = 0.0
 
     # -- the ABI ----------------------------------------------------------
 
@@ -183,8 +189,36 @@ class FakeCore:
     def free(self) -> None:
         self.freed = True
 
-    def spawn_workflow(self, *args: Any) -> str:
-        return "spawned"
+    def spawn_request(
+        self, token: int, factory_id: str, id: str, payload: bytes, if_running: str, replay: bool
+    ) -> int:
+        with self._lock:
+            self.spawns.append(
+                {
+                    "token": token,
+                    "factory_id": factory_id,
+                    "id": id,
+                    "payload": payload,
+                    "if_running": if_running,
+                    "replay": replay,
+                    "due": time.monotonic() + self.spawn_answer_after_s,
+                }
+            )
+            return len(self.spawns)
+
+    def spawn_result(self, handle: int, timeout_ms: int) -> str | None:
+        """The core's read: a replay resolves at once and sends nothing, and
+        anything else resolves once its answer is due."""
+        request = self.spawns[handle - 1]
+        if request["replay"]:
+            return json.dumps({"id": request["id"], "outcome": "skipped_on_replay"})
+        left = request["due"] - time.monotonic()
+        if left > timeout_ms / 1000:
+            return None
+        time.sleep(max(left, 0.0))
+        answer = self.spawn_answer or {"outcome": "spawned"}
+        generated = "" if "error" in answer else f"{request['factory_id']}-k7m2qzxw4pd3fn2a"
+        return json.dumps({"id": request["id"] or generated, **answer})
 
     def workflow_emit(self, instance_id: str, payload: bytes) -> None:
         pass

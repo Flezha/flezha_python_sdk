@@ -8,18 +8,29 @@ value in a list until the completion carries it.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+import asyncio
+import json
+from collections.abc import Generator, Iterable, Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 from . import codec as _codec
 from .builder import ChannelSpec, ClassSpec, ConsumerEdge, ProcNode, apply_transforms
-from .errors import EmitError
+from .errors import EmitError, SpawnError
 from .identity import entity_identity, stable_id
 
 if TYPE_CHECKING:
     from .native import Core
 
-__all__ = ["Ctx", "WorkflowCtx", "RESERVED_PREFIX"]
+__all__ = [
+    "Ctx",
+    "WorkflowCtx",
+    "SpawnHandle",
+    "SpawnResult",
+    "SpawnOutcome",
+    "IfRunning",
+    "RESERVED_PREFIX",
+]
 
 S = TypeVar("S")
 
@@ -38,6 +49,68 @@ ENTITY_STAMP = "flz.entity"
 SEQ_STAMP = "flz.seq"
 KEY_STAMP = "flz.key"
 
+#: What a spawn with an id does when that id is already running.
+IfRunning = Literal["deliver", "error"]
+
+#: How a spawn reached its instance.
+SpawnOutcome = Literal["spawned", "delivered", "skipped_on_replay"]
+
+#: The waiting read's own bound: none. The core ends every wait at the
+#: request's deadline, 30 seconds after it was made.
+_UNTIL_DEADLINE_MS = 2**64 - 1
+
+
+@dataclass(frozen=True, slots=True)
+class SpawnResult:
+    """A spawn that reached an instance: the id it resolved to, the caller's or
+    the generated one, and how. A replayed spawn without an id answers an empty
+    id, because the generated one exists only in the live run's answer."""
+
+    id: str
+    outcome: SpawnOutcome
+
+
+class SpawnHandle:
+    """The answer to one ``ctx.spawn_workflow``, read inside the invocation that
+    made it.
+
+    ``wait()`` blocks for the answer; ``try_result()`` never waits and answers
+    ``None`` while it is pending. Either raises a :class:`~flezha.errors.SpawnError`
+    subclass when the spawn reached no instance. A resolved handle answers every
+    read the same until the invocation ends, which releases it: a later read
+    raises :class:`~flezha.errors.CoreError`, and a failure no read collected is
+    logged once by the core. In an ``async def`` handler, ``await handle`` waits
+    on the event loop's default executor, so the loop keeps serving.
+    """
+
+    __slots__ = ("_bridge", "_handle")
+
+    def __init__(self, bridge: Core | Any, handle: int) -> None:
+        self._bridge = bridge
+        self._handle = handle
+
+    def wait(self) -> SpawnResult:
+        """Block for the answer, up to the core's deadline for the request."""
+        result = self._read(_UNTIL_DEADLINE_MS)
+        assert result is not None, "a read that reaches the deadline resolves to a timeout"
+        return result
+
+    def try_result(self) -> SpawnResult | None:
+        """The answer if it has arrived, else ``None``. Never waits."""
+        return self._read(0)
+
+    def __await__(self) -> Generator[Any, None, SpawnResult]:
+        return asyncio.to_thread(self.wait).__await__()
+
+    def _read(self, timeout_ms: int) -> SpawnResult | None:
+        answer = self._bridge.spawn_result(self._handle, timeout_ms)
+        if answer is None:
+            return None
+        fields = json.loads(answer)
+        if "error" in fields:
+            raise SpawnError.of(fields)
+        return SpawnResult(fields["id"], fields["outcome"])
+
 
 class Ctx(Generic[S]):
     """What a handler is handed alongside its input."""
@@ -50,6 +123,7 @@ class Ctx(Generic[S]):
         "_change_seq",
         "_now",
         "_bridge",
+        "_token",
         "_identity",
         "_ordinal",
         "_emit_ordinal",
@@ -75,6 +149,7 @@ class Ctx(Generic[S]):
         replay: bool,
         state: S,
         bridge: Core | Any,
+        token: int,
     ) -> None:
         self._spec = spec
         self._node = node
@@ -83,6 +158,7 @@ class Ctx(Generic[S]):
         self._change_seq = change_seq
         self._now = now
         self._bridge = bridge
+        self._token = token
         self._identity: bytes | None = None
         self._ordinal = 0
         # Separate from the `stable_id` ordinal on purpose: one counts
@@ -181,19 +257,44 @@ class Ctx(Generic[S]):
 
     def spawn_workflow(
         self,
-        instance_id: str,
         factory_id: str,
         payload: Any,
         *,
-        if_running: str = "deliver",
-    ) -> str:
-        """Spawn or deliver to a workflow instance."""
-        # A spawn is an external side effect. A replayed invocation must not
-        # issue it twice, and a timer must — a timer is internal state.
-        if self.replay:
-            return "skipped_on_replay"
-        return self._bridge.spawn_workflow(
-            instance_id, factory_id, _codec.encode(payload), if_running
+        id: str | None = None,
+        if_running: IfRunning | None = None,
+    ) -> SpawnHandle:
+        """Start a workflow instance of ``factory_id`` with ``payload`` as its
+        first input, and answer a :class:`SpawnHandle` at once.
+
+        Without ``id`` the controller generates one and always starts a new
+        instance: it can never deliver into a running one, a reissue after a
+        lost or timed-out answer starts a second instance, and a replay answers
+        an empty id. A caller who needs at most one instance, or the id on
+        replay, passes its own ``id``. With one, ``if_running`` decides what a
+        running instance under it gets: ``"deliver"`` (the default) feeds it
+        ``payload``, ``"error"`` resolves the handle to
+        :class:`~flezha.errors.SpawnAlreadyRunningError`.
+
+        Never waits and never raises a controller refusal: every answer comes
+        through the handle. A replayed invocation sends nothing and resolves to
+        ``skipped_on_replay``, where a timer registers again, because a spawn is
+        an external side effect and a timer is internal state.
+        """
+        if if_running is not None and not id:
+            raise ValueError(
+                f"{self._node.name}: if_running applies only to a running instance named by "
+                f"id; pass id= with if_running, or drop if_running to start a new instance"
+            )
+        return SpawnHandle(
+            self._bridge,
+            self._bridge.spawn_request(
+                self._token,
+                factory_id,
+                id or "",
+                _codec.encode(payload),
+                if_running or "",
+                self.replay,
+            ),
         )
 
     # -- what the dispatcher collects ---------------------------------------

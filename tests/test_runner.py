@@ -282,6 +282,34 @@ def test_a_boot_with_no_terminal_asks_the_core_to_watch_for_end_of_file(
     assert core.stdin_watch_grace_ms is not None
 
 
+def test_a_start_takes_the_factory_first_and_answers_the_id_and_the_outcome(
+    runner: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    core = FakeCore()
+    calls: list[tuple[str, Any]] = []
+    answers = iter(
+        [
+            {"id": "echo-k7m2qzxw4pd3fn2a", "outcome": "started"},
+            {"id": "my_echo", "outcome": "already_running"},
+        ]
+    )
+
+    def admin_call(verb: str, args: str) -> str:
+        calls.append((verb, json.loads(args)))
+        return json.dumps(next(answers))
+
+    monkeypatch.setattr(core, "admin_call", admin_call)
+    admin = runner().start(core=core).admin()
+    assert admin.start_operative("echo") == flezha.StartResult("echo-k7m2qzxw4pd3fn2a", "started")
+    assert admin.start_operative("echo", id="my_echo", init_values={"a": 1}) == flezha.StartResult(
+        "my_echo", "already_running"
+    )
+    assert calls == [
+        ("Operative.start", [{"factory_id": "echo"}]),
+        ("Operative.start", [{"factory_id": "echo", "id": "my_echo", "init_values": {"a": 1}}]),
+    ]
+
+
 def test_the_double_answers_every_call_a_host_can_make_on_a_core() -> None:
     """``native.Core.ENTRY_POINTS`` is asserted against the extension in
     ``test_native.py``; nothing held it against the double, which is hand written.

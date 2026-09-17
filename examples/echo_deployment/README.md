@@ -21,7 +21,7 @@ Then start an operative from the declaration the runner offers, and send it
 something:
 
 ```sh
-docker compose exec controller /flezha/bin/flz operative start my_echo echo
+docker compose exec controller /flezha/bin/flz operative start echo --id my_echo
 docker compose exec controller /flezha/bin/flz operative send my_echo --text 'hello world' --await 2000
 ```
 

@@ -208,6 +208,37 @@ def test_the_context_is_callable_from_a_thread_that_did_not_create_it() -> None:
         core.free()
 
 
+def test_a_spawn_with_no_control_plane_answers_unavailable_until_its_invocation_ends() -> None:
+    """The two spawn entries against the real core, in a local run, where
+    nothing listens on the control plane: every read inside the invocation
+    answers the same, and a read after it raises released."""
+    import flezha
+
+    reads: list[tuple[str, str, str]] = []
+    unread: list[flezha.SpawnHandle] = []
+
+    @flezha.procedure(name="spawner")
+    def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
+        handle = ctx.spawn_workflow("worker", value, id="w1")
+        for read in (handle.try_result, handle.wait):
+            try:
+                read()
+            except flezha.SpawnUnavailableError as error:
+                reads.append((error.reason, error.id, str(error)))
+        unread.append(ctx.spawn_workflow("worker", value))
+
+    @flezha.stream_operative("spawn_without_control_plane")
+    def operative(c: flezha.Channels) -> None:
+        c.input("in", codec="text").into(spawner).sink("out")
+
+    with flezha.LocalOperative.start(operative) as run:
+        run.feed("in", "p")
+        run.run_until_idle(10_000)
+        with pytest.raises(CoreError, match="released"):
+            unread[0].wait()
+    assert reads == [("unavailable", "w1", reads[0][2])] * 2
+
+
 def test_the_clock_needs_no_context() -> None:
     core = native.Core.create()
     try:

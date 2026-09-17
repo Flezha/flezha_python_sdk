@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 import pytest
@@ -620,3 +621,161 @@ def test_a_producer_side_fan_releases_one_keyed_frame_per_value_and_none_for_an_
     ]
     (effect,) = answered(wire_work(84, "fanned_edge", (0, b"")), deps)["effects"]
     assert (effect["verdict"], effect["outputs"]) == ("ok", [])
+
+
+# -- procedure-requested spawn -------------------------------------------------
+
+
+def test_a_spawn_returns_before_the_controller_answers_and_its_refusal_stays_in_the_handle(
+    fake_core: FakeCore,
+) -> None:
+    """The call never waits for the controller and never raises its refusal
+    into the procedure: the handle is pending until the answer arrives, and a
+    read is what raises it."""
+    fake_core.spawn_answer_after_s = 0.5
+    fake_core.spawn_answer = {
+        "error": "refused",
+        "message": "the controller refused the spawn: quota_exceeded",
+    }
+    seen: dict[str, Any] = {}
+
+    @flezha.procedure
+    def spawner(value: str, ctx: flezha.Ctx[None]) -> str:
+        began = time.monotonic()
+        handle = ctx.spawn_workflow("worker", value)
+        seen["returned_after_s"] = time.monotonic() - began
+        seen["pending"] = handle.try_result()
+        try:
+            handle.wait()
+        except flezha.SpawnRefusedError as refusal:
+            seen["refusal"] = refusal
+        return value
+
+    (effect,) = answered(work_activation(90, "p", factory="solo"), solo_deps(spawner, fake_core))[
+        "effects"
+    ]
+    assert seen["returned_after_s"] < fake_core.spawn_answer_after_s / 5
+    assert seen["pending"] is None
+    assert "quota_exceeded" in str(seen["refusal"])
+    assert (effect["verdict"], effect["outputs"][0]["payload"]) == ("ok", b"p")
+
+
+def test_a_spawn_without_an_id_asks_for_one_and_a_spawn_with_an_id_carries_it(
+    fake_core: FakeCore,
+) -> None:
+    results: list[flezha.SpawnResult] = []
+
+    @flezha.procedure
+    def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
+        results.append(ctx.spawn_workflow("worker", value).wait())
+        results.append(ctx.spawn_workflow("worker", value, id="w1").wait())
+
+    answered(work_activation(91, "p", factory="solo"), solo_deps(spawner, fake_core))
+    assert results == [
+        flezha.SpawnResult("worker-k7m2qzxw4pd3fn2a", "spawned"),
+        flezha.SpawnResult("w1", "spawned"),
+    ]
+    assert [
+        (s["token"], s["factory_id"], s["id"], s["payload"], s["if_running"], s["replay"])
+        for s in fake_core.spawns
+    ] == [
+        (91, "worker", "", codec.encode("p"), "", False),
+        (91, "worker", "w1", codec.encode("p"), "", False),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("reason", "kind"),
+    [
+        ("already_running", flezha.SpawnAlreadyRunningError),
+        ("factory_unknown", flezha.SpawnFactoryUnknownError),
+        ("refused", flezha.SpawnRefusedError),
+        ("timeout", flezha.SpawnTimeoutError),
+        ("unavailable", flezha.SpawnUnavailableError),
+    ],
+)
+def test_each_failure_a_read_meets_is_its_own_spawn_error(
+    fake_core: FakeCore, reason: str, kind: type[flezha.SpawnError]
+) -> None:
+    fake_core.spawn_answer = {"error": reason, "message": f"the spawn failed: {reason}"}
+    raised: list[flezha.SpawnError] = []
+
+    @flezha.procedure
+    def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
+        handle = ctx.spawn_workflow("worker", value, id="w1", if_running="error")
+        try:
+            handle.wait()
+        except flezha.SpawnError as error:
+            raised.append(error)
+
+    (effect,) = answered(work_activation(92, "p", factory="solo"), solo_deps(spawner, fake_core))[
+        "effects"
+    ]
+    (error,) = raised
+    assert type(error) is kind
+    assert isinstance(error, flezha.FlezhaError)
+    assert (error.reason, error.id, str(error)) == (reason, "w1", f"the spawn failed: {reason}")
+    assert fake_core.spawns[0]["if_running"] == "error"
+    assert effect["verdict"] == "ok"
+
+
+def test_if_running_without_an_id_is_refused_at_the_call_and_sends_nothing(
+    fake_core: FakeCore,
+) -> None:
+    @flezha.procedure
+    def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
+        ctx.spawn_workflow("worker", value, if_running="error")
+
+    (effect,) = answered(work_activation(93, "p", factory="solo"), solo_deps(spawner, fake_core))[
+        "effects"
+    ]
+    assert effect["message"].startswith("ValueError: ")
+    assert "if_running" in effect["message"]
+    assert "id=" in effect["message"]
+    assert fake_core.spawns == []
+
+
+def test_a_replayed_spawn_hands_the_replay_to_the_core_and_answers_the_id_it_was_given(
+    fake_core: FakeCore,
+) -> None:
+    """The core decides a replay sends nothing (asserted in its own suite); what
+    the SDK owns is handing it the flag and reading the answer."""
+    results: list[flezha.SpawnResult | None] = []
+
+    @flezha.procedure
+    def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
+        results.append(ctx.spawn_workflow("worker", value).try_result())
+        results.append(ctx.spawn_workflow("worker", value, id="w1").try_result())
+
+    activation = work_activation(94, "p", factory="solo")
+    activation["items"][0]["replay"] = True
+    answered(activation, solo_deps(spawner, fake_core))
+    assert results == [
+        flezha.SpawnResult("", "skipped_on_replay"),
+        flezha.SpawnResult("w1", "skipped_on_replay"),
+    ]
+    assert [spawn["replay"] for spawn in fake_core.spawns] == [True, True]
+
+
+def test_an_async_handler_awaits_a_spawn_while_its_loop_keeps_serving(fake_core: FakeCore) -> None:
+    fake_core.spawn_answer_after_s = 0.3
+    results: list[flezha.SpawnResult] = []
+
+    @flezha.procedure
+    async def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
+        results.append(await ctx.spawn_workflow("worker", value, id="w1"))
+
+    deps = solo_deps(spawner, fake_core)
+
+    async def serve() -> tuple[int, dict[str, Any]]:
+        ticks = 0
+        answering = asyncio.ensure_future(answer(work_activation(95, "p", factory="solo"), deps))
+        while not answering.done():
+            await asyncio.sleep(0.01)
+            ticks += 1
+        return ticks, await answering
+
+    ticks, result = asyncio.run(serve())
+    assert ticks >= 10, "the loop stalled while the handler waited for the spawn"
+    assert [effect["verdict"] for effect in result["effects"]] == ["ok"]
+    assert results == [flezha.SpawnResult("w1", "spawned")]
