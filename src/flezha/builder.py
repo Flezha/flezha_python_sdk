@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
 from . import codec as _codec
+from . import route_latest as _latest_router
 from .codec import ChannelCodec
 from .errors import DeclarationError
 from .procedure import Procedure
@@ -27,6 +28,7 @@ __all__ = [
     "Channels",
     "ConsumerEdge",
     "Edge",
+    "Merge",
     "ChannelSpec",
     "ClassSpec",
     "Link",
@@ -42,6 +44,7 @@ __all__ = [
 #: core derived from that same chain.
 Link = dict[str, Any]
 
+S = TypeVar("S")
 T = TypeVar("T")
 U = TypeVar("U")
 O = TypeVar("O")
@@ -52,9 +55,9 @@ class _Dropped:
 
     A dropped value is not ``None`` or ``False`` — both are values a handler may
     legitimately carry — so the marker is an object nothing else can produce. It
-    stops the transform chain: the item is consumed without reaching a handler,
-    and at the prepare crossing it answers no key, which is how the core learns
-    not to route it.
+    takes the value out of the transform chain: an item whose every value was
+    dropped is consumed without reaching a handler, and at the prepare crossing
+    it answers no key, which is how the core learns not to route it.
     """
 
     __slots__ = ()
@@ -69,19 +72,40 @@ class _Dropped:
 DROPPED = _Dropped()
 
 
-def apply_transforms(transforms: Iterable[Callable[[Any], Any]], value: Any) -> Any:
-    """Run an edge's transform chain, stopping at the first drop.
+class _Fanned:
+    """What a ``flat_map`` yields: several values where one arrived.
+
+    A marker rather than the iterable itself, so a ``map`` that legitimately
+    answers a list is not mistaken for a fan.
+    """
+
+    __slots__ = ("values",)
+
+    def __init__(self, values: Iterable[Any]) -> None:
+        self.values = list(values)
+
+
+def apply_transforms(transforms: Iterable[Callable[[Any], Any]], value: Any) -> list[Any]:
+    """Run an edge's transform chain over one value, answering every value it yields.
 
     One implementation for the three places a chain runs — an entry payload
     before its handler, a payload at the prepare crossing, and an emit on its
     way out — so a filter cannot mean one thing on one path and another
-    elsewhere.
+    elsewhere. The answer is a list because that is the shape the three
+    transforms share: a dropped value is the empty list, a mapped one a list of
+    one and a fan a list of many. A later link runs over every surviving value.
     """
+    values = [value]
     for transform in transforms:
-        value = transform(value)
-        if value is DROPPED:
-            return DROPPED
-    return value
+        yielded: list[Any] = []
+        for current in values:
+            answer = transform(current)
+            if isinstance(answer, _Fanned):
+                yielded.extend(answer.values)
+            elif answer is not DROPPED:
+                yielded.append(answer)
+        values = yielded
+    return values
 
 
 @dataclass(slots=True)
@@ -190,6 +214,7 @@ class Channels:
         self.beyond_window_policy_value = "process_as_arrival"
         self.compact_after_bytes_value: int | None = None
         self.sync_durability_flag = False
+        self.merge_groups = 0
 
     # -- class-level declarations ----------------------------------------
 
@@ -259,6 +284,46 @@ class Channels:
         self.channels.append(channel)
         return Edge(self, ("entry", channel), {})
 
+    def merge(self) -> Merge:
+        """Declare one procedure fed by several source edges.
+
+        Each ``from_`` names a source and the mapping that lifts its values into
+        the merged input, ``key_by`` keys the mapped value on every source, and
+        ``into`` closes the merge on its procedure.
+        """
+        return Merge(self)
+
+    def route_latest(
+        self, documents: Edge[Any], traffic: Edge[T], key: Callable[[T], Any]
+    ) -> Edge[tuple[str, Any]]:
+        """Hand the latest document to each key on that key's own next traffic.
+
+        Every key ``key`` reads off ``traffic`` receives each distinct document
+        once, as a ``(key, document)`` pair; a document whose class-codec bytes
+        equal the retained one is inert, and a key with no traffic receives
+        nothing. The node is ``route_latest``, so a second router in one
+        operative is named with :meth:`route_latest_named`.
+        """
+        return self._route_latest(documents, traffic, key, None)
+
+    def route_latest_named(
+        self, documents: Edge[Any], traffic: Edge[T], key: Callable[[T], Any], name: str
+    ) -> Edge[tuple[str, Any]]:
+        """:meth:`route_latest` under its own node name."""
+        return self._route_latest(documents, traffic, key, name)
+
+    def _route_latest(
+        self, documents: Edge[Any], traffic: Edge[T], key: Callable[[T], Any], name: str | None
+    ) -> Edge[tuple[str, Any]]:
+        # Unnamed passes no name, so the router is an unnamed mention of its
+        # procedure exactly as `into(proc)` is.
+        return (
+            self.merge()
+            .from_(documents, _latest_router.document_input)
+            .from_(traffic.map(key), _latest_router.traffic_input)
+            .into(_latest_router.ROUTER, name)
+        )
+
     def channel_codec(
         self, channel: ChannelSpec, codec: str | None, callable_: object
     ) -> ChannelCodec | None:
@@ -327,6 +392,46 @@ class Channels:
         return channel
 
 
+class Merge:
+    """One merge under construction: its sources, and the key they share.
+
+    The builder carries no merge rule of its own. A source named twice or a
+    merge of one source reaches the record as written, and the core refuses it.
+    """
+
+    __slots__ = ("_builder", "_sources", "_keys")
+
+    def __init__(self, builder: Channels) -> None:
+        self._builder = builder
+        self._sources: list[Edge[Any]] = []
+        self._keys: list[Callable[[Any], Any]] = []
+
+    def from_(self, source: Edge[S], mapping: Callable[[S], Any]) -> Merge:
+        """Add a source edge and the mapping that lifts its values into the merged input.
+
+        The mapping composes after any transform already declared on ``source``.
+        """
+        self._sources.append(source.map(mapping))
+        return self
+
+    def key_by(self, key: Callable[[Any], Any]) -> Merge:
+        """Key the merged procedure on the mapped value, from every source."""
+        self._keys.append(key)
+        return self
+
+    def into(self, proc: Procedure[Any, O], name: str | None = None) -> Edge[O]:
+        """Close the merge on a procedure, and answer that procedure's output edge."""
+        node = self._builder.node_for(proc, name)
+        group = self._builder.merge_groups
+        self._builder.merge_groups += 1
+        for source in self._sources:
+            # A second key is recorded as a second link, which the core refuses.
+            for key in self._keys:
+                source = source.key_by(key)
+            source._close(node, {"link": "merge", "procedure": node.index, "group": group})
+        return Edge(self._builder, ("procedure", node), {})
+
+
 class Edge(Generic[T]):
     """One edge under construction, carrying the type that flows on it.
 
@@ -370,6 +475,17 @@ class Edge(Generic[T]):
 
         return self._relink({"link": "transform"}, transforms=[*self._transforms, keep])
 
+    def flat_map(self, transform: Callable[[T], Iterable[U]]) -> Edge[U]:
+        """Turn every value on this edge into the values an iterable yields.
+
+        Each reaches the consumer on its own, and an empty iterable is a drop.
+        """
+
+        def fan(value: Any) -> Any:
+            return _Fanned(transform(value))
+
+        return self._relink({"link": "transform"}, transforms=[*self._transforms, fan])
+
     def key_by(self, key: Callable[[T], Any]) -> Edge[T]:
         """Route by a computed key: the consumer becomes a dynamic keyed procedure."""
         return self._relink({"link": "key"}, key_by=key)
@@ -404,18 +520,7 @@ class Edge(Generic[T]):
     def into(self, proc: Procedure[T, O], name: str | None = None) -> Edge[O]:
         """Wire this edge into a procedure."""
         node = self._builder.node_for(proc, name)
-        channel = self._channel()
-        recorded = self._record(channel, {"link": "into", "procedure": node.index})
-        # The transforms and the key belong to this edge, not to the channel:
-        # one channel may feed several procedures, and a chain declared before
-        # one `into` must not reach another. The edge is held under the chain
-        # that declared it and wired by ``validate`` from the core's own
-        # answer, so a re-declaration is judged there rather than here.
-        channel.chain_edges[recorded["chain"]] = ConsumerEdge(
-            procedure=node.index,
-            transforms=list(self._transforms),
-            key_by=self._pending.get("key_by"),
-        )
+        self._close(node, {"link": "into", "procedure": node.index})
         return Edge(self._builder, ("procedure", node), {})
 
     def sink(
@@ -467,6 +572,23 @@ class Edge(Generic[T]):
     @property
     def _transforms(self) -> list[Callable[[Any], Any]]:
         return self._pending.get("transforms", [])
+
+    def _close(self, node: ProcNode, link: Link) -> None:
+        """Close this edge's chain onto ``node`` with a terminator link.
+
+        The transforms and the key belong to this edge, not to the channel: one
+        channel may feed several procedures, and a chain declared before one
+        `into` must not reach another. The edge is held under the chain that
+        declared it and wired by ``validate`` from the core's own answer, so a
+        re-declaration is judged there rather than here.
+        """
+        channel = self._channel()
+        recorded = self._record(channel, link)
+        channel.chain_edges[recorded["chain"]] = ConsumerEdge(
+            procedure=node.index,
+            transforms=list(self._transforms),
+            key_by=self._pending.get("key_by"),
+        )
 
     def _with(self, **pending: Any) -> Edge[Any]:
         # Applied now, as the reference applies it: an option no terminator

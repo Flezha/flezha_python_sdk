@@ -15,11 +15,15 @@ from typing import Any
 
 import pytest
 
+import app
 import flezha
-from conftest import FakeCore, compensating, demo, deps_for, solo_deps, work_activation
+from conftest import FakeCore, compensating, demo, deps_for, echo, solo_deps, work_activation
 from flezha import codec, native
 from flezha.dispatch import DispatchDeps, answer, dispatch_now, run_now
 from flezha.errors import NonRetryableError
+
+fixtures = app.module("fixtures")
+fixture_support = app.module("fixture_support")
 
 
 def answered(activation: dict[str, Any], deps: DispatchDeps) -> dict[str, Any]:
@@ -139,6 +143,39 @@ def test_a_filtered_input_is_consumed_and_reaches_no_handler(fake_core: FakeCore
     assert effect["outputs"] == []
 
 
+def key_request(token: int, factory: str, *payloads: bytes, channel: int = 0) -> dict[str, Any]:
+    """One key request over wire payloads, as the veneer produces it."""
+    return {
+        "token": token,
+        "operative": "op",
+        "procedure": 0,
+        "change_seq": 0,
+        "factory": factory,
+        "kind": "key_request",
+        "key_request": {
+            "channel": channel,
+            "payloads": list(payloads),
+            "want_keys": True,
+            "want_event_time": False,
+        },
+    }
+
+
+def wire_work(
+    token: int,
+    factory: str,
+    *items: tuple[int, bytes],
+    procedure: int = 0,
+    entity: str | None = None,
+) -> dict[str, Any]:
+    """One work activation over wire payloads, ``(channel, payload)`` per item."""
+    activation = work_activation(token, *[None] * len(items), factory=factory, procedure=procedure)
+    activation["entity_key"] = entity
+    for item, (channel, payload) in zip(activation["items"], items, strict=True):
+        item.update(channel=channel, payload=payload)
+    return activation
+
+
 def test_a_key_request_answers_one_entry_per_payload(fake_core: FakeCore) -> None:
     @flezha.procedure(dynamic_entities=True)
     def routed(value: dict[str, str]) -> dict[str, str]:
@@ -150,23 +187,7 @@ def test_a_key_request_answers_one_entry_per_payload(fake_core: FakeCore) -> Non
 
     deps = deps_for(routed_op, fake_core)
 
-    result = answered(
-        {
-            "token": 9,
-            "operative": "op",
-            "procedure": 0,
-            "change_seq": 0,
-            "factory": "routed_op",
-            "kind": "key_request",
-            "key_request": {
-                "channel": 0,
-                "payloads": [json.dumps({"k": "a"}).encode(), json.dumps({"k": "b"}).encode()],
-                "want_keys": True,
-                "want_event_time": False,
-            },
-        },
-        deps,
-    )
+    result = answered(key_request(9, "routed_op", b'{"k": "a"}', b'{"k": "b"}'), deps)
     assert result["outcome"] == "prepared"
     assert [answer["keys"] for answer in result["prepared"]] == [["a"], ["b"]]
 
@@ -187,24 +208,8 @@ def test_a_per_payload_refusal_does_not_fail_the_whole_crossing(fake_core: FakeC
 
     deps = deps_for(picky_keys, fake_core)
 
-    result = answered(
-        {
-            "token": 10,
-            "operative": "op",
-            "procedure": 0,
-            "change_seq": 0,
-            "factory": "picky_keys",
-            "kind": "key_request",
-            "key_request": {
-                "channel": 0,
-                "payloads": [json.dumps({"k": "bad"}).encode(), json.dumps({"k": "ok"}).encode()],
-                "want_keys": True,
-                "want_event_time": False,
-            },
-        },
-        deps,
-    )
-    answers = result["prepared"]
+    crossing = key_request(10, "picky_keys", b'{"k": "bad"}', b'{"k": "ok"}')
+    answers = answered(crossing, deps)["prepared"]
     assert "no key" in answers[0]["error"]
     assert answers[1]["keys"] == ["ok"]
 
@@ -379,32 +384,9 @@ def _wf_emit_stream(c: flezha.Channels) -> None:
     _workflow_graph(c)
 
 
-def _handoff(factory: str, procedure: int, payload: bytes) -> dict[str, Any]:
-    """One work activation handing `payload` to `procedure` on the handoff channel."""
-    return {
-        "token": 50,
-        "operative": "op",
-        "procedure": procedure,
-        "change_seq": 0,
-        "factory": factory,
-        "kind": "work",
-        "items": [
-            {
-                "kind": "input",
-                "channel": 1,
-                "payload": payload,
-                "metadata": [],
-                "consumed_offset": None,
-                "replay": False,
-                "now": 0,
-            }
-        ],
-    }
-
-
 def _delivered(factory: str, procedure: int, payload: bytes, deps: DispatchDeps) -> list[Any]:
     _DELIVERED.clear()
-    (effect,) = answered(_handoff(factory, procedure, payload), deps)["effects"]
+    (effect,) = answered(wire_work(50, factory, (1, payload), procedure=procedure), deps)["effects"]
     assert effect["verdict"] == "ok"
     return list(_DELIVERED)
 
@@ -503,9 +485,138 @@ def test_plain_text_into_an_entry_naming_no_codec_never_reaches_the_handler(
     def record(value: Any) -> None:
         seen.append(value)
 
-    activation = work_activation(60, {"a": 1}, "placeholder", factory="solo")
-    activation["items"][1]["payload"] = b"hello"
+    activation = wire_work(60, "solo", (0, b'{"a": 1}'), (0, b"hello"))
     effects = answered(activation, solo_deps(record, fake_core))["effects"]
     assert [effect["verdict"] for effect in effects] == ["ok", "retryable"]
     assert effects[1]["message"].startswith("JSONDecodeError")
     assert seen == [{"a": 1}]
+
+
+# -- merge and flat_map ----------------------------------------------------------
+#
+# Driven over the test app's own `merged_input` and `transform_chain`. Both sink
+# keyed, so a work activation names the entity it is handed to.
+
+
+def _plugin_payloads(result: dict[str, Any]) -> list[bytes]:
+    return [
+        output["payload"]
+        for effect in result["effects"]
+        for output in effect["outputs"]
+        if output["target"] == "plugin"
+    ]
+
+
+def test_interleaved_merged_sources_each_reach_the_procedure_under_their_own_mapping(
+    fake_core: FakeCore,
+) -> None:
+    deps = deps_for(fixtures.merged_input_operative, fake_core)
+    activation = wire_work(
+        70, "merged_input", (0, b"MSFT:1"), (1, b"MSFT:2"), (0, b"MSFT:3"), entity="MSFT"
+    )
+    assert _plugin_payloads(answered(activation, deps)) == [
+        b"ticks:MSFT:1",
+        b"quotes:MSFT:2",
+        b"ticks:MSFT:3",
+    ]
+
+
+def test_a_merged_entry_source_is_keyed_on_its_mapped_value(fake_core: FakeCore) -> None:
+    deps = deps_for(fixtures.merged_input_operative, fake_core)
+    for channel in (0, 1):
+        result = answered(
+            key_request(71, "merged_input", b"AAPL:1", b"MSFT", channel=channel), deps
+        )
+        assert [answer["keys"] for answer in result["prepared"]] == [["AAPL"], ["MSFT"]]
+
+
+@flezha.stream_operative("merged_edge")
+def _merged_edge(c: flezha.Channels) -> None:
+    ticks = c.input("ticks", codec="text")
+    quotes = c.input("quotes", codec="text").into(echo)
+    c.merge().from_(ticks, fixtures.tagged("ticks")).from_(
+        quotes, fixtures.tagged("quotes")
+    ).key_by(lambda value: value["symbol"]).into(fixtures.merge_label).sink("merged")
+
+
+def test_an_inter_procedure_merge_source_is_mapped_and_keyed_as_it_is_released(
+    fake_core: FakeCore,
+) -> None:
+    deps = deps_for(_merged_edge, fake_core)
+    (effect,) = answered(wire_work(72, "merged_edge", (1, b"AAPL:2")), deps)["effects"]
+    (released,) = effect["outputs"]
+    assert (released["consumer"], released["key"]) == (1, "AAPL")
+    mapped = {"source": "quotes", "symbol": "AAPL", "payload": "AAPL:2"}
+    assert codec.decode(released["payload"]) == mapped
+
+    # Delivery applies nothing more: the producer already ran the edge.
+    activation = wire_work(
+        73, "merged_edge", (0, b"AAPL:1"), (2, released["payload"]), procedure=1, entity="AAPL"
+    )
+    assert _plugin_payloads(answered(activation, deps)) == [b"ticks:AAPL:1", b"quotes:AAPL:2"]
+
+
+def test_a_fan_of_three_runs_the_handler_three_times_under_one_effect(fake_core: FakeCore) -> None:
+    deps = deps_for(fixtures.transform_chain_operative, fake_core)
+    result = answered(wire_work(80, "transform_chain", (0, b"a:1,a:2,a:3"), entity="A"), deps)
+    (effect,) = result["effects"]
+    assert (effect["verdict"], effect["consumed_offset"]) == ("ok", 80)
+    assert _plugin_payloads(result) == [b"A:1", b"A:2", b"A:3"]
+
+
+def test_a_fan_then_key_by_answers_every_key_once_at_the_crossing(fake_core: FakeCore) -> None:
+    activation = key_request(81, "transform_chain", b"a:1,b:2,c:3", b"a:1,a:2", b"drop")
+    result = answered(activation, deps_for(fixtures.transform_chain_operative, fake_core))
+    assert [answer["keys"] for answer in result["prepared"]] == [["A", "B", "C"], ["A"], []]
+
+
+def test_an_entity_handed_a_fanned_payload_runs_only_the_values_keyed_to_it(
+    fake_core: FakeCore,
+) -> None:
+    """The core hands the raw payload to every key the crossing answered, and
+    each entity re-applies the chain."""
+    deps = deps_for(fixtures.transform_chain_operative, fake_core)
+    result = answered(wire_work(82, "transform_chain", (0, b"a:1,b:2,c:3"), entity="B"), deps)
+    assert _plugin_payloads(result) == [b"B:2"]
+
+
+@flezha.stream_operative("fanned_static")
+def _fanned_static(c: flezha.Channels) -> None:
+    c.input("in", codec="text").flat_map(lambda line: line.split(",")).into(
+        fixtures.static_entry
+    ).sink()
+
+
+def test_a_fan_into_a_static_consumer_runs_each_value_only_where_its_router_names(
+    fake_core: FakeCore,
+) -> None:
+    deps = deps_for(_fanned_static, fake_core)
+    crossing = key_request(85, "fanned_static", b"a:1,b:2,x:3")
+    assert [answer["keys"] for answer in answered(crossing, deps)["prepared"]] == [["a", "b", "d"]]
+    # `c` is named by no value, so it runs nothing even when handed the payload.
+    assert {
+        entity: _plugin_payloads(
+            answered(wire_work(86, "fanned_static", (0, b"a:1,b:2,x:3"), entity=entity), deps)
+        )
+        for entity in ("a", "b", "c", "d")
+    } == {"a": [b"a:1"], "b": [b"b:2"], "c": [], "d": [b"x:3"]}
+
+
+@flezha.stream_operative("fanned_edge")
+def _fanned_edge(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(echo).flat_map(
+        lambda line: [part for part in line.split(",") if part]
+    ).key_by(fixture_support.prefix).into(fixtures.transform_label)
+
+
+def test_a_producer_side_fan_releases_one_keyed_frame_per_value_and_none_for_an_empty_fan(
+    fake_core: FakeCore,
+) -> None:
+    deps = deps_for(_fanned_edge, fake_core)
+    (effect,) = answered(wire_work(83, "fanned_edge", (0, b"a:1,b:2")), deps)["effects"]
+    assert [(o["consumer"], o["key"], codec.decode(o["payload"])) for o in effect["outputs"]] == [
+        (1, "a", "a:1"),
+        (1, "b", "b:2"),
+    ]
+    (effect,) = answered(wire_work(84, "fanned_edge", (0, b"")), deps)["effects"]
+    assert (effect["verdict"], effect["outputs"]) == ("ok", [])

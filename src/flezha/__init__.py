@@ -24,7 +24,7 @@ idiomatic errors.
 from __future__ import annotations
 
 from .admin import Admin
-from .builder import DROPPED, Channels, Edge
+from .builder import DROPPED, Channels, Edge, Merge
 from .codec import ChannelCodec, TypeCodec, ValueCodec
 from .ctx import Ctx, WorkflowCtx
 from .entity_state import state
@@ -55,6 +55,7 @@ __all__ = [
     "workflow_operative",
     "Channels",
     "Edge",
+    "Merge",
     "Ctx",
     "WorkflowCtx",
     "Procedure",

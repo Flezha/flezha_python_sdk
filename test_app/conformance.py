@@ -38,9 +38,9 @@ FIXTURE = "test/fixtures/reference_topologies.txt"
 
 # The authoring surfaces this builder carries — the same list the app's
 # `conformance.json` declares. A row needing anything else is skipped BY NAME,
-# which is what makes the skip checkable. There is no merge terminator in this
-# SDK; the class flag a typed builder cannot spell is a plain builder call here.
-SURFACES = ("branch", "workflow", "sync_durability")
+# which is what makes the skip checkable. The class flag a typed builder cannot
+# spell is a plain builder call here.
+SURFACES = ("merge", "branch", "workflow", "sync_durability")
 
 # The two topologies the fixture cites rather than re-spells: this app's own
 # fixtures, the twins of its seven-column table.
@@ -136,7 +136,7 @@ class Interpreter:
         elif verb == "branch":
             self._branch(arg)
         elif verb == "merge":
-            raise AssertionError("this SDK carries no merge terminator; the row needs `merge`")
+            self._merge(builder, arg)
         else:
             self._dotted(builder, step)
 
@@ -154,6 +154,10 @@ class Interpreter:
         verb, arg = split_call(link)
         if verb == "map":
             return edge.map(lambda value: value)
+        if verb == "filter":
+            return edge.filter(lambda value: True)
+        if verb == "flat_map":
+            return edge.flat_map(lambda value: [value])
         if verb == "key":
             return edge.key_by(str)
         if verb == "named":
@@ -175,6 +179,14 @@ class Interpreter:
             # was built — one step earlier than the step that names it.
             return edge
         raise AssertionError(f"the fixture spells a link this interpreter does not map: {verb}")
+
+    def _merge(self, builder: flezha.Channels, arg: str) -> None:
+        """``merge(<proc>, <x>, <x>…)`` — every listed source under the identity mapping."""
+        role, *sources = (part.strip() for part in arg.split(","))
+        merge = builder.merge()
+        for source in sources:
+            merge.from_(self._handle(source), lambda value: value)
+        self._handles[role] = merge.into(self._procedure(role))
 
     def _branch(self, arg: str) -> None:
         """``branch(<x>, <n>)`` — the arms are empty: the row states how many."""

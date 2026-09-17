@@ -9,6 +9,7 @@ import pytest
 
 import flezha
 from conftest import Bumped, Counter, compensating, count_up, echo
+from flezha.builder import apply_transforms
 from flezha.testing import ProcedureTestHarness, ReplayMismatch, replay_equals
 
 
@@ -193,3 +194,32 @@ def test_the_harness_reports_a_string_and_a_dict_exactly_as_emitted() -> None:
         return f"echo: {value}"
 
     assert ProcedureTestHarness(emitter).feed("hi").outputs == [{"said": "hi"}, "echo: hi"]
+
+
+def test_the_router_delivers_each_document_once_on_each_keys_own_traffic() -> None:
+    c = flezha.Channels("routed")
+    config, trades = c.input("config"), c.input("trades")
+    c.route_latest(config, trades, lambda trade: trade["symbol"])
+    (router,) = c.procedures
+    assert router.name == "route_latest"
+    harness: ProcedureTestHarness[dict[str, Any]] = ProcedureTestHarness(router.proc)
+
+    def fed(entry: int, value: dict[str, Any]) -> list[Any]:
+        """Feed one value through the router's own source edge, as it is delivered."""
+        (mapped,) = apply_transforms(c.channels[entry].chain_edges[0].transforms, value)
+        return harness.feed(mapped).outputs
+
+    document = {"limit": 5}
+    assert fed(0, document) == []
+    # The pair crosses the class codec, which answers a tuple as a list.
+    assert fed(1, {"symbol": "A"}) == [["A", document]]
+    assert fed(1, {"symbol": "B"}) == [["B", document]]
+    assert fed(0, {"limit": 5}) == []
+    assert fed(1, {"symbol": "A"}) == []
+    assert harness.state == {"document": document, "version": 1, "delivered": {"A": 1, "B": 1}}
+
+    changed = {"limit": 7}
+    assert fed(0, changed) == []
+    assert fed(1, {"symbol": "A"}) == [["A", changed]]
+    assert harness.state["version"] == 2
+    assert harness.replay_equals()

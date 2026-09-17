@@ -17,7 +17,7 @@ from typing import Any, Generic, TypeVar
 
 from . import codec as _codec
 from .builder import Channels, ClassSpec
-from .dispatch import DispatchDeps, RegisteredClass, invoke, run_now
+from .dispatch import DispatchDeps, RegisteredClass, emit_returned, invoke, run_now
 from .entity_state import fold_restore
 from .errors import FlezhaError
 from .procedure import Procedure
@@ -195,9 +195,7 @@ class ProcedureTestHarness(Generic[S]):
             "change_seq": self._change_seq,
         }
         ctx, returned = run_now(invoke(self._entity, activation, self._deps, now, replay, body))
-        # A returned value is emitted, exactly as the dispatcher's work arm does.
-        if returned is not None:
-            ctx.emit(returned)
+        emit_returned(ctx, returned)
         self.log.extend(ctx.changes)
         self._change_seq += len(ctx.changes)
         self._timers.extend(timer for timer in ctx.timers if timer["register"])

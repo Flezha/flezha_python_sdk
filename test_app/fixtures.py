@@ -12,6 +12,7 @@ from __future__ import annotations
 import struct
 import sys
 import time
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 import flezha
@@ -226,6 +227,50 @@ def hybrid_channel_operative(c: flezha.Channels) -> None:
         lambda edge: edge.named("hybrid_indicator").into(hybrid_consumer),
         lambda edge: edge.sink(encode=hybrid_encode),
     )
+
+
+# -- merged_input ------------------------------------------------------------
+#
+# Two entry channels merged into one procedure. Each source's mapping tags the
+# value with the channel it came from, the merge keys on the symbol the mapping
+# read, and the emitted line is `<source>:<payload>`.
+
+
+def tagged(source: str) -> Callable[[str], dict[str, str]]:
+    def tag(payload: str) -> dict[str, str]:
+        return {"source": source, "symbol": prefix(payload), "payload": payload}
+
+    return tag
+
+
+@flezha.procedure(name="merge_label_procedure", dynamic_entities=True)
+def merge_label(value: dict[str, str]) -> str:
+    return f"{value['source']}:{value['payload']}"
+
+
+@flezha.stream_operative("merged_input")
+def merged_input_operative(c: flezha.Channels) -> None:
+    ticks = c.input("ticks", codec="text")
+    quotes = c.input("quotes", codec="text")
+    c.merge().from_(ticks, tagged("ticks")).from_(quotes, tagged("quotes")).key_by(
+        lambda value: value["symbol"]
+    ).into(merge_label).keyed().sink("merged")
+
+
+# -- transform_chain ---------------------------------------------------------
+#
+# Every value transform on one edge: `drop` is filtered out, a comma list fans
+# out into one value per element, each is upper-cased and keyed on its prefix.
+
+
+transform_label = passthrough("transform_label_procedure", dynamic_entities=True)
+
+
+@flezha.stream_operative("transform_chain")
+def transform_chain_operative(c: flezha.Channels) -> None:
+    c.input("trades", codec="text").filter(lambda trade: trade != "drop").flat_map(
+        lambda trade: trade.split(",")
+    ).map(str.upper).key_by(prefix).into(transform_label).keyed().sink("transformed")
 
 
 # -- entity_stress -----------------------------------------------------------
@@ -487,6 +532,8 @@ ALL: list[flezha.Operative] = [
     sugar_do_nothing_operative,
     sugar_store_input_operative,
     hybrid_channel_operative,
+    merged_input_operative,
+    transform_chain_operative,
     entity_stress_operative,
     bench_keyed_nopersist_operative,
     store_input_operative,

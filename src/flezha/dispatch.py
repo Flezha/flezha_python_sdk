@@ -34,6 +34,7 @@ __all__ = [
     "answer",
     "dispatch",
     "dispatch_now",
+    "emit_returned",
     "invoke",
     "run_now",
     "resolve",
@@ -261,15 +262,14 @@ def run_now(coroutine: Any) -> Any:
     )
 
 
-def value_of(channel: ChannelSpec | None, edge: ConsumerEdge | None, payload: Any) -> Any:
-    """A payload as the handler sees it.
+def values_of(channel: ChannelSpec | None, edge: ConsumerEdge | None, payload: Any) -> list[Any]:
+    """A payload as the handler sees it: every value the edge yields for it.
 
     The entry channel's decoder, or the class codec for a payload between
     procedures, then the consuming edge's transforms in declaration order.
-    :data:`~flezha.builder.DROPPED` when a filter rejected it. One function for
-    the two places a payload crosses in — an input item, and a payload at the
-    prepare crossing — so a filter cannot mean one thing on one path and
-    another on the other.
+    Empty when a filter rejected it. One function for the two places a payload
+    crosses in — an input item, and a payload at the prepare crossing — so a
+    filter cannot mean one thing on one path and another on the other.
     """
     if channel is not None and channel.decode is not None:
         decoded = channel.decode(payload)
@@ -392,7 +392,7 @@ async def _run_work(
     for item in activation.get("items") or ():
         now = item.get("now") or 0
         try:
-            ctx, returned = await invoke(
+            ctx, _ = await invoke(
                 entity,
                 activation,
                 deps,
@@ -400,11 +400,6 @@ async def _run_work(
                 bool(item.get("replay")),
                 lambda c, item=item: _run_item(entity, item, c),
             )
-            # A returned value is emitted; `None` emits nothing, which is the
-            # warmup gate. A handler that emits through the context returns
-            # nothing, so the two spellings compose rather than conflict.
-            if returned is not None and returned is not DROPPED:
-                ctx.emit(returned)
             effects.append(ctx.effect(item.get("consumed_offset")))
         except Exception as error:  # noqa: BLE001 - the verdict is the report
             # The traceback is a host diagnostic, not a record: the verdict
@@ -425,7 +420,15 @@ async def _run_work(
     return {"token": activation["token"], "outcome": "work", "effects": effects}
 
 
-async def _run_item(entity: Entity, item: dict[str, Any], ctx: Ctx[Any]) -> Any:
+def emit_returned(ctx: Ctx[Any], returned: Any) -> None:
+    """A returned value is emitted; `None` emits nothing, which is the warmup
+    gate. A handler that emits through the context returns nothing, so the two
+    spellings compose rather than conflict."""
+    if returned is not None and returned is not DROPPED:
+        ctx.emit(returned)
+
+
+async def _run_item(entity: Entity, item: dict[str, Any], ctx: Ctx[Any]) -> None:
     proc = entity.proc
     if item["kind"] == "timer":
         if proc.on_timer is None:
@@ -433,15 +436,19 @@ async def _run_item(entity: Entity, item: dict[str, Any], ctx: Ctx[Any]) -> Any:
                 f"{proc.name} registered a timer but declares no on_timer; registration is a "
                 f"runtime call, so this cannot be refused at declaration time"
             )
-        return await resolve(
-            proc.on_timer(
-                {
-                    "kind": item.get("timer_kind"),
-                    "scheduled_at": item.get("scheduled_at") or item.get("now") or 0,
-                },
-                ctx,
-            )
+        emit_returned(
+            ctx,
+            await resolve(
+                proc.on_timer(
+                    {
+                        "kind": item.get("timer_kind"),
+                        "scheduled_at": item.get("scheduled_at") or item.get("now") or 0,
+                    },
+                    ctx,
+                )
+            ),
         )
+        return
 
     channel = entity.registered.channel_at(item.get("channel") or 0)
     # This node's own edge off the channel: a transform chain declared before
@@ -454,12 +461,12 @@ async def _run_item(entity: Entity, item: dict[str, Any], ctx: Ctx[Any]) -> Any:
         channel is None or channel.kind == "entry" or entity.registered.spec.structured_workflow
     )
     edge = _edge_into(channel, entity.node.index) if untransformed else None
-    value = value_of(channel, edge, item.get("payload") or b"")
-    # A filtered value is consumed and reaches no handler. It still produces an
-    # effect, so its offset advances and nothing is retried.
-    if value is DROPPED:
-        return None
-    return await resolve(proc(value, ctx))
+    # A filtered value is consumed and reaches no handler, and a fanned one
+    # reaches it once per value. Either way the item produces one effect, so
+    # its offset advances once and nothing is retried.
+    for value in values_of(channel, edge, item.get("payload") or b""):
+        if edge is None or _routes_to(entity, edge, value):
+            emit_returned(ctx, await resolve(proc(value, ctx)))
 
 
 def _restore_fold(entity: Entity, activation: dict[str, Any]) -> dict[str, Any]:
@@ -486,20 +493,24 @@ def _prepare(activation: dict[str, Any], registered: RegisteredClass) -> dict[st
     answers: list[dict[str, Any]] = []
     for payload in request["payloads"]:
         try:
-            value = value_of(channel, edge, payload)
+            values = values_of(channel, edge, payload)
             # A filtered payload answers no key. For a dynamic consumer that is
             # what tells the core not to route it at all — the drop happens
             # before an entity is minted rather than inside one.
-            if value is DROPPED:
+            if not values:
                 answers.append({"keys": []})
                 continue
-            keys = _keys_for(request, edge, proc, value)
+            # A fanned payload answers every key its values name, once each.
+            keys: dict[str, None] = {}
+            if request["want_keys"]:
+                for value in values:
+                    keys.update(dict.fromkeys(_keys_of(edge, proc, value) or ()))
             event_time = (
-                proc.event_time_of(value)
+                proc.event_time_of(values[0])
                 if request["want_event_time"] and proc is not None and proc.event_time is not None
                 else None
             )
-            answers.append({"keys": keys, "event_time": event_time})
+            answers.append({"keys": list(keys), "event_time": event_time})
         except Exception as error:  # noqa: BLE001 - a per-payload refusal
             # A per-payload refusal enters the input channel's retry ladder; it
             # is not a failure of the crossing, whose other payloads still have
@@ -518,19 +529,30 @@ def _edge_into(channel: ChannelSpec | None, node: int) -> ConsumerEdge | None:
     return next((edge for edge in channel.consumers if edge.procedure == node), None)
 
 
-def _keys_for(
-    request: dict[str, Any],
-    edge: ConsumerEdge | None,
-    proc: Procedure[Any, Any] | None,
-    value: Any,
-) -> list[str]:
-    if not request["want_keys"]:
-        return []
+def _keys_of(
+    edge: ConsumerEdge | None, proc: Procedure[Any, Any] | None, value: Any
+) -> list[str] | None:
+    """The entity keys one value routes to: the edge's key, else the procedure's
+    router, else ``None`` when neither is declared."""
     if edge is not None and edge.key_by is not None:
         return [str(edge.key_by(value))]
     if proc is not None and proc.entities_for is not None:
         return proc.entities_of(value)
-    return []
+    return None
+
+
+def _routes_to(entity: Entity, edge: ConsumerEdge, value: Any) -> bool:
+    """Whether a value the edge yielded belongs to this entity.
+
+    The core hands an untransformed payload to every entity its crossing
+    named, and each re-applies the chain, so a fan across keys keeps only the
+    values keyed to the entity that received it. With no entity key, or no key
+    and no router to name one, every value belongs.
+    """
+    if entity.key is None:
+        return True
+    keys = _keys_of(edge, entity.proc, value)
+    return keys is None or entity.key in keys
 
 
 async def _run_workflow(

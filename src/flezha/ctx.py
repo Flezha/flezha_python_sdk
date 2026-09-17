@@ -12,7 +12,7 @@ from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from . import codec as _codec
-from .builder import DROPPED, ChannelSpec, ClassSpec, ConsumerEdge, ProcNode, apply_transforms
+from .builder import ChannelSpec, ClassSpec, ConsumerEdge, ProcNode, apply_transforms
 from .errors import EmitError
 from .identity import entity_identity, stable_id
 
@@ -227,9 +227,7 @@ class Ctx(Generic[S]):
                 self.outputs.append(self._workflow_output(channel, channel.consumers[0], value))
         else:
             for edge in channel.consumers:
-                output = self._edge_output(channel, edge, value, key, metadata)
-                if output is not None:
-                    self.outputs.append(output)
+                self.outputs.extend(self._edge_outputs(channel, edge, value, key, metadata))
         if channel.sink is not None:
             self.outputs.append(self._plugin_output(channel, value, key, metadata))
 
@@ -247,42 +245,43 @@ class Ctx(Generic[S]):
             "payload": _codec.encode(value),
         }
 
-    def _edge_output(
+    def _edge_outputs(
         self,
         channel: ChannelSpec,
         edge: ConsumerEdge,
         value: Any,
         key: str | None,
         metadata: Mapping[str, Any] | Iterable[tuple[str, Any]] | None,
-    ) -> dict[str, Any] | None:
-        """One consumer's frame: its own transforms, its own key, its own clock."""
+    ) -> list[dict[str, Any]]:
+        """One consumer's frames, one per value its transforms yield, each with
+        its own key and its own clock."""
+        consumer_proc = self._spec.procedures[edge.procedure].proc
+        outputs = []
         # Producer-side, in declaration order: the core routes on `(edge, key)`
         # and never evaluates a host closure.
-        transformed = apply_transforms(edge.transforms, value)
-        if transformed is DROPPED:
-            return None
-
-        resolved = key
-        if resolved is None and edge.key_by is not None:
-            resolved = edge.key_by(transformed)
-        if resolved is None:
-            resolved = self.entity_key
-
-        consumer_proc = self._spec.procedures[edge.procedure].proc
-        return {
-            "target": "edge",
-            "channel": channel.index,
-            "consumer": edge.procedure,
-            "plugin_channel": None,
-            "key": None if resolved is None else str(resolved),
-            "event_time": (
-                consumer_proc.event_time_of(transformed)
-                if consumer_proc.event_time is not None
-                else None
-            ),
-            "metadata": self._meta_list(metadata),
-            "payload": _codec.encode(transformed),
-        }
+        for transformed in apply_transforms(edge.transforms, value):
+            resolved = key
+            if resolved is None and edge.key_by is not None:
+                resolved = edge.key_by(transformed)
+            if resolved is None:
+                resolved = self.entity_key
+            outputs.append(
+                {
+                    "target": "edge",
+                    "channel": channel.index,
+                    "consumer": edge.procedure,
+                    "plugin_channel": None,
+                    "key": None if resolved is None else str(resolved),
+                    "event_time": (
+                        consumer_proc.event_time_of(transformed)
+                        if consumer_proc.event_time is not None
+                        else None
+                    ),
+                    "metadata": self._meta_list(metadata),
+                    "payload": _codec.encode(transformed),
+                }
+            )
+        return outputs
 
     def _plugin_output(
         self,

@@ -18,11 +18,15 @@ from typing import Any
 
 import pytest
 
+import app
 import contract
 import flezha
 from conftest import Bumped, Counter, count_up, declare, demo, echo
 from flezha import codec, graph
+from flezha.builder import apply_transforms
 from flezha.errors import DeclarationError, EmitError, UnrepresentableValueError
+
+fixtures = app.module("fixtures")
 
 
 def _derived(operative: flezha.Operative) -> list[tuple[object, ...]]:
@@ -453,6 +457,111 @@ def test_a_workflow_class_carries_its_effectively_once_declaration() -> None:
     declare(tier_workflow)
     assert tier_workflow.spec.effectively_once is True
     assert "effectively_once" not in graph.to_host_class_decl(tier_workflow.spec)
+
+
+# ---------------------------------------------------------------------------
+# Merge, the latest-document router and flat_map
+# ---------------------------------------------------------------------------
+
+
+def test_two_sources_merge_into_one_node_each_edge_under_its_own_mapping() -> None:
+    merged = fixtures.merged_input_operative
+    assert _derived(merged) == [
+        ("ticks", "entry", None, [0]),
+        ("quotes", "entry", None, [0]),
+        ("merged", "plugin", 0, []),
+    ]
+    ticks, quotes = merged.spec.channels[:2]
+    for channel, source in ((ticks, "ticks"), (quotes, "quotes")):
+        (edge,) = channel.consumers
+        (value,) = apply_transforms(edge.transforms, "AAPL:1")
+        assert value == {"source": source, "symbol": "AAPL", "payload": "AAPL:1"}
+        # The merge's one key, evaluated on the mapped value.
+        assert edge.key_by is not None and edge.key_by(value) == "AAPL"
+
+
+def _merge_refusal(sources: int) -> DeclarationError:
+    """The verdict on a merge naming one entry edge ``sources`` times."""
+
+    @flezha.stream_operative("merge_refused")
+    def refused(c: flezha.Channels) -> None:
+        merge, entry = c.merge(), c.input("in")
+        for _ in range(sources):
+            merge.from_(entry, fixtures.tagged("in"))
+        merge.into(echo)
+
+    with pytest.raises(DeclarationError) as caught:
+        declare(refused)
+    return caught.value
+
+
+def test_a_merge_of_one_source_is_refused_by_the_reference_name() -> None:
+    assert _merge_refusal(1).refusals == ["MergeTooFewSources"]
+
+
+def test_a_merge_naming_one_source_twice_is_refused_naming_the_channel() -> None:
+    refusal = _merge_refusal(2)
+    assert "DuplicateMergeSource" in refusal.refusals
+    assert "merge subscribes channel `in` twice" in str(refusal)
+
+
+def test_a_merge_source_already_wired_into_the_procedure_is_refused() -> None:
+    @flezha.stream_operative("merge_rewired")
+    def rewired(c: flezha.Channels) -> None:
+        entry = c.input("in")
+        entry.map(str.upper).into(echo)
+        c.merge().from_(entry, str.lower).from_(c.input("other"), str.lower).into(echo)
+
+    with pytest.raises(DeclarationError) as caught:
+        declare(rewired)
+    assert caught.value.refusals == ["EdgeAlreadyWired"]
+
+
+@flezha.procedure
+def routed_document(value: Any) -> None:
+    return None
+
+
+def test_the_router_is_one_route_latest_node_and_a_named_router_is_another() -> None:
+    @flezha.stream_operative("routers")
+    def routers(c: flezha.Channels) -> None:
+        trades = c.input("trades")
+        c.route_latest(c.input("config"), trades, lambda trade: trade["symbol"]).into(
+            routed_document
+        )
+        c.route_latest_named(
+            c.input("feature_flags"), trades, lambda trade: trade["desk"], "flags"
+        ).into(routed_document)
+
+    declare(routers)
+    assert [node.name for node in routers.spec.procedures] == [
+        "route_latest",
+        "routed_document",
+        "flags",
+    ]
+    assert routers.spec.procedures[0].proc.entity_mode == "single"
+
+
+def test_two_unnamed_routers_are_one_node_so_a_shared_traffic_edge_is_refused() -> None:
+    @flezha.stream_operative("unnamed_routers")
+    def routers(c: flezha.Channels) -> None:
+        trades = c.input("trades")
+        for documents in ("config", "feature_flags"):
+            c.route_latest(c.input(documents), trades, lambda trade: trade["symbol"])
+
+    with pytest.raises(DeclarationError) as caught:
+        declare(routers)
+    assert caught.value.refusals == ["EdgeAlreadyWired"]
+    assert [node.name for node in routers.spec.procedures] == ["route_latest"]
+
+
+def test_flat_map_fans_a_value_out_and_an_empty_fan_is_a_drop() -> None:
+    edge = flezha.Channels("fan").input("in").flat_map(lambda line: line.split(",")).map(str.upper)
+    assert apply_transforms(edge._transforms, "a,b,c") == ["A", "B", "C"]
+    empty = flezha.Channels("fan").input("in").flat_map(lambda line: [])
+    assert apply_transforms(empty._transforms, "a") == []
+    # A map answering a list is one value, not a fan.
+    assert apply_transforms([lambda line: line.split(",")], "a,b") == [["a", "b"]]
 
 
 # ---------------------------------------------------------------------------

@@ -12,11 +12,12 @@ import dataclasses
 
 import pytest
 
+import app
 import contract
 import flezha
-from conftest import declare
+from conftest import declare, echo
 from flezha import graph
-from flezha.builder import ClassSpec
+from flezha.builder import ClassSpec, Link
 
 _FIXTURE = contract.member("test/fixtures/host_class_decl_keys.txt")
 
@@ -193,6 +194,29 @@ def test_each_declaration_carries_the_python_language_byte(
     assert decl["factory_id"] == factory
     assert decl["sdk_lang"] == 7
     assert decl["change_format_id"] == 5
+
+
+def test_a_merge_serialises_each_source_as_a_chain_the_merge_link_closes() -> None:
+    """The mapping is a `transform` link and the key a `key` link, so the one
+    link a merge adds is the terminator the core reads the group off."""
+    merged = app.module("fixtures").merged_input_operative
+    chains = [channel["chains"] for channel in graph.to_host_class_decl(merged.spec)["channels"]]
+    source = [{"link": "transform"}, {"link": "key"}, {"link": "merge", "procedure": 0, "group": 0}]
+    assert chains[0] == chains[1] == [source]
+
+
+def test_flat_map_records_the_link_map_records() -> None:
+    def record(transform: str) -> list[list[Link]]:
+        c = flezha.Channels("fan")
+        edge = c.input("in")
+        getattr(edge, transform)(lambda line: line.split(",")).into(echo)
+        return c.channels[0].chains
+
+    assert (
+        record("flat_map")
+        == record("map")
+        == [[{"link": "transform"}, {"link": "into", "procedure": 0}]]
+    )
 
 
 # --- the keys a workflow class may not put on the wire ----------------------
