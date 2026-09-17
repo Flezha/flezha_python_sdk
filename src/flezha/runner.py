@@ -48,22 +48,32 @@ _STDIN_EOF_GRACE_MS = 5_000
 _started_slot = threading.Lock()
 
 
-def _operative_of(value: Operative | Procedure[Any, Any]) -> Operative:
-    """The operative a registration call was handed.
+def _declared_operative(value: Any) -> Operative | None:
+    """The operative a value declares, or ``None`` when it declares none.
 
-    An :class:`Operative` is itself; a short-form procedure carries the one it
-    generates. A procedure with no `sink` generates none, and saying so here is
-    what keeps the refusal at the call the author wrote.
+    An :class:`Operative` is itself and a short-form procedure carries the one
+    it generates; anything else — a plain procedure included — declares nothing.
+    The one place that knowledge lives, so a named registration and a module
+    sweep cannot disagree about what counts.
     """
     if isinstance(value, Operative):
         return value
-    generated = value.operative if isinstance(value, Procedure) else None
-    if generated is None:
+    return value.operative if isinstance(value, Procedure) else None
+
+
+def _operative_of(value: Operative | Procedure[Any, Any]) -> Operative:
+    """The operative a registration call was handed.
+
+    A procedure with no `sink` declares none, and saying so here is what keeps
+    the refusal at the call the author wrote.
+    """
+    operative = _declared_operative(value)
+    if operative is None:
         raise FlezhaError(
             f"`{getattr(value, 'name', value)}` is a procedure with no `sink`, so it declares no "
             f"operative; register the operative that wires it, or declare a `sink` on it"
         )
-    return generated
+    return operative
 
 
 class Runner:
@@ -118,10 +128,9 @@ class Runner:
                     f"imported: {error}"
                 ) from error
             for value in vars(module).values():
-                if isinstance(value, Operative):
-                    self._define(value)
-                elif isinstance(value, Procedure) and value.operative is not None:
-                    self._define(value.operative)
+                operative = _declared_operative(value)
+                if operative is not None:
+                    self._define(operative)
         return self
 
     def unregister_factory(self, operative: Operative | Procedure[Any, Any]) -> Runner:
