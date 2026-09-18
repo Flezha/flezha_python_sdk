@@ -50,8 +50,6 @@ def main() -> None:
     else:
         for operative in fixtures.ALL:
             runner.register_factory(operative)
-        for short_form in fixtures.SHORTHAND:
-            runner.register_factory(short_form)
         for operative in fixtures_workflow.ALL:
             runner.register_factory(operative)
 

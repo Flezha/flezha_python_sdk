@@ -32,7 +32,6 @@ from .executor import build as build_executor
 from .logger import logger
 from .native import ACTIVATION_SCHEMA_VERSION, Core, build_tier, load_extension
 from .operative import Operative
-from .procedure import Procedure
 
 __all__ = ["Runner", "create_runner", "ACTIVATION_SCHEMA_VERSION"]
 
@@ -47,32 +46,19 @@ _STDIN_EOF_GRACE_MS = 5_000
 _started_slot = threading.Lock()
 
 
-def _declared_operative(value: Any) -> Operative | None:
-    """The operative a value declares, or ``None`` when it declares none.
-
-    An :class:`Operative` is itself and a short-form procedure carries the one
-    it generates; anything else — a plain procedure included — declares nothing.
-    The one place that knowledge lives, so a named registration and a module
-    sweep cannot disagree about what counts.
-    """
-    if isinstance(value, Operative):
-        return value
-    return value.operative if isinstance(value, Procedure) else None
-
-
-def _operative_of(value: Operative | Procedure[Any, Any]) -> Operative:
+def _operative_of(value: object) -> Operative:
     """The operative a registration call was handed.
 
-    A procedure with no `sink` declares none, and saying so here is what keeps
-    the refusal at the call the author wrote.
+    A procedure declares none, and saying so here is what keeps the refusal at
+    the call the author wrote.
     """
-    operative = _declared_operative(value)
-    if operative is None:
+    if not isinstance(value, Operative):
         raise FlezhaError(
-            f"`{getattr(value, 'name', value)}` is a procedure with no `sink`, so it declares no "
-            f"operative; register the operative that wires it, or declare a `sink` on it"
+            f"`{getattr(value, '__name__', value)}` declares no operative; register the "
+            f"operative that wires it, or declare a single procedure as a whole operative with "
+            f"`@flezha.stream_operative(id=...)` or `@flezha.workflow_operative(id=...)`"
         )
-    return operative
+    return value
 
 
 class Runner:
@@ -101,8 +87,8 @@ class Runner:
         """The factory ids this runner currently declares."""
         return self._registry.ids() if self._started else [o.factory_id for o in self._operatives]
 
-    def register_factory(self, operative: Operative | Procedure[Any, Any]) -> Runner:
-        """Register an operative type of either kind, or a short-form procedure.
+    def register_factory(self, operative: Operative) -> Runner:
+        """Register an operative type of either kind, short form or full.
 
         The kind is read from what is handed in, never named by the call.
         Legal both before and after :meth:`start`; a post-start declaration
@@ -113,10 +99,10 @@ class Runner:
     def register_modules(self, *modules: str) -> Runner:
         """Import the named modules and register everything they declare.
 
-        Every :class:`~flezha.operative.Operative` the module holds, and the
-        operative every short-form procedure in it carries. No implicit package
-        scanning and no filesystem discovery: the modules are named, and one
-        that cannot be imported says so with the original error chained.
+        Every :class:`~flezha.operative.Operative` the module holds, short form
+        or full. No implicit package scanning and no filesystem discovery: the
+        modules are named, and one that cannot be imported says so with the
+        original error chained.
         """
         for name in modules:
             try:
@@ -127,12 +113,11 @@ class Runner:
                     f"imported: {error}"
                 ) from error
             for value in vars(module).values():
-                operative = _declared_operative(value)
-                if operative is not None:
-                    self._define(operative)
+                if isinstance(value, Operative):
+                    self._define(value)
         return self
 
-    def unregister_factory(self, operative: Operative | Procedure[Any, Any]) -> Runner:
+    def unregister_factory(self, operative: Operative) -> Runner:
         """Undeclare a type — the inverse of :meth:`register_factory`, taking what it took.
 
         Refuses one with live instances, and one never declared.

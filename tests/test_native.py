@@ -119,7 +119,7 @@ def _checkpoint_class(factory_id: str, declare: Any) -> dict[str, Any]:
     from flezha import graph
 
     @flezha.stream_operative(factory_id)
-    def operative(c: Any) -> None:
+    def operative(c: flezha.Channels) -> None:
         c.effectively_once()
         declare(c)
         c.input("input").into(echo, f"{factory_id}_procedure").keyed().sink("sink")

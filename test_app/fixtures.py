@@ -63,7 +63,7 @@ class CompareFilter:
     There is nothing to journal, so the procedure declares no change fold.
     """
 
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str | None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str | None:
         return value if ctx.state["comparable"] == value else None
 
     def initial_state(self, entity_key: str | None) -> dict[str, Any]:
@@ -86,8 +86,9 @@ STATIC_KEYS = ["a", "b", "c", "d"]
 class SeenLog:
     """The reference's `seen: Vec<String>` state and its append-only fold.
 
-    Three fixtures declare exactly this — the static entry, the partition relay
-    and the dynamic entity — and differ only in what they do after recording.
+    Four fixtures declare exactly this (the static entry, the sinkless short
+    form, the partition relay and the dynamic entity) and differ only in what
+    they do after recording.
     Sharing it is how the Ruby app spells the same thing.
     """
 
@@ -101,7 +102,7 @@ class SeenLog:
 class StaticEntry(SeenLog):
     """The static fan-out every static fixture shares."""
 
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
         ctx.change({"push": value})
         return value
 
@@ -153,20 +154,18 @@ def mixed_operative(c: flezha.Channels) -> None:
 
 # -- the §5 short forms ------------------------------------------------------
 #
-# One declaration each: the `sink` makes the procedure a whole operative of its
-# `kind`, and `runner.py` registers it as it registers any operative. No
-# hand-written operative stands beside them.
+# One operative declaration each, carrying a procedure body instead of a
+# channels body. No hand-written operative or procedure stands beside them.
 
 
-@flezha.procedure(
-    name="sugar_do_nothing", kind="stream", sink="sugar_do_nothing_echo", codec="text"
-)
+@flezha.stream_operative(id="sugar_do_nothing", sink="sugar_do_nothing_echo", codec="text")
 def sugar_do_nothing(value: str) -> str:
     return value
 
 
+@flezha.stream_operative(id="sugar_store_input", sink="sugar_store_sink", codec="text")
 class SugarStoreInput:
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
         ctx.change({"push": value})
         return value
 
@@ -177,35 +176,26 @@ class SugarStoreInput:
         state["text_inputs"].append(change["push"])
 
 
-sugar_store_input = flezha.procedure(
-    SugarStoreInput,
-    name="sugar_store_input",
-    kind="stream",
-    sink="sugar_store_sink",
-    codec="text",
-)
-
-
-@flezha.procedure(
-    name="sugar_named_input",
-    kind="stream",
-    sink="sugar_named_input_sink",
-    input="prices",
-    codec="text",
+@flezha.stream_operative(
+    id="sugar_named_input", sink="sugar_named_input_sink", input="prices", codec="text"
 )
 def sugar_named_input(value: str) -> str:
     return value
 
 
-@flezha.procedure(
-    name="sugar_workflow",
-    kind="workflow",
-    sink="sugar_workflow_placed",
-    input="order",
-    codec="text",
+@flezha.workflow_operative(
+    id="sugar_workflow", sink="sugar_workflow_placed", input="order", codec="text"
 )
 def sugar_workflow(order: str) -> str:
     return order
+
+
+@flezha.stream_operative(id="sugar_state_only", input="ticks", codec="text")
+class SugarStateOnly(SeenLog):
+    """No sink: what it was sent is proven by its state alone."""
+
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+        ctx.change({"push": value})
 
 
 # -- hybrid_channel ----------------------------------------------------------
@@ -312,7 +302,7 @@ class StressFanOut:
     #: the rest funnel back to one, which is the topology the stress exercises.
     targets: ClassVar[list[str]] = STRESS_KEYS
 
-    def process(self, value: str) -> str:
+    def run(self, value: str) -> str:
         return value
 
     def entities_for(self, value: str) -> list[str]:
@@ -346,7 +336,7 @@ def entity_stress_operative(c: flezha.Channels) -> None:
 
 
 class Candle:
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
         # `ctx.now()` IS the extracted event time under an event-time clock.
         event_time = ctx.now()
         ctx.change({"fold": event_time})
@@ -433,7 +423,7 @@ def wedge_probe_operative(c: flezha.Channels) -> None:
 
 
 class SessionTimeout:
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
         ctx.change({"touched": value})
         # A processing-time timer, because the answer to "nothing has arrived"
         # cannot be an event-time one: nothing would advance the clock.
@@ -466,7 +456,7 @@ def session_timeout_operative(c: flezha.Channels) -> None:
 
 
 class BoundedMailbox:
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
         ctx.change({"processed": True})
         return value
 
@@ -507,7 +497,7 @@ BOUNDED_MAILBOX = [
 
 
 class PartitionRelay(SeenLog):
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
         ctx.change({"push": value})
         ctx.emit(value, key=prefix(value))
 
@@ -526,7 +516,7 @@ def partition_relay_operative(c: flezha.Channels) -> None:
 
 
 class DynamicEntity(SeenLog):
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
         ctx.change({"push": value})
         return value
 
@@ -575,15 +565,6 @@ def spawn_requester_operative(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(spawn_requester).sink("out")
 
 
-#: The §5 short forms this app registers: each is the procedure itself, whose
-#: `sink` makes it a whole operative.
-SHORTHAND: list[Any] = [
-    sugar_do_nothing,
-    sugar_store_input,
-    sugar_named_input,
-    sugar_workflow,
-]
-
 #: Every operative this app registers, in declaration order.
 ALL: list[flezha.Operative] = [
     do_nothing_operative,
@@ -592,6 +573,11 @@ ALL: list[flezha.Operative] = [
     static_entity_operative,
     sugar_static_entity_operative,
     mixed_operative,
+    sugar_do_nothing,
+    SugarStoreInput,
+    sugar_named_input,
+    sugar_workflow,
+    SugarStateOnly,
     hybrid_channel_operative,
     merged_input_operative,
     transform_chain_operative,

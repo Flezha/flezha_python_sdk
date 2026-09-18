@@ -113,12 +113,12 @@ def durable_step(
 
         if gate is None:
 
-            def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+            def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
                 record(value, ctx)
 
         else:
 
-            async def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+            async def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
                 # A gated step waits BEFORE its change and its emit, so the kill
                 # window always finds it as the uncommitted producer while its
                 # sibling arm has committed.
@@ -516,7 +516,7 @@ class ChatReplyUndoable:
         else:
             state["said"].pop()
 
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
         ctx.change({"said": value})
         ctx.emit(f"reply:{value}")
 
@@ -598,7 +598,7 @@ class BenchTurn:
         state["turns"] += 1
         state["last"] = seen["turn"]
 
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
         ctx.change({"turn": value})
         ctx.emit(value)
 

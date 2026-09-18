@@ -39,7 +39,7 @@ class Seen:
 
 @procedure(name="tally", state=Count, change=Seen, dynamic_entities=True, idle_ttl_ms=300_000)
 class Tally:
-    def process(self, word: str, ctx: Ctx[Count]) -> None:
+    def run(self, word: str, ctx: Ctx[Count]) -> None:
         seen = ctx.state.seen + 1
         ctx.change(Seen(seen=seen))
         ctx.emit(f"{word} {seen}")

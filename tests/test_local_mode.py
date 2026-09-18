@@ -43,7 +43,7 @@ class Seen:
 class Tally:
     """One Entity per word, minted on first sight of it."""
 
-    def process(self, word: str, ctx: Ctx[Count]) -> None:
+    def run(self, word: str, ctx: Ctx[Count]) -> None:
         seen = ctx.state.seen + 1
         ctx.change(Seen(seen=seen))
         ctx.emit(f"{word} {seen}")

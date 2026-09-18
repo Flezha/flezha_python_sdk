@@ -96,7 +96,7 @@ class ModelUnavailable(Exception):
 class Agent:
     """One agent turn: call the model, act, record, emit."""
 
-    def process(self, prompt: str, ctx: flezha.Ctx[Conversation]) -> None:
+    def run(self, prompt: str, ctx: flezha.Ctx[Conversation]) -> None:
         # Deterministic and replay-stable: the n-th call of a replayed
         # invocation returns the n-th id of the original, so a retry does not
         # mint a second tool call for the same turn.
@@ -208,7 +208,7 @@ class SessionEvent:
 class SessionTurn:
     """One message of a session: open it, answer it, or end it."""
 
-    def process(self, message: Any, ctx: flezha.Ctx[Session]) -> None:
+    def run(self, message: Any, ctx: flezha.Ctx[Session]) -> None:
         # The first message is the start values; the session's goal is in them.
         if ctx.state.goal is None:
             goal = (message or {}).get("goal", "help the user")

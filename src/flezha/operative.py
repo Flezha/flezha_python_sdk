@@ -9,20 +9,30 @@ builds one:
     def echo(c: flezha.Channels) -> None:
         c.input("input").into(echo_proc).sink("out")
 
-A workflow operative is the same shape: a chain of procedures over a graph. Its
-declaration takes one parameter, annotated :class:`~flezha.builder.Channels` or
-not at all, and a function of any other shape is refused.
+A workflow operative is the same shape: a chain of procedures over a graph. A
+channels body takes one parameter, annotated :class:`~flezha.builder.Channels` or
+not at all.
+
+Handed a procedure body instead, a class with ``run`` or a function of any
+other shape, the same decorators declare the single-procedure short form:
+
+.. code-block:: python
+
+    @flezha.stream_operative(id="echo", sink="out", codec="text")
+    def echo(value: str) -> str:
+        return value
 """
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Unpack
 
 from . import codec as _codec
 from .builder import Channels, ClassSpec
 from .errors import DeclarationError
-from .procedure import positional_parameters
+from .procedure import Procedure, ProcedureSettings, output_type, positional_parameters
 
 __all__ = ["Operative", "stream_operative", "workflow_operative"]
 
@@ -35,7 +45,16 @@ class Operative:
     and starts no thread.
     """
 
-    __slots__ = ("factory_id", "kind", "declaration", "_options", "_spec", "__name__", "doc")
+    __slots__ = (
+        "factory_id",
+        "kind",
+        "declaration",
+        "procedure",
+        "_options",
+        "_spec",
+        "__name__",
+        "doc",
+    )
 
     def __init__(
         self,
@@ -43,10 +62,14 @@ class Operative:
         kind: str,
         declaration: Callable[..., Any],
         options: dict[str, Any],
+        procedure: Procedure[Any, Any] | None = None,
     ) -> None:
         self.factory_id = factory_id
         self.kind = kind
         self.declaration = declaration
+        #: A short form's generated procedure, named after the factory id and
+        #: wireable in another operative's body; ``None`` for a channels body.
+        self.procedure = procedure
         self._options = options
         self._spec: ClassSpec | None = None
         self.__name__ = getattr(declaration, "__name__", factory_id)
@@ -64,23 +87,19 @@ class Operative:
         return self._spec
 
     def _build_spec(self) -> ClassSpec:
-        options = dict(self._options)
-        persistent = options.pop("persistent", True)
-        if self.kind == "stream":
-            return self._stream_spec(persistent)
-        return self._workflow_spec(persistent, options)
+        return self._stream_spec() if self.kind == "stream" else self._workflow_spec()
 
     def _channels(self) -> Channels:
         builder = Channels(self.factory_id)
         self.declaration(builder)
         return builder
 
-    def _stream_spec(self, persistent: bool) -> ClassSpec:
+    def _stream_spec(self) -> ClassSpec:
         builder = self._channels()
         return ClassSpec(
             factory_id=self.factory_id,
             kind="stream",
-            persistent=persistent,
+            persistent=self._options["persistent"],
             procedures=builder.procedures,
             channels=builder.channels,
             effectively_once=builder.effectively_once_flag,
@@ -94,65 +113,173 @@ class Operative:
             sync_durability=builder.sync_durability_flag,
         )
 
-    def _workflow_spec(self, persistent: bool, options: dict[str, Any]) -> ClassSpec:
+    def _workflow_spec(self) -> ClassSpec:
         builder = self._channels()
+        options = self._options
         return ClassSpec(
             factory_id=self.factory_id,
             kind="workflow",
-            persistent=persistent,
+            persistent=options["persistent"],
             procedures=builder.procedures,
             channels=builder.channels,
             effectively_once=builder.effectively_once_flag,
-            sync_durability=bool(options.pop("sync_durability", False))
-            or builder.sync_durability_flag,
+            sync_durability=bool(options["sync_durability"]) or builder.sync_durability_flag,
             workflow={
-                "loop_mode": options.pop("loop_mode", "once"),
-                "rollback_mode": options.pop("rollback_mode", "all_or_nothing"),
-                "retry_attempts": options.pop("retry_attempts", None),
-                "retry_backoff_ms": options.pop("retry_backoff_ms", None),
-                "barrier_retry_attempts": options.pop("barrier_retry_attempts", None),
-                "max_duration_ms": options.pop("max_duration_ms", None),
-                "wake_after_ms": options.pop("wake_after_ms", None),
+                "loop_mode": options["loop_mode"],
+                "rollback_mode": options["rollback_mode"],
+                "retry_attempts": options["retry_attempts"],
+                "retry_backoff_ms": options["retry_backoff_ms"],
+                "barrier_retry_attempts": options["barrier_retry_attempts"],
+                "max_duration_ms": options["max_duration_ms"],
+                "wake_after_ms": options["wake_after_ms"],
             },
         )
 
 
-def _declares_channels(fn: Callable[..., Any]) -> bool:
-    names = positional_parameters(fn, skip_self=False)
+def _declares_channels(declaration: Any) -> bool:
+    if inspect.isclass(declaration):
+        return False
+    names = positional_parameters(declaration, skip_self=False)
     if len(names) != 1:
         return False
-    annotation = _codec.type_hints(fn).get(names[0])
+    annotation = _codec.type_hints(declaration).get(names[0])
+    if isinstance(annotation, str):
+        # Unresolvable where it was written (a function-local import under
+        # postponed evaluation), so read by the name it spells.
+        return annotation.rpartition(".")[2] == Channels.__name__
     return annotation is None or (isinstance(annotation, type) and issubclass(annotation, Channels))
 
 
 def _operative(
-    factory_id: str, kind: str, options: dict[str, Any]
-) -> Callable[[Callable[..., Any]], Operative]:
-    def decorate(declaration: Callable[..., Any]) -> Operative:
-        if kind == "workflow" and not _declares_channels(declaration):
+    decorator: Callable[..., Any],
+    factory_id: str | None,
+    kind: str,
+    options: dict[str, Any],
+    short_form: dict[str, Any],
+    settings: ProcedureSettings,
+) -> Callable[[Any], Operative]:
+    unknown = sorted(settings.keys() - ProcedureSettings.__optional_keys__)
+    if unknown:
+        raise TypeError(f"{decorator.__name__}() got an unexpected keyword argument {unknown[0]!r}")
+    defaults = inspect.signature(decorator).parameters
+    class_settings = [key for key, value in options.items() if value != defaults[key].default]
+
+    def decorate(declaration: Any) -> Operative:
+        name = getattr(declaration, "__name__", "<declaration>")
+        if factory_id is None:
+            raise DeclarationError(
+                "<operative>",
+                name,
+                "declares no `id`; a factory id is an address an operator types, so it is "
+                "written rather than derived from the declaration's name",
+            )
+        if not _declares_channels(declaration):
+            return _short_form(
+                factory_id, kind, declaration, options, class_settings, settings, **short_form
+            )
+        written = [key for key, value in short_form.items() if value is not None]
+        written += list(settings)
+        if written:
             raise DeclarationError(
                 factory_id,
-                getattr(declaration, "__name__", "<declaration>"),
-                "does not take one `flezha.Channels` parameter; a workflow declares a "
-                "`flezha.Channels` body",
+                name,
+                f"`{'`, `'.join(written)}` describe(s) what a short form generates, and a "
+                f"`flezha.Channels` body declares its own channels and procedures. A function "
+                f"whose one parameter is annotated `flezha.Channels`, or not at all, is a "
+                f"channels body",
             )
         return Operative(factory_id, kind, declaration, options)
 
     return decorate
 
 
+def _short_form(
+    factory_id: str,
+    kind: str,
+    body: Any,
+    options: dict[str, Any],
+    class_settings: list[str],
+    settings: ProcedureSettings,
+    *,
+    sink: str | None,
+    input: str | None,
+    codec: _codec.ChannelCodec | None,
+) -> Operative:
+    """One procedure body as a whole operative: its entry channel, the
+    procedure named after the factory id and declared with ``settings``, and
+    the sink when one is written."""
+    name = body.__name__
+    topology = [key for key in ("channels", "procedures") if hasattr(body, key)]
+    if inspect.isclass(body) and hasattr(body, "run") and topology:
+        raise DeclarationError(
+            factory_id,
+            name,
+            f"ShortFormWithTopology: `run` declares this operative's one procedure, whose "
+            f"topology is generated, and `{topology[0]}` declares a topology of its own; keep "
+            f"one of the two bodies",
+            refusals=["ShortFormWithTopology"],
+        )
+    if class_settings:
+        raise DeclarationError(
+            factory_id,
+            name,
+            f"writes `{'`, `'.join(class_settings)}`; a short form keeps every class setting at "
+            f"its default, so a class setting is declared in the full form, with a "
+            f"`flezha.Channels` body",
+        )
+    generated = Procedure(body, name=factory_id, **settings)
+    returned = output_type(generated)
+    if sink is not None and (returned is None or returned is type(None)):
+        raise DeclarationError(
+            factory_id,
+            name,
+            "SinkWithoutOutput: a `sink` requires an output type to feed the plugin; annotate "
+            "the body's return",
+            refusals=["SinkWithoutOutput"],
+        )
+
+    def channels(c: Channels) -> None:
+        edge = c.input(input or "input", codec=codec).into(generated)
+        if sink is not None:
+            edge.sink(sink)
+
+    channels.__name__ = name
+    channels.__doc__ = generated.doc
+    return Operative(factory_id, kind, channels, options, generated)
+
+
 def stream_operative(
-    factory_id: str, *, persistent: bool = True
-) -> Callable[[Callable[..., Any]], Operative]:
+    id: str | None = None,
+    *,
+    persistent: bool = True,
+    sink: str | None = None,
+    input: str | None = None,
+    codec: _codec.ChannelCodec | None = None,
+    **settings: Unpack[ProcedureSettings],
+) -> Callable[[Any], Operative]:
     """Declare a stream operative: fed by the controller through entry channels.
 
-    ``persistent`` is whether change bytes are flushed to the per-entity WAL.
+    ``id`` is the factory id. ``persistent`` is whether change bytes are flushed
+    to the per-entity WAL.
+
+    Over a procedure body this is the short form: an entry channel named by
+    ``input`` (``"input"`` when none is written) and decoded by ``codec``, the
+    procedure, and the ``sink`` plugin channel when one is written. ``settings`` are the
+    procedure's own declarations, as :func:`~flezha.procedure.procedure` takes
+    them.
     """
-    return _operative(factory_id, "stream", {"persistent": persistent})
+    return _operative(
+        stream_operative,
+        id,
+        "stream",
+        {"persistent": persistent},
+        {"sink": sink, "input": input, "codec": codec},
+        settings,
+    )
 
 
 def workflow_operative(
-    factory_id: str,
+    id: str | None = None,
     *,
     persistent: bool = True,
     loop_mode: str = "once",
@@ -163,10 +290,19 @@ def workflow_operative(
     max_duration_ms: int | None = None,
     wake_after_ms: int | None = None,
     sync_durability: bool = False,
-) -> Callable[[Callable[..., Any]], Operative]:
-    """Declare a workflow operative: a chain of procedures, run once or looping."""
+    sink: str | None = None,
+    input: str | None = None,
+    codec: _codec.ChannelCodec | None = None,
+    **settings: Unpack[ProcedureSettings],
+) -> Callable[[Any], Operative]:
+    """Declare a workflow operative: a chain of procedures, run once or looping.
+
+    Over a procedure body this is the short form, a ``once`` workflow whose
+    entry channel receives its start values; see :func:`stream_operative`.
+    """
     return _operative(
-        factory_id,
+        workflow_operative,
+        id,
         "workflow",
         {
             "persistent": persistent,
@@ -179,4 +315,6 @@ def workflow_operative(
             "wake_after_ms": wake_after_ms,
             "sync_durability": sync_durability,
         },
+        {"sink": sink, "input": input, "codec": codec},
+        settings,
     )

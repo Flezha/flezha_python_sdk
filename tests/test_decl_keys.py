@@ -57,7 +57,7 @@ class Keyed:
     rather than the subset a simpler fixture would produce.
     """
 
-    def process(self, value: dict[str, int], ctx: flezha.Ctx[Everything]) -> None:
+    def run(self, value: dict[str, int], ctx: flezha.Ctx[Everything]) -> None:
         ctx.change({"by": 1})
 
     def initial_state(self, key: str | None) -> Everything:
@@ -92,7 +92,7 @@ keyed = flezha.procedure(
 
 
 class Statics:
-    def process(self, value: dict[str, int], ctx: flezha.Ctx[None]) -> None:
+    def run(self, value: dict[str, int], ctx: flezha.Ctx[None]) -> None:
         return None
 
     def entities_for(self, value: dict[str, int]) -> list[str]:
@@ -310,12 +310,12 @@ def _bytes(value: object) -> bytes:
 
 
 class HybridProducer:
-    def process(self, value: str, ctx: flezha.Ctx[None]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
         ctx.emit(value)
 
 
 class HybridConsumer:
-    def process(self, value: str, ctx: flezha.Ctx[None]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
         return None
 
 
@@ -331,12 +331,12 @@ def hybrid_channel(c: flezha.Channels) -> None:
 
 
 class TierCommitA:
-    def process(self, value: str, ctx: flezha.Ctx[None]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
         ctx.emit(value, key="job")
 
 
 class BlockB:
-    def process(self, value: str, ctx: flezha.Ctx[None]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
         return None
 
 

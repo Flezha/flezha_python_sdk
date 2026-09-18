@@ -19,7 +19,7 @@ class KeyedUpsert:
     """The reference's `TierStoreState` and its upsert fold.
 
     `tier_store`, `checkpoint_store` and `bench_checkpoint` are the same keyed
-    upsert under three acknowledgement postures; only `process` differs.
+    upsert under three acknowledgement postures; only `run` differs.
     """
 
     def initial_state(self, entity_key: str | None) -> dict[str, Any]:
@@ -36,7 +36,7 @@ class KeyedUpsert:
 
 
 class TierStore(KeyedUpsert):
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
         if value.partition(":")[2] == "poison":
             raise ValueError("poison value")
         self.upsert(value, ctx)
@@ -59,7 +59,7 @@ def bench_keyed_nopersist_operative(c: flezha.Channels) -> None:
 class StoreInput:
     """The durable-state reference: every input is appended through a change."""
 
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
         ctx.change({"push_text": value})
         return value
 
@@ -84,7 +84,7 @@ def counter_entry(value: str) -> int:
 
 
 class Counter:
-    def process(self, value: int, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: int, ctx: flezha.Ctx[dict[str, Any]]) -> None:
         ctx.change({"delta": value})
 
     def initial_state(self, entity_key: str | None) -> dict[str, Any]:
@@ -135,7 +135,7 @@ class Tick:
     way, so replay produces the same state.
     """
 
-    def process(self, value: dict[str, int], ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: dict[str, int], ctx: flezha.Ctx[dict[str, Any]]) -> None:
         ctx.change(dict(value))
 
     def initial_state(self, entity_key: str | None) -> dict[str, Any]:
@@ -156,7 +156,7 @@ def coalescing_counter_operative(c: flezha.Channels) -> None:
 class ResumeProbe:
     """Emits the running total, so a resume is observable on the wire."""
 
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> bytes:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> bytes:
         delta = _as_int(value)
         total = ctx.state["total"] + delta
         ctx.change({"add": delta})
@@ -201,7 +201,7 @@ def bench_keyed_operative(c: flezha.Channels) -> None:
 
 
 class EvolvingCartV1:
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> bytes:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> bytes:
         delta = _as_int(value)
         total = ctx.state["total"] + delta
         ctx.change({"add": delta})
@@ -215,7 +215,7 @@ class EvolvingCartV1:
 
 
 class EvolvingCartV2:
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> bytes:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> bytes:
         delta = _as_int(value)
         total = ctx.state["total"] + delta
         currency = ctx.state.get("currency") or "EUR"
@@ -281,7 +281,7 @@ def tier_store_operative(c: flezha.Channels) -> None:
 class CheckpointStore(KeyedUpsert):
     """``tier_store``'s twin, whose interval closes on a `commit:` input."""
 
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
         if value.partition(":")[0] == "commit":
             ctx.checkpoint()
             return
@@ -315,7 +315,7 @@ def checkpoint_batched_operative(c: flezha.Channels) -> None:
 class BenchCheckpoint(KeyedUpsert):
     """``checkpoint_store`` driven by a DECLARED cadence rather than an input."""
 
-    def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
         self.upsert(value, ctx)
 
 

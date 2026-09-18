@@ -41,7 +41,7 @@ def traffic_input(key: Any) -> dict[str, Any]:
 class LatestRouter:
     """Retains the latest document and owes each key one delivery per version."""
 
-    def process(self, value: dict[str, Any], ctx: Ctx[dict[str, Any]]) -> None:
+    def run(self, value: dict[str, Any], ctx: Ctx[dict[str, Any]]) -> None:
         state = ctx.state
         if "document" in value:
             document = value["document"]

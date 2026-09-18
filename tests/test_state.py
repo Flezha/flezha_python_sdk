@@ -109,7 +109,7 @@ def test_a_declared_state_survives_a_nested_fold() -> None:
         depth: int = 0
 
     class Folding:
-        def process(self, value: str, ctx: flezha.Ctx[Nested]) -> None:
+        def run(self, value: str, ctx: flezha.Ctx[Nested]) -> None:
             ctx.change({"item": value})
 
         def initial_state(self, key: str | None) -> Nested:

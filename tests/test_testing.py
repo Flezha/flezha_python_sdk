@@ -59,7 +59,7 @@ def test_the_replay_gate_reports_both_states_on_a_mismatch() -> None:
     drift = {"n": 0}
 
     class Impure:
-        def process(self, value: str, ctx: flezha.Ctx[dict[str, int]]) -> None:
+        def run(self, value: str, ctx: flezha.Ctx[dict[str, int]]) -> None:
             ctx.change({"by": 1})
 
         def initial_state(self, key: str | None) -> dict[str, int]:
@@ -82,7 +82,7 @@ def test_the_replay_gate_catches_a_mutation_that_recorded_no_change() -> None:
     """The gate catches what the state guard cannot: an unguarded state shape."""
 
     class Sneaky:
-        def process(self, value: str, ctx: flezha.Ctx[dict[str, int]]) -> None:
+        def run(self, value: str, ctx: flezha.Ctx[dict[str, int]]) -> None:
             # A plain dict is not a declared state, so nothing refuses this —
             # the replay gate is what reports it.
             ctx.state["total"] = ctx.state["total"] + 1
@@ -104,7 +104,7 @@ def test_timers_are_recorded_and_fired() -> None:
     fired: list[int] = []
 
     class Timed:
-        def process(self, value: str, ctx: flezha.Ctx[None]) -> None:
+        def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
             ctx.timer_after(1000)
 
         def on_timer(self, timer: dict[str, object], ctx: flezha.Ctx[None]) -> None:
@@ -122,7 +122,7 @@ def test_event_time_is_advanced_through_the_registered_timers() -> None:
     fired: list[int] = []
 
     class EventTimed:
-        def process(self, value: dict[str, int], ctx: flezha.Ctx[None]) -> None:
+        def run(self, value: dict[str, int], ctx: flezha.Ctx[None]) -> None:
             ctx.timer_at_event_time(value["at"])
 
         def on_timer(self, timer: dict[str, object], ctx: flezha.Ctx[None]) -> None:

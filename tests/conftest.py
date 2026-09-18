@@ -52,7 +52,7 @@ class Bumped:
 class CountUp:
     """A stateful procedure in the class spelling."""
 
-    def process(self, value: str, ctx: flezha.Ctx[Counter]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[Counter]) -> None:
         ctx.change(Bumped(by=len(value)))
         ctx.emit({"total": ctx.state.count})
 
@@ -295,7 +295,7 @@ def compensating(seen: list[Any]) -> Any:
     """
 
     class Compensating:
-        def process(self, value: str, ctx: flezha.Ctx[None]) -> None:
+        def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
             ctx.emit(value)
 
         def compensate(self, outputs: list[Any], ctx: flezha.Ctx[None]) -> None:

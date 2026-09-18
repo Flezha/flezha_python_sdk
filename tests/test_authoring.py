@@ -232,7 +232,7 @@ def test_an_extractor_without_an_event_time_clock_is_refused() -> None:
     """
 
     class Timed:
-        def process(self, value: dict[str, int]) -> dict[str, int]:
+        def run(self, value: dict[str, int]) -> dict[str, int]:
             return value
 
         def event_time(self, value: dict[str, int]) -> int:
@@ -244,7 +244,7 @@ def test_an_extractor_without_an_event_time_clock_is_refused() -> None:
 
 def test_apply_change_without_initial_state_is_refused() -> None:
     class Folding:
-        def process(self, value: str) -> str:
+        def run(self, value: str) -> str:
             return value
 
         def apply_change(self, state: dict[str, int], change: dict[str, int]) -> None:
@@ -261,7 +261,7 @@ def test_an_unrepresentable_state_field_is_refused_naming_it() -> None:
         conn: object = field(default_factory=lambda: socket.socket())
 
     class Holder:
-        def process(self, value: str) -> str:
+        def run(self, value: str) -> str:
             return value
 
         def initial_state(self, key: str | None) -> WithSocket:
@@ -269,14 +269,6 @@ def test_an_unrepresentable_state_field_is_refused_naming_it() -> None:
 
     with pytest.raises(UnrepresentableValueError, match="conn"):
         flezha.procedure(Holder)
-
-
-def test_a_workflow_that_is_not_a_channels_body_is_refused() -> None:
-    with pytest.raises(DeclarationError, match="a workflow declares a `flezha.Channels` body"):
-
-        @flezha.workflow_operative("args_and_ctx")
-        def args_and_ctx(args: dict[str, str], ctx: flezha.Ctx[None]) -> None:
-            return None
 
 
 def test_a_workflow_that_declares_no_procedure_is_refused() -> None:
@@ -670,87 +662,219 @@ def test_a_codec_and_a_callable_together_are_refused() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _short_form_spec(procedure: Any) -> Any:
-    """The spec the short form's generated operative builds."""
-    return procedure.operative.spec
+def _decodes_text(operative: flezha.Operative) -> bool:
+    decode = operative.spec.channels[0].decode
+    return decode is not None and decode(b"abc") == "abc"
 
 
 def test_a_stream_short_form_is_its_hand_written_twin() -> None:
-    @flezha.procedure(name="upcase", kind="stream", sink="out", codec="text")
+    @flezha.stream_operative(id="upcase", sink="out", codec="text")
     def upcase(value: str) -> str:
         return value.upper()
 
-    @flezha.procedure(name="upcase_twin")
-    def upcase_twin(value: str) -> str:
+    @flezha.procedure(name="upcase")
+    def upcase_procedure(value: str) -> str:
         return value.upper()
 
-    @flezha.stream_operative("upcase_twin")
+    @flezha.stream_operative("upcase")
     def twin(c: flezha.Channels) -> None:
-        c.input("input", codec="text").into(upcase_twin).sink("out")
+        c.input("input", codec="text").into(upcase_procedure).sink("out")
 
-    short, hand = _short_form_spec(upcase), twin.spec
-    assert short.kind == hand.kind == "stream"
-    assert short.factory_id == "upcase"
-    assert [(c.name, c.kind) for c in short.channels] == [(c.name, c.kind) for c in hand.channels]
+    assert upcase.kind == "stream"
+    assert graph.to_host_class_decl(upcase.spec) == graph.to_host_class_decl(twin.spec)
+    assert _decodes_text(upcase)
 
 
-def test_a_workflow_short_form_is_a_once_workflow() -> None:
-    @flezha.procedure(name="place", kind="workflow", sink="placed", input="order", codec="text")
-    def place(value: str) -> str:
+def test_a_workflow_short_form_is_its_hand_written_twin() -> None:
+    @flezha.workflow_operative(id="place", sink="placed", input="order", codec="text")
+    def place(order: str) -> str:
+        return order
+
+    @flezha.procedure(name="place")
+    def place_procedure(order: str) -> str:
+        return order
+
+    @flezha.workflow_operative("place")
+    def twin(c: flezha.Channels) -> None:
+        c.input("order", codec="text").into(place_procedure).sink("placed")
+
+    assert place.kind == "workflow"
+    record = graph.to_host_class_decl(place.spec)
+    assert record == graph.to_host_class_decl(twin.spec)
+    assert record["workflow"]["loop_mode"] == "once"
+
+
+def test_a_short_form_with_no_sink_declares_its_entry_and_its_procedure_only() -> None:
+    state_only = fixtures.SugarStateOnly
+    assert _derived(state_only) == [("ticks", "entry", None, [0])]
+    assert [node.name for node in state_only.spec.procedures] == ["sugar_state_only"]
+    assert _decodes_text(state_only)
+
+
+def test_a_channels_body_annotated_or_not_is_still_the_full_form() -> None:
+    def bare(c) -> None:
+        c.input("input").into(echo).sink("out")
+
+    @flezha.stream_operative(id="static_entity")
+    def static_entity(c: flezha.Channels) -> None:
+        bare(c)
+
+    for full in (static_entity, flezha.stream_operative(id="bare")(bare)):
+        assert full.procedure is None
+        assert [node.name for node in full.spec.procedures] == ["echo"]
+
+
+def test_a_function_taking_a_context_is_a_procedure_body() -> None:
+    @flezha.stream_operative(id="stamp", sink="out")
+    def stamp(value: str, ctx: flezha.Ctx[None]) -> str:
         return value
 
-    spec = _short_form_spec(place)
-    assert spec.kind == "workflow"
-    assert spec.workflow["loop_mode"] == "once"
-    assert [c.name for c in spec.channels] == ["order", "placed"]
+    assert [node.name for node in stamp.spec.procedures] == ["stamp"]
 
 
-def test_a_sink_without_a_name_is_refused() -> None:
+def test_the_generated_procedure_composes_in_another_topology() -> None:
+    @flezha.stream_operative(id="upcase", sink="out")
+    def upcase(value: str) -> str:
+        return value.upper()
+
+    generated = upcase.procedure
+    assert generated is not None
+    assert generated("abc") == "ABC"
+
+    @flezha.stream_operative("wider")
+    def wider(c: flezha.Channels) -> None:
+        c.input("in").into(generated).into(echo).sink("out")
+
+    declare(wider)
+    assert [node.name for node in wider.spec.procedures] == ["upcase", "echo"]
+
+
+@pytest.mark.parametrize("topology", ["channels", "procedures"])
+def test_a_procedure_body_beside_a_topology_body_is_refused(topology: str) -> None:
+    class Both:
+        def run(self, value: str) -> str:
+            return value
+
+    setattr(Both, topology, lambda self, c: None)
     with pytest.raises(DeclarationError) as caught:
+        flezha.stream_operative(id="both", sink="out")(Both)
 
-        @flezha.procedure(kind="stream", sink="out")
+    assert caught.value.refusals == ["ShortFormWithTopology"]
+    assert caught.value.defect.startswith("ShortFormWithTopology")
+
+
+def _returns_none(value: str) -> None:
+    del value
+
+
+def _returns_unannotated(value: str):
+    return value
+
+
+@pytest.mark.parametrize("body", [_returns_none, _returns_unannotated])
+def test_a_sink_on_a_body_with_no_output_is_refused(body: Callable[[str], Any]) -> None:
+    with pytest.raises(DeclarationError) as caught:
+        flezha.stream_operative(id="drain", sink="out")(body)
+
+    assert caught.value.refusals == ["SinkWithoutOutput"]
+    assert caught.value.defect.startswith("SinkWithoutOutput")
+
+
+def test_an_absent_id_is_refused_rather_than_derived() -> None:
+    with pytest.raises(DeclarationError, match="`id`"):
+
+        @flezha.stream_operative(sink="out")
         def upcase(value: str) -> str:
             return value
 
-    assert "SinkWithoutId" in caught.value.refusals
-    assert str(caught.value.defect).startswith("SinkWithoutId")
+    with pytest.raises(DeclarationError, match="`id`"):
+
+        @flezha.workflow_operative()
+        def full(c: flezha.Channels) -> None:
+            c.input("in").into(echo).sink("out")
 
 
-def test_a_sink_without_a_kind_is_refused() -> None:
+@pytest.mark.parametrize("keyword", ["kind", "sink", "input", "codec"])
+def test_an_operative_keyword_on_a_procedure_is_refused(keyword: str) -> None:
+    declarations: dict[str, Any] = {keyword: "text"}
     with pytest.raises(DeclarationError) as caught:
 
-        @flezha.procedure(name="upcase", sink="out")
+        @flezha.procedure(name="upcase", **declarations)
         def upcase(value: str) -> str:
             return value
 
-    assert "SinkWithoutKind" in caught.value.refusals
+    assert f"`{keyword}`" in str(caught.value)
+    assert "flezha.stream_operative" in str(caught.value)
 
 
-def test_a_sink_on_a_procedure_with_no_output_is_refused() -> None:
-    with pytest.raises(DeclarationError) as caught:
-
-        @flezha.procedure(name="log", kind="stream", sink="out")
-        def log(value: str) -> None:
-            del value
-
-    assert "SinkWithoutOutput" in caught.value.refusals
-
-
-def test_a_short_form_key_without_a_sink_is_refused() -> None:
-    with pytest.raises(DeclarationError) as caught:
-
-        @flezha.procedure(name="upcase", kind="stream", input="prices")
-        def upcase(value: str) -> str:
+def test_a_short_form_carries_its_procedures_own_settings() -> None:
+    class Keyed:
+        def run(self, value: str) -> str:
             return value
 
-    assert "ShorthandKeyWithoutSink" in caught.value.refusals
-    assert "`kind`" in caught.value.defect
-    assert "`input`" in caught.value.defect
+        def entities_for(self, value: str) -> list[str]:
+            return ["a"]
+
+    short = flezha.stream_operative(
+        id="keyed", sink="out", entity_keys=["a", "b"], mailbox_capacity=8
+    )(Keyed)
+    keyed = flezha.procedure(name="keyed", entity_keys=["a", "b"], mailbox_capacity=8)(Keyed)
+
+    @flezha.stream_operative("keyed")
+    def twin(c: flezha.Channels) -> None:
+        c.input("input").into(keyed).sink("out")
+
+    assert short.procedure is not None
+    assert short.procedure.entity_keys == ["a", "b"]
+    assert short.procedure.mailbox_capacity == 8
+    assert graph.to_host_class_decl(short.spec) == graph.to_host_class_decl(twin.spec)
+    declare(short)
 
 
-def test_a_procedure_with_no_sink_carries_no_operative() -> None:
-    @flezha.procedure(name="plain")
-    def plain(value: str) -> str:
-        return value
+@pytest.mark.parametrize("keyword", [{"sink": "out"}, {"mailbox_capacity": 8}])
+def test_a_short_form_keyword_on_a_channels_body_is_refused(keyword: dict[str, Any]) -> None:
+    with pytest.raises(DeclarationError, match=f"`{next(iter(keyword))}`"):
 
-    assert plain.operative is None
+        @flezha.stream_operative(id="full", **keyword)
+        def full(c: flezha.Channels) -> None:
+            c.input("input").into(echo).sink("out")
+
+
+def test_a_keyword_neither_form_takes_is_a_type_error() -> None:
+    with pytest.raises(TypeError, match="name"):
+        flezha.stream_operative(id="upcase", name="upcase")  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+    ("declare_operative", "setting"),
+    [
+        (flezha.stream_operative, {"persistent": False}),
+        (flezha.workflow_operative, {"loop_mode": "per_input"}),
+    ],
+)
+def test_a_class_setting_on_a_short_form_is_refused(
+    declare_operative: Callable[..., Any], setting: dict[str, Any]
+) -> None:
+    def place(order: str) -> str:
+        return order
+
+    with pytest.raises(DeclarationError, match=f"`{next(iter(setting))}`"):
+        declare_operative(id="place", sink="placed", **setting)(place)
+
+
+def test_a_class_procedure_body_is_its_run_method() -> None:
+    @flezha.procedure
+    class Upcase:
+        def run(self, value: str) -> str:
+            return value.upper()
+
+    assert Upcase("abc") == "ABC"
+
+
+def test_a_class_with_a_process_body_and_no_run_is_refused_naming_run() -> None:
+    with pytest.raises(DeclarationError, match="`run`"):
+
+        @flezha.procedure
+        class Upcase:
+            def process(self, value: str) -> str:
+                return value.upper()

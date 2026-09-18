@@ -47,7 +47,6 @@ SURFACES = (
     "sync_durability",
     "shorthand",
     "shorthand_typed_output",
-    "shorthand_omittable_sink",
 )
 
 # The two topologies the fixture cites rather than re-spells: this app's own
@@ -65,14 +64,14 @@ CITED = {
 
 
 class Plain:
-    def process(self, value: str) -> str:
+    def run(self, value: str) -> str:
         return value
 
 
 class Routed:
     """`entity_keys` WITH the router that says which entity an input belongs to."""
 
-    def process(self, value: str) -> str:
+    def run(self, value: str) -> str:
         return value
 
     def entities_for(self, value: str) -> list[str]:
@@ -86,7 +85,7 @@ class NoChangeLogical:
     the durable change sequence a logical clock reads never advances.
     """
 
-    def process(self, value: str) -> str:
+    def run(self, value: str) -> str:
         return value
 
     def initial_state(self, entity_key: str | None) -> dict[str, Any]:
@@ -94,7 +93,7 @@ class NoChangeLogical:
 
 
 class EventTime:
-    def process(self, value: str) -> str:
+    def run(self, value: str) -> str:
         return value
 
     def event_time(self, value: str) -> int:
@@ -325,60 +324,68 @@ def channels_of(derived: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def shorthand_steps(row: dict[str, str]) -> list[dict[str, Any]]:
-    """The `shorthand(<id>|-, <kind>|-, <sink>|-, <input>|-)` steps of a row."""
+    """The `shorthand(<id>|-, <sink>|-, <input>|-)` steps of a row."""
     parsed: list[dict[str, Any]] = []
     for step in row["steps"].split(";"):
         step = step.strip()
-        noout = step.endswith(".noout")
-        body = step[: -len(".noout")] if noout else step
-        verb, args = split_call(body)
+        noout, topology = step.endswith(".noout"), step.endswith(".topology")
+        verb, args = split_call(step.removesuffix(".noout").removesuffix(".topology"))
         if verb != "shorthand":
             continue
-        fields = [field.strip() for field in args.split(",")]
-        if len(fields) != 4:
-            raise AssertionError(f"a shorthand step declares four fields: read `{step}`")
+        fields = [None if field.strip() == "-" else field.strip() for field in args.split(",")]
+        if len(fields) != 3:
+            raise AssertionError(f"a shorthand step declares three fields: read `{step}`")
         parsed.append(
             {
-                "name": None if fields[0] == "-" else fields[0],
-                "kind": None if fields[1] == "-" else fields[1],
-                "sink": None if fields[2] == "-" else fields[2],
-                "input": None if fields[3] == "-" else fields[3],
+                "id": fields[0],
+                "sink": fields[1],
+                "input": fields[2],
                 "noout": noout,
+                "topology": topology,
             }
         )
     return parsed
 
 
-def declare_shorthand(declaration: dict[str, Any]) -> Any:
+class PlainWithTopology(Plain):
+    """A procedure body and a topology body on one declaration."""
+
+    def channels(self, c: flezha.Channels) -> None:
+        c.input("input")
+
+
+def declare_shorthand(declaration: dict[str, Any], declare: Any) -> flezha.Operative:
     """Declare one short form exactly as an author writes it.
 
-    A `.noout` row's handler is annotated `-> None`, which is what an SDK that
-    reads the return hint sees as "declares no output".
+    A `.noout` row's body is annotated `-> None`, which is what an SDK that
+    reads the return hint sees as "declares no output", and a `.topology` row's
+    is a class with `run` that also declares `channels`.
     """
-    if declaration["noout"]:
+    if declaration["topology"]:
+        body: Any = PlainWithTopology
+    elif declaration["noout"]:
 
-        def handler(value: str) -> None:
+        def body(value: str) -> None:  # type: ignore[misc]
             del value
 
     else:
 
-        def handler(value: str) -> str:  # type: ignore[misc]
+        def body(value: str) -> str:  # type: ignore[misc]
             return value
 
-    return flezha.procedure(
-        handler,
-        name=declaration["name"],
-        kind=declaration["kind"],
-        sink=declaration["sink"],
-        input=declaration["input"],
-    )
+    return declare(id=declaration["id"], sink=declaration["sink"], input=declaration["input"])(body)
 
 
 def drive_shorthand(declarations: list[dict[str, Any]]) -> None:
-    """Declare and register the row's short forms; the refusal is what it raises."""
+    """Declare and register the row's short forms; the refusal is what it raises.
+
+    The first step is a stream short form and any later one a workflow, so a
+    collision crosses kinds.
+    """
     runner = flezha.create_runner("conformance_shorthand")
-    for declaration in declarations:
-        runner.register_factory(declare_shorthand(declaration))
+    for index, declaration in enumerate(declarations):
+        declare = flezha.stream_operative if index == 0 else flezha.workflow_operative
+        runner.register_factory(declare_shorthand(declaration, declare))
 
 
 def refusal_name(message: str) -> str:

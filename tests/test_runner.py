@@ -347,12 +347,12 @@ def test_one_call_turns_diagnostics_on() -> None:
         root.setLevel(logging.NOTSET)
 
 
-@flezha.procedure(name="short_stream", kind="stream", sink="out", codec="text")
+@flezha.stream_operative(id="short_stream", sink="out", codec="text")
 def short_stream(value: str) -> str:
     return value
 
 
-@flezha.procedure(name="short_workflow", kind="workflow", sink="placed", codec="text")
+@flezha.workflow_operative(id="short_workflow", sink="placed", codec="text")
 def short_workflow(value: str) -> str:
     return value
 
@@ -377,6 +377,16 @@ def test_register_modules_collects_a_short_form(runner: Any) -> None:
         r.drain()
 
 
-def test_registering_a_procedure_with_no_sink_is_refused(runner: Any) -> None:
-    with pytest.raises(FlezhaError, match="no `sink`"):
-        runner().register_factory(other)
+def test_a_short_form_collides_with_one_of_the_other_kind(runner: Any) -> None:
+    @flezha.workflow_operative(id="short_stream", sink="placed")
+    def twin(value: str) -> str:
+        return value
+
+    r = runner().register_factory(short_stream)
+    with pytest.raises(FlezhaError, match="DuplicateFactoryId: `short_stream`"):
+        r.register_factory(twin)
+
+
+def test_registering_a_procedure_is_refused(runner: Any) -> None:
+    with pytest.raises(FlezhaError, match="declares no operative"):
+        runner().register_factory(other)  # type: ignore[arg-type]

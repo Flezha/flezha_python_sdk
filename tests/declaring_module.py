@@ -19,6 +19,6 @@ def from_module(c: flezha.Channels) -> None:
     c.input("in").into(handle).sink()
 
 
-@flezha.procedure(name="from_module_short_form", kind="stream", sink="out")
+@flezha.stream_operative(id="from_module_short_form", sink="out")
 def from_module_short_form(value: str) -> str:
     return value

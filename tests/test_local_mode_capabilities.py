@@ -30,11 +30,7 @@ fixtures_state = app.module("fixtures_state")
 prefix = app.module("fixture_support").prefix
 
 #: The app's own registration list, keyed by the id `conformance.json` names.
-#: A short form registers the operative it carries, so it is keyed by that one.
-_REGISTERED: dict[str, Operative] = {
-    operative.spec.factory_id: operative
-    for operative in [*fixtures.ALL, *(p.operative for p in fixtures.SHORTHAND)]
-}
+_REGISTERED: dict[str, Operative] = {operative.factory_id: operative for operative in fixtures.ALL}
 
 
 def release(
