@@ -183,7 +183,6 @@ class ClassSpec:
     compact_after_bytes: int | None = None
     sync_durability: bool = False
     workflow: dict[str, Any] | None = None
-    run: Callable[..., Any] | None = None
 
     @property
     def structured_workflow(self) -> bool:
@@ -195,7 +194,7 @@ class ClassSpec:
         consumer read this one predicate, so they cannot disagree about which
         side applies the edge.
         """
-        return self.kind == "workflow" and bool(self.channels)
+        return self.kind == "workflow"
 
 
 class Channels:

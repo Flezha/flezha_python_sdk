@@ -75,7 +75,7 @@ def insert_sorted(items: list[str], value: str) -> None:
 def durable_step(
     name: str,
     *,
-    change: Callable[[str], str] | None = None,
+    change: Callable[[str], str | None] | None = None,
     emit: Callable[[str, flezha.Ctx[Any]], None] | None = None,
     compensate: Callable[..., Any] | None = None,
     gate: Callable[[str], bool] | None = None,
@@ -85,7 +85,7 @@ def durable_step(
     folds to the state it already had.
 
     ``emit`` and ``compensate`` are the two axes that macro parameterises;
-    ``change`` (which value is recorded) and ``gate`` (whether this step waits
+    ``change`` (which value is recorded, ``None`` for none) and ``gate`` (whether this step waits
     for the release gate BEFORE recording it) are the two the reference varies
     by hand-writing the procedure instead. Carrying all four is what lets every
     durable procedure in this module be a single call.
@@ -96,7 +96,9 @@ def durable_step(
     """
 
     def record(value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
-        ctx.change({"insert": change(value) if change else name})
+        recorded = change(value) if change else name
+        if recorded is not None:
+            ctx.change({"insert": recorded})
         if emit:
             emit(value, ctx)
         else:
@@ -157,13 +159,20 @@ def undoing(record: str) -> Callable[[list[Any], flezha.Ctx[Any]], None]:
 
 # -- echo_workflow -----------------------------------------------------------
 #
-# The run-sugar shape: emits its args back once and returns, so the SDK ships
-# the completion and the controller deregisters it.
+# One procedure, run once: emits its start values back, so the pass ends and
+# the controller deregisters the instance.
+
+
+def _echo(value: str, ctx: flezha.Ctx[None]) -> None:
+    ctx.emit(f"echo:{value}")
+
+
+echo = stateless_step("echo", _echo)
 
 
 @flezha.workflow_operative("echo_workflow")
-def echo_workflow(args: Any, ctx: flezha.WorkflowCtx) -> None:
-    ctx.emit(f"echo:{args}")
+def echo_workflow(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(echo).sink("out")
 
 
 # -- commit_block_workflow / sync_durable_workflow ---------------------------
@@ -455,7 +464,10 @@ def retry_workflow(c: flezha.Channels) -> None:
 # crash turn BLOCKS while the release variable is unset, so a SIGKILL lands with
 # the earlier iterations durable and that one in flight. Keying the block on the
 # payload rather than on an invocation count keeps it deterministic across the
-# park/rehydrate cycles, which re-run the driver but not the turns.
+# park/rehydrate cycles, which re-run the driver but not the turns. The turn
+# `bye` records nothing, still reaches REPLY, and completes the instance with
+# the number of turns TURN holds, so the session ends once that iteration
+# commits.
 #
 # stateless_loop_workflow is the same loop MINUS its stateful first procedure:
 # chat_reply alone holds no per-Entity state, so nothing writes an Entity WAL
@@ -468,12 +480,21 @@ def retry_workflow(c: flezha.Channels) -> None:
 # thing it said, retracts it and pops it.
 
 CRASH_TURN = "mid-crash"
+BYE_TURN = "bye"
+
+
+def _turn_emit(value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    ctx.emit(value)
+    if value == BYE_TURN:
+        ctx.complete(str(len(ctx.state["items"])))
+
 
 # Keyed by the turn, so the record count is the number of DISTINCT turns that
 # ran — a re-run of a committed iteration would show up.
 chat_turn = durable_step(
     "chat_turn",
-    change=lambda value: value,
+    change=lambda value: None if value == BYE_TURN else value,
+    emit=_turn_emit,
     gate=lambda value: value == CRASH_TURN,
 )
 
@@ -509,8 +530,8 @@ class ChatReplyUndoable:
 
 chat_reply_undoable = flezha.procedure(ChatReplyUndoable, name="chat_reply_undoable")
 
-# A chat session ends on an external stop, not on its own; the duration backstop
-# keeps a stray instance from outliving the test run.
+# A loop here ends on an external stop, or on `bye` where TURN runs; the duration
+# backstop keeps a stray instance from outliving the test run.
 LOOP_KNOBS: dict[str, Any] = {"loop_mode": "per_input", "max_duration_ms": 600_000}
 
 

@@ -69,6 +69,7 @@ __all__ = [
     "CHANNEL_CODECS",
     "channel_decoder",
     "channel_encoder",
+    "plain_payload",
 ]
 
 # What a plain (undeclared) value may be. Anything else is refused at
@@ -137,13 +138,12 @@ def channel_decoder(codec: ChannelCodec | None) -> Callable[[Any], Any]:
 
 
 def channel_encoder(codec: ChannelCodec | None, channel: ChannelSpec) -> Callable[[Any], bytes]:
-    """How ``sink`` writes a channel's payload: the named codec, or, when the
-    channel names none, bytes as they are, a string as UTF-8 and anything else
-    as JSON."""
+    """How ``sink`` writes a channel's payload: the named codec, or
+    :func:`plain_payload` when the channel names none."""
     if codec == "msgpack":
         return encode
     if codec == "json":
-        return lambda value: _json_payload(channel, value)
+        return lambda value: _json_payload(f"channel `{channel.name}`", value)
     if codec == "bytes":
         return lambda value: (
             bytes(value) if isinstance(value, _BYTES) else _refuse_payload(channel, codec, value)
@@ -152,25 +152,30 @@ def channel_encoder(codec: ChannelCodec | None, channel: ChannelSpec) -> Callabl
         return lambda value: (
             value.encode() if isinstance(value, str) else _refuse_payload(channel, codec, value)
         )
-
-    def by_value(value: Any) -> bytes:
-        if isinstance(value, _BYTES):
-            return bytes(value)
-        if isinstance(value, str):
-            return value.encode()
-        return _json_payload(channel, value)
-
-    return by_value
+    return lambda value: plain_payload(value, f"channel `{channel.name}`")
 
 
-def _json_payload(channel: ChannelSpec, value: Any) -> bytes:
+def plain_payload(value: Any, owner: str) -> bytes:
+    """Bytes as they are, a string as UTF-8 and anything else as JSON.
+
+    What a sink naming no codec sends, and what a workflow completion carries.
+    ``owner`` is what a refusal names.
+    """
+    if isinstance(value, _BYTES):
+        return bytes(value)
+    if isinstance(value, str):
+        return value.encode()
+    return _json_payload(owner, value)
+
+
+def _json_payload(owner: str, value: Any) -> bytes:
     try:
         return json.dumps(
             value, separators=(",", ":"), ensure_ascii=False, allow_nan=False
         ).encode()
     except (TypeError, ValueError) as error:
         raise EmitError(
-            f"channel `{channel.name}`: a {type(value).__name__} cannot be sent as JSON: {error}"
+            f"{owner}: a {type(value).__name__} cannot be sent as JSON: {error}"
         ) from error
 
 

@@ -10,7 +10,8 @@ from __future__ import annotations
 import pytest
 
 import flezha
-from agent import Conversation, agent, durable_agent
+from agent import Conversation, Session, agent, agent_session, durable_agent, session_turn
+from flezha import graph, native
 from flezha.testing import ProcedureTestHarness
 
 
@@ -60,8 +61,20 @@ def test_compensation_cancels_what_the_turn_booked() -> None:
     assert h.state.booked == ["table-9"]
 
 
-def test_the_graph_registers() -> None:
-    from flezha import graph
+def test_a_session_keeps_its_goal_and_turns_and_records_nothing_on_done() -> None:
+    h: ProcedureTestHarness[Session] = ProcedureTestHarness(session_turn)
+    h.apply_inputs([{"goal": "book a table"}, "hello", "again"])
+    assert (h.state.goal, h.state.turns) == ("book a table", 2)
+    assert h.replay_equals()
+    ending = h.feed("done")
+    assert (ending.outputs, ending.changes) == ([], [])
 
-    graph.validate(durable_agent.spec)
-    assert graph.to_host_class_decl(durable_agent.spec)["factory_id"] == "durable_agent"
+
+@pytest.mark.parametrize("operative", [durable_agent, agent_session])
+def test_the_graph_registers(operative: flezha.Operative) -> None:
+    core = native.Core.create()
+    try:
+        graph.validate(operative.spec, core)
+    finally:
+        core.free()
+    assert graph.to_host_class_decl(operative.spec)["factory_id"] == operative.factory_id

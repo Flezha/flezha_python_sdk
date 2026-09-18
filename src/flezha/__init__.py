@@ -26,7 +26,7 @@ from __future__ import annotations
 from .admin import Admin, StartResult
 from .builder import DROPPED, Channels, Edge, Merge
 from .codec import ChannelCodec, TypeCodec, ValueCodec
-from .ctx import Ctx, SpawnHandle, SpawnResult, WorkflowCtx
+from .ctx import Ctx, SpawnHandle, SpawnResult
 from .entity_state import state
 from .errors import (
     CoreError,
@@ -64,7 +64,6 @@ __all__ = [
     "Edge",
     "Merge",
     "Ctx",
-    "WorkflowCtx",
     "SpawnHandle",
     "SpawnResult",
     "Procedure",

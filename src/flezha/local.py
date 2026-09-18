@@ -71,7 +71,7 @@ class LocalOperative:
             graph.declare(spec, core, registry)
             # Not `start`, which is the one call that dials a controller.
             core.local_start(spec.factory_id, f"{spec.factory_id}-local")
-            deps = DispatchDeps(registry=registry, bridge=core, workflow_ctx=None)
+            deps = DispatchDeps(registry=registry, bridge=core)
             executor = build_executor(
                 os.environ.get("FLEZHA_PYTHON_EXECUTOR", "thread"), core, deps
             )

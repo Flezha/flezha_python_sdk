@@ -44,6 +44,7 @@ def test_an_input_is_answered_with_its_effects(deps: DispatchDeps) -> None:
     assert effect["verdict"] == "ok"
     assert effect["consumed_offset"] == 1
     assert codec.decode(effect["outputs"][0]["payload"]) == "abc"
+    assert effect["complete"] is None
 
 
 def test_an_unknown_factory_is_a_non_retryable_failure(deps: DispatchDeps) -> None:
@@ -298,27 +299,59 @@ def test_a_keyed_channel_with_no_key_is_refused_naming_it(fake_core: FakeCore) -
     assert "out" in effect["message"]
 
 
-def test_a_workflow_run_body_answers_workflow_done(fake_core: FakeCore) -> None:
-    @flezha.workflow_operative("saga")
-    def saga(args: dict[str, str], ctx: flezha.WorkflowCtx) -> str:
-        return f"done:{args['id']}"
+# -- a procedure ending its workflow -------------------------------------------
+#
+# The host only carries the request in the item's effect. Ending the instance
+# after the iteration commits, and failing a stream's item, are the core's.
 
-    deps = deps_for(saga, fake_core)
-    result = answered(
-        {
-            "token": 19,
-            "operative": "instance-1",
-            "procedure": 0,
-            "change_seq": 0,
-            "factory": "saga",
-            "kind": "workflow_run",
-            "args": codec.encode({"id": "x"}),
-        },
-        deps,
-    )
-    assert result["outcome"] == "workflow_done"
-    assert result["workflow_completed"] is True
-    assert codec.decode(result["workflow_result"]) == "done:x"
+_RESULTS: dict[str, Any] = {"text": "3", "bytes": b"\x00raw", "json": {"turns": 3}, "none": None}
+
+
+@flezha.procedure(name="finisher")
+def _finisher(value: str, ctx: flezha.Ctx[None]) -> None:
+    ctx.complete("replaced")
+    ctx.complete(_RESULTS[value])
+
+
+@flezha.workflow_operative("finishing_workflow")
+def _finishing_workflow(c: flezha.Channels) -> None:
+    c.input("in").into(_finisher).sink()
+
+
+@flezha.stream_operative("finishing_stream")
+def _finishing_stream(c: flezha.Channels) -> None:
+    c.input("in").into(_finisher).sink()
+
+
+@pytest.mark.parametrize(
+    ("value", "carried"),
+    [("text", b"3"), ("bytes", b"\x00raw"), ("json", b'{"turns":3}'), ("none", b"")],
+)
+def test_complete_carries_the_latest_result_in_the_effect(
+    fake_core: FakeCore, value: str, carried: bytes
+) -> None:
+    deps = deps_for(_finishing_workflow, fake_core)
+    (effect,) = answered(work_activation(19, value, factory="finishing_workflow"), deps)["effects"]
+    assert effect["verdict"] == "ok"
+    assert effect["complete"] == carried
+
+
+def test_a_stream_procedure_completing_is_carried_the_same_way(fake_core: FakeCore) -> None:
+    deps = deps_for(_finishing_stream, fake_core)
+    (effect,) = answered(work_activation(20, "text", factory="finishing_stream"), deps)["effects"]
+    assert effect["complete"] == b"3"
+
+
+def test_a_failed_item_carries_no_completion(fake_core: FakeCore) -> None:
+    @flezha.procedure
+    def fails_after_completing(value: str, ctx: flezha.Ctx[None]) -> None:
+        ctx.complete(value)
+        raise ValueError("after completing")
+
+    deps = solo_deps(fails_after_completing, fake_core)
+    (effect,) = answered(work_activation(21, "x", factory="solo"), deps)["effects"]
+    assert effect["verdict"] == "retryable"
+    assert "complete" not in effect
 
 
 def test_a_compensation_runs_over_the_recorded_outputs(fake_core: FakeCore) -> None:

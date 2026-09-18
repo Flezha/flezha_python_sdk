@@ -55,7 +55,6 @@ def validate(spec: ClassSpec, core: Core) -> dict[str, Any]:
     names are written back, so the name this host addresses a channel by is the
     one the core registered.
     """
-    _check_workflow(spec)
     try:
         answer = core.check_class(json.dumps(to_host_class_decl(spec)).encode())
     except CoreError as refusal:
@@ -81,19 +80,6 @@ def _refusal_of(spec: ClassSpec, refusal: CoreError) -> DeclarationError:
     return DeclarationError(
         spec.factory_id, None, str(refusal), [issue["name"] for issue in issues]
     )
-
-
-def _check_workflow(spec: ClassSpec) -> None:
-    """The one defect the record cannot carry: a workflow that declares nothing.
-
-    A run body is a Python callable the declaration never names, so a class with
-    neither it nor a graph reaches the core looking exactly like the run-sugar
-    shape it accepts.
-    """
-    if spec.kind == "workflow" and not spec.run and not spec.channels:
-        raise DeclarationError(
-            spec.factory_id, None, "declares neither a run body nor a channels graph"
-        )
 
 
 # ---------------------------------------------------------------------------

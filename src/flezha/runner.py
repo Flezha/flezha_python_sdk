@@ -25,7 +25,6 @@ from typing import Any, Self
 
 from . import determinism, graph
 from .admin import Admin
-from .ctx import WorkflowCtx
 from .dispatch import DispatchDeps, Registry
 from .errors import FlezhaError
 from .executor import Executor
@@ -229,11 +228,7 @@ class Runner:
         self._holds_slot = True
 
     def _build_executor(self) -> Executor:
-        deps = DispatchDeps(
-            registry=self._registry,
-            bridge=self._core,
-            workflow_ctx=lambda instance_id: WorkflowCtx(instance_id, self._core),
-        )
+        deps = DispatchDeps(registry=self._registry, bridge=self._core)
         return build_executor(
             self._executor_kind,
             self._core,

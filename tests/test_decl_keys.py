@@ -127,8 +127,8 @@ def static_key(c: flezha.Channels) -> None:
     wake_after_ms=30_000,
     sync_durability=True,
 )
-def every_workflow_key(args: dict[str, str], ctx: flezha.WorkflowCtx) -> str:
-    return "done"
+def every_workflow_key(c: flezha.Channels) -> None:
+    c.input("in").into(echo).sink()
 
 
 def _emitted() -> dict[str, set[str]]:

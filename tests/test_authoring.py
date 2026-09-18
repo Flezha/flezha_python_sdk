@@ -271,23 +271,21 @@ def test_an_unrepresentable_state_field_is_refused_naming_it() -> None:
         flezha.procedure(Holder)
 
 
-def test_a_workflow_that_is_neither_graph_nor_run_body_is_refused() -> None:
-    with pytest.raises(DeclarationError, match="neither a channels graph nor a run body"):
+def test_a_workflow_that_is_not_a_channels_body_is_refused() -> None:
+    with pytest.raises(DeclarationError, match="a workflow declares a `flezha.Channels` body"):
 
-        @flezha.workflow_operative("neither")
-        def neither(first: int, second: int) -> None:
+        @flezha.workflow_operative("args_and_ctx")
+        def args_and_ctx(args: dict[str, str], ctx: flezha.Ctx[None]) -> None:
             return None
 
 
-def test_a_run_body_workflow_declares_no_channels() -> None:
-    @flezha.workflow_operative("saga")
-    def saga(args: dict[str, str], ctx: flezha.WorkflowCtx) -> str:
-        return "done"
+def test_a_workflow_that_declares_no_procedure_is_refused() -> None:
+    @flezha.workflow_operative("empty")
+    def empty(c: flezha.Channels) -> None:
+        return None
 
-    spec = saga.spec
-    assert spec.run is not None
-    assert spec.channels == []
-    declare(saga)
+    with pytest.raises(DeclarationError, match="at least one procedure"):
+        declare(empty)
 
 
 def test_a_valid_graph_passes() -> None:

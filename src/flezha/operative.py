@@ -9,13 +9,9 @@ builds one:
     def echo(c: flezha.Channels) -> None:
         c.input("input").into(echo_proc).sink("out")
 
-A workflow operative is either the same shape — a structured chain over a graph
-— or a run-sugar body over ``(args, ctx)``. Which one it is is read from the
-declaration's own annotations, not from a flag: a parameter annotated
-:class:`~flezha.builder.Channels` builds a graph, and one annotated
-:class:`~flezha.ctx.WorkflowCtx` is a run body. That keeps the same rule the
-rest of this SDK follows — the hints are the declaration — and a function
-annotated as neither is refused naming both shapes.
+A workflow operative is the same shape: a chain of procedures over a graph. Its
+declaration takes one parameter, annotated :class:`~flezha.builder.Channels` or
+not at all, and a function of any other shape is refused.
 """
 
 from __future__ import annotations
@@ -25,7 +21,6 @@ from typing import Any
 
 from . import codec as _codec
 from .builder import Channels, ClassSpec
-from .ctx import WorkflowCtx
 from .errors import DeclarationError
 from .procedure import positional_parameters
 
@@ -81,14 +76,6 @@ class Operative:
         return builder
 
     def _stream_spec(self, persistent: bool) -> ClassSpec:
-        if _is_run_body(self.declaration):
-            raise DeclarationError(
-                self.factory_id,
-                self.__name__,
-                "is declared as a stream operative but its parameters read as a run body "
-                "(args, WorkflowCtx); a stream class is fed by the controller through entry "
-                "channels",
-            )
         builder = self._channels()
         return ClassSpec(
             factory_id=self.factory_id,
@@ -108,8 +95,7 @@ class Operative:
         )
 
     def _workflow_spec(self, persistent: bool, options: dict[str, Any]) -> ClassSpec:
-        run = self.declaration if _is_run_body(self.declaration) else None
-        builder = Channels(self.factory_id) if run else self._channels()
+        builder = self._channels()
         return ClassSpec(
             factory_id=self.factory_id,
             kind="workflow",
@@ -128,21 +114,7 @@ class Operative:
                 "max_duration_ms": options.pop("max_duration_ms", None),
                 "wake_after_ms": options.pop("wake_after_ms", None),
             },
-            run=run,
         )
-
-
-def _is_run_body(fn: Callable[..., Any]) -> bool:
-    """Whether a workflow declaration is a run-sugar body rather than a graph.
-
-    Read from the last parameter's annotation: a run body takes ``(args, ctx)``
-    with the context annotated :class:`WorkflowCtx`.
-    """
-    names = positional_parameters(fn, skip_self=False)
-    if not names:
-        return False
-    annotation = _codec.type_hints(fn).get(names[-1])
-    return isinstance(annotation, type) and issubclass(annotation, WorkflowCtx)
 
 
 def _declares_channels(fn: Callable[..., Any]) -> bool:
@@ -157,15 +129,12 @@ def _operative(
     factory_id: str, kind: str, options: dict[str, Any]
 ) -> Callable[[Callable[..., Any]], Operative]:
     def decorate(declaration: Callable[..., Any]) -> Operative:
-        if kind == "workflow" and not (
-            _is_run_body(declaration) or _declares_channels(declaration)
-        ):
+        if kind == "workflow" and not _declares_channels(declaration):
             raise DeclarationError(
                 factory_id,
                 getattr(declaration, "__name__", "<declaration>"),
-                "is neither a channels graph nor a run body; annotate its single parameter "
-                "`flezha.Channels` for a structured workflow, or its second parameter "
-                "`flezha.WorkflowCtx` for a run-sugar body",
+                "does not take one `flezha.Channels` parameter; a workflow declares a "
+                "`flezha.Channels` body",
             )
         return Operative(factory_id, kind, declaration, options)
 
@@ -195,7 +164,7 @@ def workflow_operative(
     wake_after_ms: int | None = None,
     sync_durability: bool = False,
 ) -> Callable[[Callable[..., Any]], Operative]:
-    """Declare a workflow operative: a run-sugar body, or a structured chain."""
+    """Declare a workflow operative: a chain of procedures, run once or looping."""
     return _operative(
         factory_id,
         "workflow",

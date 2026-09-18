@@ -23,9 +23,10 @@ What each piece is doing, and why it is not the obvious thing:
 * **Compensation is declared, not remembered.** ``compensate`` receives the
   forward outputs the engine recorded, so an undo does not depend on the agent
   having written down what it did.
-* **Suspension is waiting without holding anything.** The workflow body parks
-  on its inbox; a suspended workflow holds no runner resources, and a delivery
-  wakes it wherever it is rehydrated.
+* **Suspension is waiting without holding anything.** A session is a
+  ``per_input`` workflow: between messages it waits at a committed iteration
+  boundary and parks, holding no runner resources, and a delivery wakes it
+  wherever it is rehydrated, its state rebuilt from its changes.
 
 Run it against a live controller with::
 
@@ -188,29 +189,61 @@ def durable_agent(c: flezha.Channels) -> None:
 # ---------------------------------------------------------------------------
 
 
-@flezha.workflow_operative("agent_session", max_duration_ms=3_600_000)
-def agent_session(args: dict[str, Any], ctx: flezha.WorkflowCtx) -> str | None:
-    """A session that waits for the human between turns.
+@flezha.state
+@dataclass
+class Session:
+    """What a session remembers between messages."""
 
-    ``recv`` parks with the GIL released, so waiting costs one thread and
-    nothing else; a suspended workflow holds no runner resources at all, and a
-    delivery wakes it wherever it is rehydrated.
+    goal: str | None = None
+    turns: int = 0
+
+
+@dataclass
+class SessionEvent:
+    """The declared change: the goal the session opened with, or one more turn."""
+
+    goal: str | None = None
+
+
+class SessionTurn:
+    """One message of a session: open it, answer it, or end it."""
+
+    def process(self, message: Any, ctx: flezha.Ctx[Session]) -> None:
+        # The first message is the start values; the session's goal is in them.
+        if ctx.state.goal is None:
+            goal = (message or {}).get("goal", "help the user")
+            ctx.change(SessionEvent(goal=goal))
+            ctx.emit({"event": "session_started", "goal": goal})
+        elif message == "done":
+            # The instance ends once this iteration commits, instead of
+            # waiting for the next message.
+            ctx.complete({"goal": ctx.state.goal, "turns": ctx.state.turns})
+        else:
+            ctx.change(SessionEvent())
+            ctx.emit({"event": "turn", "n": ctx.state.turns, "message": message})
+
+    def initial_state(self, entity_key: str | None) -> Session:
+        return Session()
+
+    def apply_change(self, state: Session, change: SessionEvent) -> None:
+        if change.goal is not None:
+            state.goal = change.goal
+        else:
+            state.turns += 1
+
+
+session_turn = flezha.procedure(SessionTurn, name="session_turn")
+
+
+@flezha.workflow_operative("agent_session", loop_mode="per_input", max_duration_ms=3_600_000)
+def agent_session(c: flezha.Channels) -> None:
+    """A session that waits for the human between messages.
+
+    One iteration per message, each committed before the next is read, so a
+    crash resumes at the last committed turn rather than at the start. The
+    message ``"done"`` ends the session with its goal and turn count.
     """
-    goal = (args or {}).get("goal", "help the user")
-    ctx.emit({"event": "session_started", "goal": goal})
-
-    turns = 0
-    while not ctx.cancelled():
-        message = ctx.recv(timeout_ms=30_000)
-        if message is None:
-            continue
-        if message == "done":
-            break
-        turns += 1
-        ctx.emit({"event": "turn", "n": turns, "message": message})
-
-    ctx.complete({"goal": goal, "turns": turns})
-    return None
+    c.input("messages").into(session_turn).sink("session_events")
 
 
 if __name__ == "__main__":

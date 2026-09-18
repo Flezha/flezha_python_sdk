@@ -220,18 +220,6 @@ class FakeCore:
         generated = "" if "error" in answer else f"{request['factory_id']}-k7m2qzxw4pd3fn2a"
         return json.dumps({"id": request["id"] or generated, **answer})
 
-    def workflow_emit(self, instance_id: str, payload: bytes) -> None:
-        pass
-
-    def workflow_recv(self, instance_id: str, timeout_ms: int) -> Any:
-        return None
-
-    def workflow_cancelled(self, instance_id: str) -> bool:
-        return False
-
-    def monotonic_nanos(self) -> int:
-        return time.monotonic_ns()
-
 
 def _unscripted(entry: str) -> Callable[..., None]:
     """An entry point no test scripts: it takes what the wrapper takes and
@@ -296,11 +284,7 @@ def deps_for(operative: flezha.Operative, core: FakeCore) -> Any:
     registry = Registry()
     declare(operative)
     registry.add(operative.spec)
-    return DispatchDeps(
-        registry=registry,
-        bridge=core,
-        workflow_ctx=lambda instance_id: flezha.WorkflowCtx(instance_id, core),
-    )
+    return DispatchDeps(registry=registry, bridge=core)
 
 
 def compensating(seen: list[Any]) -> Any:

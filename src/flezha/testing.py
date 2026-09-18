@@ -90,7 +90,7 @@ class ProcedureTestHarness(Generic[S]):
         # is the state a runner would hold.
         self._registered = RegisteredClass(self._spec)
         self._entity = self._registered.entity(self._node, entity_key)
-        self._deps = DispatchDeps(registry=None, bridge=self, workflow_ctx=None)
+        self._deps = DispatchDeps(registry=None, bridge=self)
         self.log: list[bytes] = []
         self._timers: list[dict[str, Any]] = []
         self._change_seq = 0

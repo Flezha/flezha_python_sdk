@@ -165,7 +165,6 @@ class DispatchDeps:
 
     registry: Registry | None
     bridge: Any
-    workflow_ctx: Callable[[str], Any] | None
 
 
 def failed(token: int, message: str, *, non_retryable: bool = False) -> dict[str, Any]:
@@ -331,13 +330,6 @@ async def answer(activation: dict[str, Any], deps: DispatchDeps) -> dict[str, An
                 f"no class registered for factory `{activation['factory']}`",
                 non_retryable=True,
             )
-
-        # The workflow body is the one kind addressed to a class rather than to
-        # a procedure, so it is answered before the procedure is resolved —
-        # which is what lets every arm below hold a procedure rather than
-        # assert one.
-        if activation["kind"] == "workflow_run":
-            return await _run_workflow(activation, registered, deps)
 
         procedures = registered.spec.procedures
         index = activation["procedure"]
@@ -554,31 +546,6 @@ def _routes_to(entity: Entity, edge: ConsumerEdge, value: Any) -> bool:
         return True
     keys = _keys_of(edge, entity.proc, value)
     return keys is None or entity.key in keys
-
-
-async def _run_workflow(
-    activation: dict[str, Any], registered: RegisteredClass, deps: DispatchDeps
-) -> dict[str, Any]:
-    run = registered.spec.run
-    if run is None:
-        return failed(
-            activation["token"],
-            f"class `{activation['factory']}` was handed a workflow body but declares none",
-            non_retryable=True,
-        )
-    assert deps.workflow_ctx is not None
-
-    ctx = deps.workflow_ctx(activation["operative"])
-    args = _codec.decode(activation["args"]) if activation.get("args") is not None else None
-    with determinism.invocation():
-        returned = await resolve(run(args, ctx))
-    completed = ctx.completed or returned is not None
-    return {
-        "token": activation["token"],
-        "outcome": "workflow_done",
-        "workflow_completed": completed,
-        "workflow_result": _codec.encode(ctx.result if ctx.completed else returned),
-    }
 
 
 async def _compensate(

@@ -82,9 +82,6 @@ class Core:
         "abandon",
         "shutdown",
         "watch_stdin_eof",
-        "workflow_emit",
-        "workflow_recv",
-        "workflow_cancelled",
         "spawn_request",
         "spawn_result",
         "admin_call",
@@ -204,17 +201,6 @@ class Core:
     def abandon(self, token: int) -> None:
         """Re-hand a polled activation's untouched items and release its entity."""
         self._call("abandon", token)
-
-    # -- workflow bodies ---------------------------------------------------
-
-    def workflow_emit(self, instance_id: str, payload: bytes) -> None:
-        self._call("workflow_emit", instance_id, payload)
-
-    def workflow_recv(self, instance_id: str, timeout_ms: int) -> Any:
-        return self._call("workflow_recv", instance_id, timeout_ms)
-
-    def workflow_cancelled(self, instance_id: str) -> bool:
-        return bool(self._call("workflow_cancelled", instance_id))
 
     def spawn_request(
         self, token: int, factory_id: str, id: str, payload: bytes, if_running: str, replay: bool

@@ -24,7 +24,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Ctx",
-    "WorkflowCtx",
     "SpawnHandle",
     "SpawnResult",
     "SpawnOutcome",
@@ -134,6 +133,7 @@ class Ctx(Generic[S]):
         "replay",
         "state",
         "checkpointed",
+        "completion",
     )
 
     def __init__(
@@ -176,6 +176,7 @@ class Ctx(Generic[S]):
         self.outputs: list[dict[str, Any]] = []
         self.timers: list[dict[str, Any]] = []
         self.checkpointed = False
+        self.completion: bytes | None = None
 
     # -- deterministic reads ----------------------------------------------
 
@@ -255,6 +256,21 @@ class Ctx(Generic[S]):
         """Close the open checkpoint interval (checkpoint ack-granularity classes)."""
         self.checkpointed = True
 
+    def complete(self, result: Any = None) -> None:
+        """End the workflow instance this procedure runs in, with ``result``.
+
+        The rest of the iteration still runs and commits; the instance then
+        ends with status ``ok`` instead of waiting for its next input. In a
+        ``once`` workflow it sets the result the pass ends with. ``result`` is
+        encoded as a sink naming no codec encodes a value: bytes as they are, a
+        string as UTF-8 and anything else as JSON; ``None`` carries no result. A
+        later call in the same invocation replaces an earlier one.
+
+        A stream never completes: a stream procedure calling this fails its
+        input, without a retry, with an error naming ``CompleteOutsideWorkflow``.
+        """
+        self.completion = b"" if result is None else _codec.plain_payload(result, self._node.name)
+
     def spawn_workflow(
         self,
         factory_id: str,
@@ -309,6 +325,7 @@ class Ctx(Generic[S]):
             "event_time": self._now,
             "timers": self.timers,
             "checkpoint": self.checkpointed,
+            "complete": self.completion,
         }
 
     # -- internals -----------------------------------------------------------
@@ -448,45 +465,3 @@ class Ctx(Generic[S]):
                 )
             out.append((str(key), str(value)))
         return out
-
-
-class WorkflowCtx:
-    """The context a run-sugar workflow body receives."""
-
-    #: How long a workflow body's ``recv`` parks when the caller names no timeout.
-    DEFAULT_RECV_TIMEOUT_MS = 1_000
-
-    __slots__ = ("instance_id", "result", "_core", "_completed")
-
-    def __init__(self, instance_id: str, core: Core | Any) -> None:
-        self.instance_id = instance_id
-        self.result: Any = None
-        self._core = core
-        self._completed = False
-
-    def emit(self, value: Any) -> None:
-        """Emit one output payload. Best-effort and at-least-once."""
-        self._core.workflow_emit(self.instance_id, _codec.encode(value))
-
-    def recv(self, timeout_ms: int | None = None) -> Any:
-        """The next inbox item, or ``None`` on timeout."""
-        payload = self._core.workflow_recv(
-            self.instance_id, self.DEFAULT_RECV_TIMEOUT_MS if timeout_ms is None else timeout_ms
-        )
-        return _codec.decode(payload) if payload is not None else None
-
-    def cancelled(self) -> bool:
-        """Whether the body's cancellation token has tripped."""
-        return self._core.workflow_cancelled(self.instance_id)
-
-    def complete(self, result: Any = None) -> None:
-        """Set the terminal result; the body is completed once this is called."""
-        self._completed = True
-        self.result = result
-
-    @property
-    def completed(self) -> bool:
-        return self._completed
-
-    def now(self) -> int:
-        return self._core.monotonic_nanos()
