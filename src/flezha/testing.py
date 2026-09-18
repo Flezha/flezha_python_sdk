@@ -4,7 +4,7 @@ The harness is not a second implementation of the dispatcher: it drives
 :func:`flezha.dispatch.invoke` — the same function every activation kind that
 reaches a handler goes through — over a one-procedure
 :class:`~flezha.dispatch.RegisteredClass`, and :meth:`ProcedureTestHarness.replay_equals`
-folds through :func:`flezha.state.fold_restore`, the function a real restore
+folds through :func:`flezha.entity_state.fold_restore`, the function a real restore
 calls. So what it proves is what the runner does, rather than something that
 agrees with it.
 """
