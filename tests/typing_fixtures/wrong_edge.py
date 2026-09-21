@@ -27,12 +27,12 @@ class Shipment:
     tracking: str
 
 
-@flezha.procedure
+@flezha.tasklet
 def bill(order: Order) -> Invoice:
     return Invoice(order_id=order.id)
 
 
-@flezha.procedure
+@flezha.tasklet
 def dispatch(shipment: Shipment) -> str:
     return shipment.tracking
 

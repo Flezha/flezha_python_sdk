@@ -55,14 +55,14 @@ def release(
     return released
 
 
-def per_entity(
+def per_cell(
     released: Iterable[SinkOutput], key: Callable[[SinkOutput], str]
 ) -> dict[str, list[str]]:
     """What each key released, in that key's own order.
 
-    Two keys are two Entities with their own mailboxes, and this host dispatches
+    Two keys are two Cells with their own mailboxes, and this host dispatches
     from a thread pool, so the order a run can assert is the one the runtime
-    guarantees: within an Entity, never one sequence across them.
+    guarantees: within a Cell, never one sequence across them.
     """
     grouped: dict[str, list[str]] = {}
     for output in released:
@@ -105,23 +105,23 @@ def test_keyed_channels_a_keyed_sink_stamps_the_key_the_class_resolved() -> None
         ["a:1", "b:1", "a:2"],
     )
 
-    assert per_entity(released, lambda output: output.metadata["flz.key"]) == {
+    assert per_cell(released, lambda output: output.metadata["flz.key"]) == {
         "a": ["a:1", "a:2"],
         "b": ["b:1"],
-    }, "each release carries the key its own value resolved to, in that Entity's order"
-    for stamp in ("flz.entity", "flz.seq"):
+    }, "each release carries the key its own value resolved to, in that Cell's order"
+    for stamp in ("flz.cell", "flz.seq"):
         assert stamp in released[0].metadata, f"a keyed sink carries {stamp}"
 
 
-def test_dynamic_entity_the_declared_filter_runs_before_keying_and_nothing_else_is_lost() -> None:
-    # The class's sink is not keyed, so a released value carries no entity stamp
+def test_dynamic_cell_the_declared_filter_runs_before_keying_and_nothing_else_is_lost() -> None:
+    # The class's sink is not keyed, so a released value carries no cell stamp
     # and the per-key minting is not visible on this channel. It is asserted
-    # above, on `partition_relay`, whose procedure is dynamic too and whose sink
+    # above, on `partition_relay`, whose tasklet is dynamic too and whose sink
     # IS keyed. What this class shows that that one does not is the declared
     # filter: a value it rejects answers no key, so the core is never asked to
-    # mint an Entity for it.
+    # mint a Cell for it.
     released = release(
-        declares("dynamic_entity", "dynamic_entity"),
+        declares("dynamic_cell", "dynamic_cell"),
         "input",
         "kafka",
         ["a:1", "b:1", "drop", "a:2"],
@@ -129,10 +129,10 @@ def test_dynamic_entity_the_declared_filter_runs_before_keying_and_nothing_else_
 
     # The sink is unkeyed, so a release carries no key stamp to group by; the
     # value's own prefix is what the declaration keyed it on.
-    assert per_entity(released, lambda output: prefix(output.payload.decode())) == {
+    assert per_cell(released, lambda output: prefix(output.payload.decode())) == {
         "a": ["a:1", "a:2"],
         "b": ["b:1"],
-    }, "the filter dropped `drop` before it was keyed, and every other value reached its Entity"
+    }, "the filter dropped `drop` before it was keyed, and every other value reached its Cell"
     assert [output.metadata for output in released] == [{"channel": "kafka"}] * 3, (
         "an unkeyed sink carries its channel and no identity stamps"
     )
@@ -157,10 +157,10 @@ def test_retry_ladder_a_bounded_mailbox_that_drops_nothing_loses_no_input() -> N
     )
 
 
-def test_entity_timers_a_declared_timer_fires_locally_with_its_scheduled_time(
+def test_cell_timers_a_declared_timer_fires_locally_with_its_scheduled_time(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    session_timeout = declares("entity_timers", "session_timeout")
+    session_timeout = declares("cell_timers", "session_timeout")
 
     # The class reads its own deadline from the environment, the way the e2e
     # sets it; 200 ms keeps the run short without changing what is proved.

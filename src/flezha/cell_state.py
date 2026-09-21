@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from .errors import FlezhaError
 
 if TYPE_CHECKING:
-    from .procedure import Procedure
+    from .tasklet import Tasklet
 
 __all__ = ["state", "runtime_mutation", "is_state", "fold_restore", "decode_body"]
 
@@ -58,7 +58,7 @@ def is_state(cls: type) -> bool:
 
 
 def state(cls: type[T]) -> type[T]:
-    """Declare a class as durable Entity state.
+    """Declare a class as durable Cell state.
 
     Works over a dataclass, a Pydantic model, an attrs class or a plain class
     with ``to_dict`` / ``from_dict``: the guard replaces ``__setattr__`` and
@@ -85,7 +85,7 @@ def state(cls: type[T]) -> type[T]:
                 f"{cls.__name__}.{name} was assigned directly. Declared state is rebuilt from "
                 f"its change log, so an assignment outside that log is live in this process and "
                 f"gone after a restart. Express it as a change: `ctx.change(...)`, folded by the "
-                f"procedure's apply_change."
+                f"tasklet's apply_change."
             )
         original_setattr(self, name, value)
 
@@ -101,14 +101,14 @@ def state(cls: type[T]) -> type[T]:
 
 
 def decode_body(
-    definition: Procedure[Any, Any],
+    definition: Tasklet[Any, Any],
     which: str,
     body: dict[str, Any],
-    procedure: str,
+    tasklet: str,
 ) -> Any:
     """Decode one durable body, choosing between the three things it can be.
 
-    A payload from an older schema version, one the procedure declared its own
+    A payload from an older schema version, one the tasklet declared its own
     codec for, or the MessagePack default. One function rather than the same
     three-way choice written at each of the places a body is decoded — the two
     halves of a restore fold, on the dispatch path and in the test harness.
@@ -121,7 +121,7 @@ def decode_body(
         )
         if migration is None:
             raise FlezhaError(
-                f"{procedure} was handed a {which} record written at schema version "
+                f"{tasklet} was handed a {which} record written at schema version "
                 f"{from_version} and declares no migrate_{which}; declare one, or raise "
                 f"min_readable_schema_version so the record is refused rather than misread"
             )
@@ -133,29 +133,29 @@ def decode_body(
 
 
 def fold_restore(
-    definition: Procedure[Any, Any],
+    definition: Tasklet[Any, Any],
     payload: dict[str, Any],
-    entity_key: str | None,
-    procedure: str,
+    cell_key: str | None,
+    tasklet: str,
 ) -> Any:
-    """Rebuild an entity's state from its snapshot and change log.
+    """Rebuild a cell's state from its snapshot and change log.
 
     This IS the restore, and both callers are the real thing — the dispatcher
     answering a restore fold, and the test harness constructing from a payload —
     which is why the harness proves what a warm restart does rather than
     something that agrees with it.
     """
-    state_value = definition.build_initial_state(entity_key)
+    state_value = definition.build_initial_state(cell_key)
     snapshot = payload.get("snapshot")
     if snapshot is not None:
-        state_value = decode_body(definition, "state", snapshot, procedure)
+        state_value = decode_body(definition, "state", snapshot, tasklet)
 
     for body in payload.get("changes") or ():
         if definition.apply_change is None:
             raise FlezhaError(
-                f"{procedure} was handed a change log but declares no apply_change; a "
-                f"procedure that records no changes should have no durable records to fold"
+                f"{tasklet} was handed a change log but declares no apply_change; a "
+                f"tasklet that records no changes should have no durable records to fold"
             )
         with runtime_mutation():
-            definition.apply_change(state_value, decode_body(definition, "change", body, procedure))
+            definition.apply_change(state_value, decode_body(definition, "change", body, tasklet))
     return state_value

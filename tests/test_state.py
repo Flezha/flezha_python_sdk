@@ -9,9 +9,9 @@ import pytest
 
 import flezha
 from conftest import Bumped, Counter, count_up
-from flezha import entity_state as state_module
+from flezha import cell_state as state_module
 from flezha.errors import FlezhaError
-from flezha.testing import ProcedureTestHarness
+from flezha.testing import TaskletTestHarness
 
 
 def test_direct_assignment_is_refused_naming_the_field_and_the_path() -> None:
@@ -30,7 +30,7 @@ def test_construction_is_not_mutation() -> None:
 
 
 def test_the_change_path_succeeds_and_is_recorded() -> None:
-    harness: ProcedureTestHarness[Counter] = ProcedureTestHarness(count_up)
+    harness: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
     outcome = harness.feed("abc")
     assert harness.state.count == 3
     assert outcome.changes == [Bumped(by=3)]
@@ -38,7 +38,7 @@ def test_the_change_path_succeeds_and_is_recorded() -> None:
 
 
 def test_recorded_changes_reproduce_the_state_on_replay() -> None:
-    harness: ProcedureTestHarness[Counter] = ProcedureTestHarness(count_up)
+    harness: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
     for value in ("a", "bb", "ccc"):
         harness.feed(value)
     live = harness.state
@@ -47,13 +47,13 @@ def test_recorded_changes_reproduce_the_state_on_replay() -> None:
 
 
 def test_a_snapshot_plus_a_change_log_rebuilds_the_state() -> None:
-    harness: ProcedureTestHarness[Counter] = ProcedureTestHarness(count_up)
+    harness: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
     harness.feed("ab")
     snapshot = harness.snapshot()
     harness.feed("cde")
     tail = harness.log[1:]
 
-    fresh: ProcedureTestHarness[Counter] = ProcedureTestHarness(count_up)
+    fresh: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
     assert fresh.restore(snapshot=snapshot, changes=tail) == harness.state
 
 
@@ -119,8 +119,8 @@ def test_a_declared_state_survives_a_nested_fold() -> None:
             state.items = [*state.items, change["item"]]
             state.depth += 1
 
-    proc = flezha.procedure(Folding)
-    harness: ProcedureTestHarness[Nested] = ProcedureTestHarness(proc)
+    task = flezha.tasklet(Folding)
+    harness: TaskletTestHarness[Nested] = TaskletTestHarness(task)
     harness.feed("a")
     harness.feed("b")
     assert harness.state == Nested(items=["a", "b"], depth=2)

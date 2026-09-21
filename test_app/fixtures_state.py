@@ -1,4 +1,4 @@
-"""Fixtures whose subject is persisted Entity state: the keyed upsert the
+"""Fixtures whose subject is persisted Cell state: the keyed upsert the
 bench and tier classes share, the counter and resume twins, schema evolution,
 and the effectively-once tier store with its checkpoint variants.
 """
@@ -22,7 +22,7 @@ class KeyedUpsert:
     upsert under three acknowledgement postures; only `run` differs.
     """
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"values": {}}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -42,12 +42,12 @@ class TierStore(KeyedUpsert):
         self.upsert(value, ctx)
 
 
-tier_store = flezha.procedure(TierStore, name="tier_store_procedure")
+tier_store = flezha.tasklet(TierStore, name="tier_store_tasklet")
 
 
 @flezha.stream_operative("bench_keyed_nopersist", persistent=False)
 def bench_keyed_nopersist_operative(c: flezha.Channels) -> None:
-    """Per-entity persistence off: the heap-only posture the bench isolates
+    """Per-cell persistence off: the heap-only posture the bench isolates
     against the durable one."""
     c.input("input", codec="text").on_full("drop_nothing").into(tier_store).keyed().sink("sink")
 
@@ -63,14 +63,14 @@ class StoreInput:
         ctx.change({"push_text": value})
         return value
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"binary_inputs": [], "text_inputs": []}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
         state["text_inputs"].append(change["push_text"])
 
 
-store_input = flezha.procedure(StoreInput, name="store_input_procedure")
+store_input = flezha.tasklet(StoreInput, name="store_input_tasklet")
 
 
 @flezha.stream_operative("store_input")
@@ -78,7 +78,7 @@ def store_input_operative(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(store_input).sink("sink")
 
 
-@flezha.procedure(name="counter_entry_procedure")
+@flezha.tasklet(name="counter_entry_tasklet")
 def counter_entry(value: str) -> int:
     return _as_int(value)
 
@@ -87,14 +87,14 @@ class Counter:
     def run(self, value: int, ctx: flezha.Ctx[dict[str, Any]]) -> None:
         ctx.change({"delta": value})
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"value": 0}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
         state["value"] += change["delta"]
 
 
-counter = flezha.procedure(Counter, name="counter_procedure")
+counter = flezha.tasklet(Counter, name="counter_tasklet")
 
 
 @flezha.stream_operative("stateful_counter")
@@ -104,18 +104,18 @@ def stateful_counter_operative(c: flezha.Channels) -> None:
 
 @flezha.stream_operative("persistence_off_counter", persistent=False)
 def persistence_off_operative(c: flezha.Channels) -> None:
-    """The same topology with per-Entity persistence off.
+    """The same topology with per-Cell persistence off.
 
     Its own node names, as the reference declares them: a node identity is per
     class, so reusing `stateful_counter`'s would leave the two classes
     indistinguishable to anything that reads a declaration.
     """
-    c.input("input", codec="text").into(counter_entry, "persistence_off_entry_procedure").named(
+    c.input("input", codec="text").into(counter_entry, "persistence_off_entry_tasklet").named(
         "ticks"
-    ).into(counter, "persistence_off_counter_procedure")
+    ).into(counter, "persistence_off_counter_tasklet")
 
 
-@flezha.procedure(name="tick_entry_procedure")
+@flezha.tasklet(name="tick_entry_tasklet")
 def tick_entry(value: str) -> dict[str, int]:
     """Wire format: ``<interval>:<ts>:<delta>``."""
     parts = value.split(":", 2)
@@ -138,14 +138,14 @@ class Tick:
     def run(self, value: dict[str, int], ctx: flezha.Ctx[dict[str, Any]]) -> None:
         ctx.change(dict(value))
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"last": 0}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
         state["last"] = change["delta"]
 
 
-tick = flezha.procedure(Tick, name="tick_procedure")
+tick = flezha.tasklet(Tick, name="tick_tasklet")
 
 
 @flezha.stream_operative("coalescing_counter")
@@ -162,7 +162,7 @@ class ResumeProbe:
         ctx.change({"add": delta})
         return str(total).encode()
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         # Default + change replay rebuilds the total on restore (the same
         # pattern as stateful_counter); no snapshot fast path needed.
         return {"total": 0}
@@ -171,7 +171,7 @@ class ResumeProbe:
         state["total"] += change["add"]
 
 
-resume_probe = flezha.procedure(ResumeProbe, name="resume_probe_procedure")
+resume_probe = flezha.tasklet(ResumeProbe, name="resume_probe_tasklet")
 
 
 @flezha.stream_operative("resume_probe")
@@ -182,16 +182,16 @@ def resume_probe_operative(c: flezha.Channels) -> None:
 @flezha.stream_operative("bench_keyed")
 def bench_keyed_operative(c: flezha.Channels) -> None:
     """`bench_keyed_nopersist`'s durable twin: the same keyed upsert with
-    per-Entity persistence on, so the bench can isolate that cost."""
+    per-Cell persistence on, so the bench can isolate that cost."""
     c.input("input", codec="text").on_full("drop_nothing").into(
-        tier_store, "tier_store_procedure"
+        tier_store, "tier_store_tasklet"
     ).keyed().sink("sink")
 
 
 # -- schema_evolution_v1 / schema_evolution_v2 -------------------------------
 #
 # The same class either side of a deploy that edits its own state type. Both
-# halves declare the SAME procedure name, so an operative started under v1 and
+# halves declare the SAME tasklet name, so an operative started under v1 and
 # restarted under v2 restores from the very WAL v1 wrote — which is what a
 # deploy does, with the two binaries collapsed into one fixture file.
 #
@@ -207,7 +207,7 @@ class EvolvingCartV1:
         ctx.change({"add": delta})
         return f"{total}:".encode()
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"total": 0}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -222,7 +222,7 @@ class EvolvingCartV2:
         ctx.change({"add": delta, "note": "live"})
         return f"{total}:{currency}".encode()
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"total": 0, "currency": ""}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -241,8 +241,8 @@ class EvolvingCartV2:
         return {"add": old.get("add", 0), "note": "migrated"}
 
 
-evolving_cart_v1 = flezha.procedure(EvolvingCartV1, name="evolving_cart")
-evolving_cart_v2 = flezha.procedure(
+evolving_cart_v1 = flezha.tasklet(EvolvingCartV1, name="evolving_cart")
+evolving_cart_v2 = flezha.tasklet(
     EvolvingCartV2,
     name="evolving_cart",
     schema_version=2,
@@ -274,7 +274,7 @@ def tier_store_operative(c: flezha.Channels) -> None:
     """
     c.effectively_once()
     c.input("input", codec="text").on_full("drop_nothing").retry_backoff_ms(300).into(
-        tier_store, "tier_store_procedure"
+        tier_store, "tier_store_tasklet"
     ).keyed().sink("sink")
 
 
@@ -288,7 +288,7 @@ class CheckpointStore(KeyedUpsert):
         self.upsert(value, ctx)
 
 
-checkpoint_store = flezha.procedure(CheckpointStore, name="checkpoint_store_procedure")
+checkpoint_store = flezha.tasklet(CheckpointStore, name="checkpoint_store_tasklet")
 
 
 @flezha.stream_operative("checkpoint_store")
@@ -299,17 +299,17 @@ def checkpoint_store_operative(c: flezha.Channels) -> None:
 
 @flezha.stream_operative("checkpoint_batched_store")
 def checkpoint_batched_operative(c: flezha.Channels) -> None:
-    """The same procedure declared ``outputs_at_checkpoint``.
+    """The same tasklet declared ``outputs_at_checkpoint``.
 
     The interval's outputs are held with its changes and ship inside its
     checkpoint record. ``checkpoint_every`` is deliberately absent so the test
     drives the close itself — with ``commit:`` for the batch case, and with the
-    delay alone for the quiet-Entity case.
+    delay alone for the quiet-Cell case.
     """
     c.effectively_once().checkpoint_ack().outputs_at_checkpoint(1_500)
-    c.input("input", codec="text").into(
-        checkpoint_store, "checkpoint_store_procedure"
-    ).keyed().sink("sink")
+    c.input("input", codec="text").into(checkpoint_store, "checkpoint_store_tasklet").keyed().sink(
+        "sink"
+    )
 
 
 class BenchCheckpoint(KeyedUpsert):
@@ -319,7 +319,7 @@ class BenchCheckpoint(KeyedUpsert):
         self.upsert(value, ctx)
 
 
-bench_checkpoint = flezha.procedure(BenchCheckpoint, name="bench_checkpoint_procedure")
+bench_checkpoint = flezha.tasklet(BenchCheckpoint, name="bench_checkpoint_tasklet")
 
 
 @flezha.stream_operative("bench_checkpoint")

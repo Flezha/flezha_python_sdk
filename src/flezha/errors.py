@@ -88,7 +88,7 @@ class DeclarationError(FlezhaError):
 class EmitError(FlezhaError):
     """An emit the declaration cannot carry.
 
-    A channel the procedure does not produce on, a reserved metadata key, a
+    A channel the tasklet does not produce on, a reserved metadata key, a
     keyed channel with no key.
     """
 
@@ -120,7 +120,7 @@ class SpawnError(FlezhaError):
     """Why a spawn reached no instance.
 
     Raised by a read of the :class:`~flezha.ctx.SpawnHandle`, never by
-    ``ctx.spawn_workflow`` itself, so a refusal faults the procedure only when
+    ``ctx.spawn_workflow`` itself, so a refusal faults the tasklet only when
     it asks. Each kind is a subclass; ``reason`` is its word on the wire.
     """
 

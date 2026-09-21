@@ -18,12 +18,12 @@ class Invoice:
     total: int
 
 
-@flezha.procedure
+@flezha.tasklet
 def bill(order: Order) -> Invoice:
     return Invoice(order_id=order.id, total=1)
 
 
-@flezha.procedure
+@flezha.tasklet
 def render(invoice: Invoice) -> str:
     return f"{invoice.order_id}:{invoice.total}"
 

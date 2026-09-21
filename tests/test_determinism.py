@@ -12,7 +12,7 @@ import pytest
 import flezha
 from flezha import determinism
 from flezha.errors import DeterminismWarning
-from flezha.testing import ProcedureTestHarness
+from flezha.testing import TaskletTestHarness
 
 
 @pytest.fixture(autouse=True)
@@ -20,29 +20,29 @@ def _installed() -> None:
     determinism.install()
 
 
-@flezha.procedure
+@flezha.tasklet
 def reads_the_clock(value: str, ctx: flezha.Ctx[None]) -> str:
     ambient = time.time()
     return f"{value}:{ambient > 0}"
 
 
-@flezha.procedure
+@flezha.tasklet
 def reads_a_uuid(value: str, ctx: flezha.Ctx[None]) -> str:
     return f"{value}:{uuid.uuid4() is not None}"
 
 
-@flezha.procedure
+@flezha.tasklet
 def reads_datetime_now(value: str, ctx: flezha.Ctx[None]) -> str:
     return f"{value}:{datetime.datetime.now().year > 2000}"
 
 
-@flezha.procedure
+@flezha.tasklet
 def uses_the_context(value: str, ctx: flezha.Ctx[None]) -> str:
     return f"{value}:{ctx.now()}"
 
 
-def _warnings_from(proc: flezha.Procedure[str, str]) -> list[warnings.WarningMessage]:
-    harness: ProcedureTestHarness[None] = ProcedureTestHarness(proc)
+def _warnings_from(task: flezha.Tasklet[str, str]) -> list[warnings.WarningMessage]:
+    harness: TaskletTestHarness[None] = TaskletTestHarness(task)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         outcome = harness.feed("v")

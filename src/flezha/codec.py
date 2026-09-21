@@ -83,7 +83,7 @@ class ValueCodec(Protocol):
 
     Three built-in adapters implement it — dataclasses, Pydantic models and
     attrs classes — and a class with ``to_dict`` / ``from_dict`` is the escape
-    for anything else. A procedure may also be handed one directly.
+    for anything else. A tasklet may also be handed one directly.
     """
 
     def encode(self, value: Any) -> bytes: ...
@@ -117,7 +117,7 @@ def decode(body: Any) -> Any:
 ChannelCodec = Literal["bytes", "text", "json", "msgpack"]
 """A payload format a channel names on ``input`` and ``sink``.
 
-A payload between two procedures names none: it stays in the MessagePack above.
+A payload between two tasklets names none: it stays in the MessagePack above.
 """
 
 CHANNEL_CODECS: tuple[ChannelCodec, ...] = get_args(ChannelCodec)
@@ -362,7 +362,7 @@ def codec_for(type_: type | None, which: str) -> ValueCodec | None:
     """The codec a declared type resolves to, or ``None`` for the default.
 
     ``None`` means "encode the value as MessagePack carries it", which is what
-    a procedure whose state is a plain dict wants.
+    a tasklet whose state is a plain dict wants.
     """
     if type_ is None:
         return None

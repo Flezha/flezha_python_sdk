@@ -26,7 +26,7 @@ ignore = [
 
 [lint.per-file-ignores]
 # Every naive clock call in this file is the ambient clock the SDK is meant to
-# observe: the procedures under test read `datetime.now()` so the determinism
+# observe: the tasklets under test read `datetime.now()` so the determinism
 # warning can be seen firing, and one call sits inside a `catch_warnings` block
 # asserting that nothing warns outside an invocation. A `tz=` argument deletes
 # the test rather than fixing it.

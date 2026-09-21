@@ -3,8 +3,8 @@
 :meth:`LocalOperative.start` takes the operative you deploy and runs the
 ``channels`` graph it already declares — no local-mode member on the class, no
 second declaration. What runs is the deployed machinery: entry decode, edge
-transforms and keying, one Entity per resolved key with its own mailbox, the
-retry ladder, and inter-procedure delivery performed by the runtime.
+transforms and keying, one Cell per resolved key with its own mailbox, the
+retry ladder, and inter-tasklet delivery performed by the runtime.
 
 State is held in memory and nothing is durable. Durability, plugins, placement
 and migration, the dead-letter queue, observability export, authz and
@@ -84,7 +84,7 @@ class LocalOperative:
     def on_sink(self, channel: str, callback: Callable[[SinkOutput], None]) -> Self:
         """Deliver every value released on ``channel`` to ``callback``.
 
-        A sink channel takes the producing procedure's name unless the
+        A sink channel takes the producing tasklet's name unless the
         declaration named it.
         """
         # Registered with the core first: a channel the declaration does not
@@ -106,7 +106,7 @@ class LocalOperative:
         self._core.local_run_until_idle(budget_ms)
 
     def close(self) -> None:
-        """End the run and release its Entities. Idempotent."""
+        """End the run and release its Cells. Idempotent."""
         if self._closed.is_set():
             return
         self._closed.set()

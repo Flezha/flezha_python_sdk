@@ -49,13 +49,13 @@ _started_slot = threading.Lock()
 def _operative_of(value: object) -> Operative:
     """The operative a registration call was handed.
 
-    A procedure declares none, and saying so here is what keeps the refusal at
+    A tasklet declares none, and saying so here is what keeps the refusal at
     the call the author wrote.
     """
     if not isinstance(value, Operative):
         raise FlezhaError(
             f"`{getattr(value, '__name__', value)}` declares no operative; register the "
-            f"operative that wires it, or declare a single procedure as a whole operative with "
+            f"operative that wires it, or declare a single tasklet as a whole operative with "
             f"`@flezha.stream_operative(id=...)` or `@flezha.workflow_operative(id=...)`"
         )
     return value
@@ -127,7 +127,7 @@ class Runner:
             raise FlezhaError(f"no operative type `{factory_id}` is declared on this runner")
         if self._started:
             registered = self._registry.get(factory_id)
-            if registered is not None and registered.has_entities():
+            if registered is not None and registered.has_cells():
                 raise FlezhaError(
                     f"`{factory_id}` has live instances on this runner; stop them before "
                     f"removing the type"

@@ -170,11 +170,11 @@ class Core:
         self._call("local_run_until_idle", timeout_ms)
 
     def local_stop(self) -> None:
-        """End the local run and release its Entities."""
+        """End the local run and release its Cells."""
         self._call("local_stop")
 
     def shutdown(self) -> None:
-        """Ship every Entity's state to the controller, then wake every blocked
+        """Ship every Cell's state to the controller, then wake every blocked
         poller and stop the runner loop."""
         self._call("shutdown")
 
@@ -199,7 +199,7 @@ class Core:
         self._call("complete", result)
 
     def abandon(self, token: int) -> None:
-        """Re-hand a polled activation's untouched items and release its entity."""
+        """Re-hand a polled activation's untouched items and release its cell."""
         self._call("abandon", token)
 
     def spawn_request(

@@ -50,7 +50,7 @@ class Bumped:
 
 
 class CountUp:
-    """A stateful procedure in the class spelling."""
+    """A stateful tasklet in the class spelling."""
 
     def run(self, value: str, ctx: flezha.Ctx[Counter]) -> None:
         ctx.change(Bumped(by=len(value)))
@@ -64,12 +64,12 @@ class CountUp:
         state.seen.append(str(change.by))
 
 
-count_up = flezha.procedure(CountUp)
+count_up = flezha.tasklet(CountUp)
 
 
-@flezha.procedure
+@flezha.tasklet
 def echo(value: str) -> str:
-    """A stateless procedure in the function spelling."""
+    """A stateless tasklet in the function spelling."""
     return value
 
 
@@ -242,7 +242,7 @@ for _entry in set(native.Core.ENTRY_POINTS) - set(vars(FakeCore)):
 
 
 def work_activation(
-    token: int, *payloads: Any, factory: str = "demo", procedure: int = 0
+    token: int, *payloads: Any, factory: str = "demo", tasklet: int = 0
 ) -> dict[str, Any]:
     """One work activation, as the veneer produces it.
 
@@ -253,7 +253,7 @@ def work_activation(
     return {
         "token": token,
         "operative": "op",
-        "procedure": procedure,
+        "tasklet": tasklet,
         "change_seq": 0,
         "factory": factory,
         "kind": "work",
@@ -288,10 +288,10 @@ def deps_for(operative: flezha.Operative, core: FakeCore) -> Any:
 
 
 def compensating(seen: list[Any]) -> Any:
-    """A procedure whose compensation appends the outputs it is driven over.
+    """A tasklet whose compensation appends the outputs it is driven over.
 
     Two suites drive the same shape — the dispatcher's `compensate_run` arm and
-    the harness's `compensate` — so the procedure is declared once.
+    the harness's `compensate` — so the tasklet is declared once.
     """
 
     class Compensating:
@@ -301,15 +301,15 @@ def compensating(seen: list[Any]) -> Any:
         def compensate(self, outputs: list[Any], ctx: flezha.Ctx[None]) -> None:
             seen.extend(outputs)
 
-    return flezha.procedure(Compensating)
+    return flezha.tasklet(Compensating)
 
 
-def solo_deps(proc: flezha.Procedure[Any, Any], core: FakeCore, factory: str = "solo") -> Any:
-    """The same, over a one-procedure operative wrapped around `proc`."""
+def solo_deps(task: flezha.Tasklet[Any, Any], core: FakeCore, factory: str = "solo") -> Any:
+    """The same, over a one-tasklet operative wrapped around `task`."""
 
     @flezha.stream_operative(factory)
     def operative(c: flezha.Channels) -> None:
-        c.input("in").into(proc).sink()
+        c.input("in").into(task).sink()
 
     return deps_for(operative, core)
 

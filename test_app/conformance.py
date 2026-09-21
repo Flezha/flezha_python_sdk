@@ -17,7 +17,7 @@ Two entry points, both off ``runner.py``:
     register ONLY that row's topology at startup, so a refused one kills the
     process with the refusal's own name in its output.
 
-The palette procedures live here rather than in ``fixtures.py``: they exist only
+The palette tasklets live here rather than in ``fixtures.py``: they exist only
 for this run, and nothing registers them but a row that names them.
 """
 
@@ -58,7 +58,7 @@ CITED = {
 
 # -- the palette -------------------------------------------------------------
 #
-# One fixture procedure per role the fixture header names. The identity each
+# One fixture tasklet per role the fixture header names. The identity each
 # declares is the role's own name, except `twin`, which claims `plain`'s: that
 # IS the collision the `dup_node` row names.
 
@@ -69,17 +69,17 @@ class Plain:
 
 
 class Routed:
-    """`entity_keys` WITH the router that says which entity an input belongs to."""
+    """`cell_keys` WITH the router that says which cell an input belongs to."""
 
     def run(self, value: str) -> str:
         return value
 
-    def entities_for(self, value: str) -> list[str]:
+    def cells_for(self, value: str) -> list[str]:
         return ["a"]
 
 
 class NoChangeLogical:
-    """A logical clock over a procedure that journals nothing.
+    """A logical clock over a tasklet that journals nothing.
 
     State without a fold IS journaling nothing: the change type stays empty, so
     the durable change sequence a logical clock reads never advances.
@@ -88,7 +88,7 @@ class NoChangeLogical:
     def run(self, value: str) -> str:
         return value
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {}
 
 
@@ -100,14 +100,14 @@ class EventTime:
         return len(value)
 
 
-#: role -> the keyword declarations its procedure carries beyond a node identity.
+#: role -> the keyword declarations its tasklet carries beyond a node identity.
 PALETTE: dict[str, tuple[type, str, dict[str, Any]]] = {
     "plain": (Plain, "plain", {}),
     "second": (Plain, "second", {}),
     "twin": (Plain, "plain", {}),
-    "static": (Plain, "static", {"entity_keys": ["a", "b"]}),
-    "routed": (Routed, "routed", {"entity_keys": ["a", "b"]}),
-    "dynamic": (Plain, "dynamic", {"dynamic_entities": True}),
+    "static": (Plain, "static", {"cell_keys": ["a", "b"]}),
+    "routed": (Routed, "routed", {"cell_keys": ["a", "b"]}),
+    "dynamic": (Plain, "dynamic", {"dynamic_cells": True}),
     "nochange": (NoChangeLogical, "nochange", {"clock": "logical"}),
     "eventtime": (EventTime, "eventtime", {"clock": "event_time"}),
 }
@@ -124,10 +124,10 @@ class Interpreter:
 
     def __init__(self, steps: str) -> None:
         self.steps = [step.strip() for step in steps.split(";") if step.strip()]
-        # A handle is a channel id from an `entry(...)` step, or a procedure
-        # role naming that procedure's output channel.
+        # A handle is a channel id from an `entry(...)` step, or a tasklet
+        # role naming that tasklet's output channel.
         self._handles: dict[str, Any] = {}
-        self._procedures: dict[str, flezha.Procedure[Any, Any]] = {}
+        self._tasklets: dict[str, flezha.Tasklet[Any, Any]] = {}
         self._mailbox = self._mailbox_capacities()
 
     def declare(self, builder: flezha.Channels) -> None:
@@ -178,22 +178,22 @@ class Interpreter:
         if verb == "sink":
             return edge.sink(arg) if arg else edge.sink()
         if verb == "into":
-            # The result is that procedure's output channel, addressed by role.
-            self._handles[arg] = edge.into(self._procedure(arg))
+            # The result is that tasklet's output channel, addressed by role.
+            self._handles[arg] = edge.into(self._tasklet(arg))
             return self._handles[arg]
         if verb == "mailbox":
-            # Declared on the procedure in this SDK, and read as that procedure
+            # Declared on the tasklet in this SDK, and read as that tasklet
             # was built — one step earlier than the step that names it.
             return edge
         raise AssertionError(f"the fixture spells a link this interpreter does not map: {verb}")
 
     def _merge(self, builder: flezha.Channels, arg: str) -> None:
-        """``merge(<proc>, <x>, <x>…)`` — every listed source under the identity mapping."""
+        """``merge(<task>, <x>, <x>…)`` — every listed source under the identity mapping."""
         role, *sources = (part.strip() for part in arg.split(","))
         merge = builder.merge()
         for source in sources:
             merge.from_(self._handle(source), lambda value: value)
-        self._handles[role] = merge.into(self._procedure(role))
+        self._handles[role] = merge.into(self._tasklet(role))
 
     def _branch(self, arg: str) -> None:
         """``branch(<x>, <n>)`` — the arms are empty: the row states how many."""
@@ -231,22 +231,22 @@ class Interpreter:
             raise AssertionError(f"the row addresses `{name}`, which nothing has declared")
         return self._handles[name]
 
-    def _procedure(self, role: str) -> flezha.Procedure[Any, Any]:
-        """The row's own procedure for a palette role, built once."""
-        if role not in self._procedures:
+    def _tasklet(self, role: str) -> flezha.Tasklet[Any, Any]:
+        """The row's own tasklet for a palette role, built once."""
+        if role not in self._tasklets:
             if role not in PALETTE:
                 raise AssertionError(f"the fixture names a palette role that is not one: {role}")
             target, identity, declarations = PALETTE[role]
             capacity = self._mailbox.get(role)
             if capacity is not None:
                 declarations = {**declarations, "mailbox_capacity": capacity}
-            self._procedures[role] = flezha.procedure(target, name=identity, **declarations)
-        return self._procedures[role]
+            self._tasklets[role] = flezha.tasklet(target, name=identity, **declarations)
+        return self._tasklets[role]
 
     def _mailbox_capacities(self) -> dict[str, int]:
         """The capacities a row declares, read BEFORE the steps run.
 
-        A procedure is built by the `into` that first names it, which is one
+        A tasklet is built by the `into` that first names it, which is one
         step earlier than the `mailbox` step that declares its capacity.
         """
         capacities = {}
@@ -273,7 +273,7 @@ def rows() -> list[dict[str, str]]:
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        columns = [cell.strip() for cell in line.split("|")]
+        columns = [part.strip() for part in line.split("|")]
         if len(columns) == 4:
             table.append(dict(zip(("refusal", "topology", "steps", "needs"), columns, strict=True)))
     return table
@@ -301,8 +301,8 @@ def operative_for(row: dict[str, str]) -> flezha.Operative:
 def channels_of(derived: dict[str, Any]) -> list[dict[str, Any]]:
     """The derived declaration in the fixture's seven-column spelling.
 
-    The core spells a consumer ``{"procedure":N,"chain":M}``; the report carries
-    the flat list of procedure indices, which is what that table pins.
+    The core spells a consumer ``{"tasklet":N,"chain":M}``; the report carries
+    the flat list of tasklet indices, which is what that table pins.
     """
     return [
         {
@@ -310,7 +310,7 @@ def channels_of(derived: dict[str, Any]) -> list[dict[str, Any]]:
             "name": channel["name"],
             "kind": channel["kind"],
             "producer": channel.get("producer"),
-            "consumers": [edge["procedure"] for edge in channel["consumers"]],
+            "consumers": [edge["tasklet"] for edge in channel["consumers"]],
             "sink": channel.get("sink"),
         }
         for channel in derived["channels"]
@@ -348,7 +348,7 @@ def shorthand_steps(row: dict[str, str]) -> list[dict[str, Any]]:
 
 
 class PlainWithTopology(Plain):
-    """A procedure body and a topology body on one declaration."""
+    """A tasklet body and a topology body on one declaration."""
 
     def channels(self, c: flezha.Channels) -> None:
         c.input("input")

@@ -1,8 +1,8 @@
-"""Entity identity bytes, and the replay-stable identifier derived from them.
+"""Cell identity bytes, and the replay-stable identifier derived from them.
 
 Both algorithms are fixed by the SDK contract rather than by a library, so
-every SDK derives the same value from the same entity: the identity is
-length-prefixed ``instance | procedure | key``, and the identifier is FNV-1a
+every SDK derives the same value from the same cell: the identity is
+length-prefixed ``instance | tasklet | key``, and the identifier is FNV-1a
 over ``identity | change seq | per-invocation ordinal``.
 """
 
@@ -12,7 +12,7 @@ import struct
 
 from .errors import FlezhaError
 
-__all__ = ["entity_identity", "stable_id"]
+__all__ = ["cell_identity", "stable_id"]
 
 _FNV128_OFFSET_BASIS = 0x6C62272E07BB014262B821756295C58D
 _FNV128_PRIME = 0x0000000001000000000000000000013B
@@ -27,24 +27,24 @@ def _fnv1a128(seed: int, data: bytes) -> int:
     return value
 
 
-def entity_identity(instance_id: str, procedure_name: str, entity_key: str | None) -> bytes:
-    """``[len instance][instance][len procedure][procedure][u16 len key][key]``.
+def cell_identity(instance_id: str, tasklet_name: str, cell_key: str | None) -> bytes:
+    """``[len instance][instance][len tasklet][tasklet][u16 len key][key]``.
 
     Big-endian lengths, the same layout every SDK writes, so an identifier
-    derived here matches one derived there for the same entity.
+    derived here matches one derived there for the same cell.
     """
     instance = instance_id.encode()
-    procedure = procedure_name.encode()
-    key = (entity_key or "").encode()
-    if len(instance) > 255 or len(procedure) > 255:
-        raise FlezhaError("operative class / procedure id must be at most 255 bytes")
+    tasklet = tasklet_name.encode()
+    key = (cell_key or "").encode()
+    if len(instance) > 255 or len(tasklet) > 255:
+        raise FlezhaError("operative class / tasklet id must be at most 255 bytes")
     if len(key) > 0xFFFF:
-        raise FlezhaError("entity key must be at most 65535 bytes")
+        raise FlezhaError("cell key must be at most 65535 bytes")
     return (
         struct.pack("B", len(instance))
         + instance
-        + struct.pack("B", len(procedure))
-        + procedure
+        + struct.pack("B", len(tasklet))
+        + tasklet
         + struct.pack(">H", len(key))
         + key
     )

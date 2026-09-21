@@ -32,7 +32,7 @@ out	echo: hello world
 
 The first line is the delivery verdict, which only says the payload was
 accepted. The second is the output: the channel name, a tab, and what the
-procedure emitted.
+tasklet emitted.
 
 To watch instead of asking, in one terminal:
 
@@ -66,9 +66,9 @@ That is also why the compose file sets `stdin_open: true`.
 
 | File | Part | What it does |
 |---|---|---|
-| `echo_procedure.py` | the procedure | the processing stage: prefixes each message |
-| `echo_operative.py` | the operative | the graph: `in` feeds the procedure, output lands on `out` |
+| `echo_tasklet.py` | the tasklet | the processing stage: prefixes each message |
+| `echo_operative.py` | the operative | the graph: `in` feeds the tasklet, output lands on `out` |
 | `runner.py` | the runner | this process: offers the operative and waits |
 
-The procedure never says where its output goes; the operative decides that.
-That split is what lets the graph be rewired without touching the procedure.
+The tasklet never says where its output goes; the operative decides that.
+That split is what lets the graph be rewired without touching the tasklet.

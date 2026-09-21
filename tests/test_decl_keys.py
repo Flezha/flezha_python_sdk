@@ -51,7 +51,7 @@ class Everything:
 
 
 class Keyed:
-    """A dynamic, event-time-clocked, compensating, migrating procedure.
+    """A dynamic, event-time-clocked, compensating, migrating tasklet.
 
     Every optional declaration at once, so the emitted keys are the full set
     rather than the subset a simpler fixture would produce.
@@ -79,12 +79,12 @@ class Keyed:
         return {"by": 0}
 
 
-keyed = flezha.procedure(
+keyed = flezha.tasklet(
     Keyed,
     clock="event_time",
-    dynamic_entities=True,
+    dynamic_cells=True,
     idle_ttl_ms=60_000,
-    max_entities=1024,
+    max_cells=1024,
     mailbox_capacity=2048,
     schema_version=3,
     min_readable_schema_version=1,
@@ -95,11 +95,11 @@ class Statics:
     def run(self, value: dict[str, int], ctx: flezha.Ctx[None]) -> None:
         return None
 
-    def entities_for(self, value: dict[str, int]) -> list[str]:
+    def cells_for(self, value: dict[str, int]) -> list[str]:
         return ["a"]
 
 
-statics = flezha.procedure(Statics, entity_keys=["a", "b"], name="statics")
+statics = flezha.tasklet(Statics, cell_keys=["a", "b"], name="statics")
 
 
 @flezha.stream_operative("every_key")
@@ -136,7 +136,7 @@ def _emitted() -> dict[str, set[str]]:
     emitted: dict[str, set[str]] = {
         "class": set(),
         "channel": set(),
-        "procedure": set(),
+        "tasklet": set(),
         "workflow": set(),
     }
     for operative in (every_key, static_key, every_workflow_key):
@@ -144,8 +144,8 @@ def _emitted() -> dict[str, set[str]]:
         emitted["class"] |= set(decl)
         for channel in decl.get("channels", []):
             emitted["channel"] |= set(channel)
-        for procedure in decl.get("procedures", []):
-            emitted["procedure"] |= set(procedure)
+        for tasklet in decl.get("tasklets", []):
+            emitted["tasklet"] |= set(tasklet)
         emitted["workflow"] |= set(decl.get("workflow") or {})
     return emitted
 
@@ -201,7 +201,7 @@ def test_a_merge_serialises_each_source_as_a_chain_the_merge_link_closes() -> No
     link a merge adds is the terminator the core reads the group off."""
     merged = app.module("fixtures").merged_input_operative
     chains = [channel["chains"] for channel in graph.to_host_class_decl(merged.spec)["channels"]]
-    source = [{"link": "transform"}, {"link": "key"}, {"link": "merge", "procedure": 0, "group": 0}]
+    source = [{"link": "transform"}, {"link": "key"}, {"link": "merge", "tasklet": 0, "group": 0}]
     assert chains[0] == chains[1] == [source]
 
 
@@ -215,7 +215,7 @@ def test_flat_map_records_the_link_map_records() -> None:
     assert (
         record("flat_map")
         == record("map")
-        == [[{"link": "transform"}, {"link": "into", "procedure": 0}]]
+        == [[{"link": "transform"}, {"link": "into", "tasklet": 0}]]
     )
 
 
@@ -297,7 +297,7 @@ def _lines(topology: str, operative: flezha.Operative) -> list[str]:
                     channel["name"],
                     channel["kind"],
                     "-" if channel["producer"] is None else channel["producer"],
-                    ",".join(str(c["procedure"]) for c in consumers) if consumers else "-",
+                    ",".join(str(c["tasklet"]) for c in consumers) if consumers else "-",
                     channel["sink"] or "-",
                 )
             )
@@ -319,8 +319,8 @@ class HybridConsumer:
         return None
 
 
-hybrid_producer = flezha.procedure(HybridProducer, name="hybrid_producer_procedure")
-hybrid_consumer = flezha.procedure(HybridConsumer, name="hybrid_consumer_procedure")
+hybrid_producer = flezha.tasklet(HybridProducer, name="hybrid_producer_tasklet")
+hybrid_consumer = flezha.tasklet(HybridConsumer, name="hybrid_consumer_tasklet")
 
 
 @flezha.stream_operative("hybrid_channel")
@@ -340,8 +340,8 @@ class BlockB:
         return None
 
 
-tier_commit_a = flezha.procedure(TierCommitA, name="tier_commit_a")
-block_b = flezha.procedure(BlockB, name="block_b")
+tier_commit_a = flezha.tasklet(TierCommitA, name="tier_commit_a")
+block_b = flezha.tasklet(BlockB, name="block_b")
 
 
 @flezha.workflow_operative("commit_block_chain")

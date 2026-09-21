@@ -7,14 +7,14 @@ builds one:
 
     @flezha.stream_operative("echo")
     def echo(c: flezha.Channels) -> None:
-        c.input("input").into(echo_proc).sink("out")
+        c.input("input").into(echo_task).sink("out")
 
-A workflow operative is the same shape: a chain of procedures over a graph. A
+A workflow operative is the same shape: a chain of tasklets over a graph. A
 channels body takes one parameter, annotated :class:`~flezha.builder.Channels` or
 not at all.
 
-Handed a procedure body instead, a class with ``run`` or a function of any
-other shape, the same decorators declare the single-procedure short form:
+Handed a tasklet body instead, a class with ``run`` or a function of any
+other shape, the same decorators declare the single-tasklet short form:
 
 .. code-block:: python
 
@@ -32,7 +32,7 @@ from typing import Any, Unpack
 from . import codec as _codec
 from .builder import Channels, ClassSpec
 from .errors import DeclarationError
-from .procedure import Procedure, ProcedureSettings, output_type, positional_parameters
+from .tasklet import Tasklet, TaskletSettings, output_type, positional_parameters
 
 __all__ = ["Operative", "stream_operative", "workflow_operative"]
 
@@ -49,7 +49,7 @@ class Operative:
         "factory_id",
         "kind",
         "declaration",
-        "procedure",
+        "tasklet",
         "_options",
         "_spec",
         "__name__",
@@ -62,14 +62,14 @@ class Operative:
         kind: str,
         declaration: Callable[..., Any],
         options: dict[str, Any],
-        procedure: Procedure[Any, Any] | None = None,
+        tasklet: Tasklet[Any, Any] | None = None,
     ) -> None:
         self.factory_id = factory_id
         self.kind = kind
         self.declaration = declaration
-        #: A short form's generated procedure, named after the factory id and
+        #: A short form's generated tasklet, named after the factory id and
         #: wireable in another operative's body; ``None`` for a channels body.
-        self.procedure = procedure
+        self.tasklet = tasklet
         self._options = options
         self._spec: ClassSpec | None = None
         self.__name__ = getattr(declaration, "__name__", factory_id)
@@ -100,7 +100,7 @@ class Operative:
             factory_id=self.factory_id,
             kind="stream",
             persistent=self._options["persistent"],
-            procedures=builder.procedures,
+            tasklets=builder.tasklets,
             channels=builder.channels,
             effectively_once=builder.effectively_once_flag,
             checkpoint_ack=builder.checkpoint_ack_flag,
@@ -120,7 +120,7 @@ class Operative:
             factory_id=self.factory_id,
             kind="workflow",
             persistent=options["persistent"],
-            procedures=builder.procedures,
+            tasklets=builder.tasklets,
             channels=builder.channels,
             effectively_once=builder.effectively_once_flag,
             sync_durability=bool(options["sync_durability"]) or builder.sync_durability_flag,
@@ -156,9 +156,9 @@ def _operative(
     kind: str,
     options: dict[str, Any],
     short_form: dict[str, Any],
-    settings: ProcedureSettings,
+    settings: TaskletSettings,
 ) -> Callable[[Any], Operative]:
-    unknown = sorted(settings.keys() - ProcedureSettings.__optional_keys__)
+    unknown = sorted(settings.keys() - TaskletSettings.__optional_keys__)
     if unknown:
         raise TypeError(f"{decorator.__name__}() got an unexpected keyword argument {unknown[0]!r}")
     defaults = inspect.signature(decorator).parameters
@@ -184,7 +184,7 @@ def _operative(
                 factory_id,
                 name,
                 f"`{'`, `'.join(written)}` describe(s) what a short form generates, and a "
-                f"`flezha.Channels` body declares its own channels and procedures. A function "
+                f"`flezha.Channels` body declares its own channels and tasklets. A function "
                 f"whose one parameter is annotated `flezha.Channels`, or not at all, is a "
                 f"channels body",
             )
@@ -199,22 +199,22 @@ def _short_form(
     body: Any,
     options: dict[str, Any],
     class_settings: list[str],
-    settings: ProcedureSettings,
+    settings: TaskletSettings,
     *,
     sink: str | None,
     input: str | None,
     codec: _codec.ChannelCodec | None,
 ) -> Operative:
-    """One procedure body as a whole operative: its entry channel, the
-    procedure named after the factory id and declared with ``settings``, and
+    """One tasklet body as a whole operative: its entry channel, the
+    tasklet named after the factory id and declared with ``settings``, and
     the sink when one is written."""
     name = body.__name__
-    topology = [key for key in ("channels", "procedures") if hasattr(body, key)]
+    topology = [key for key in ("channels", "tasklets") if hasattr(body, key)]
     if inspect.isclass(body) and hasattr(body, "run") and topology:
         raise DeclarationError(
             factory_id,
             name,
-            f"ShortFormWithTopology: `run` declares this operative's one procedure, whose "
+            f"ShortFormWithTopology: `run` declares this operative's one tasklet, whose "
             f"topology is generated, and `{topology[0]}` declares a topology of its own; keep "
             f"one of the two bodies",
             refusals=["ShortFormWithTopology"],
@@ -227,7 +227,7 @@ def _short_form(
             f"its default, so a class setting is declared in the full form, with a "
             f"`flezha.Channels` body",
         )
-    generated = Procedure(body, name=factory_id, **settings)
+    generated = Tasklet(body, name=factory_id, **settings)
     returned = output_type(generated)
     if sink is not None and (returned is None or returned is type(None)):
         raise DeclarationError(
@@ -255,17 +255,17 @@ def stream_operative(
     sink: str | None = None,
     input: str | None = None,
     codec: _codec.ChannelCodec | None = None,
-    **settings: Unpack[ProcedureSettings],
+    **settings: Unpack[TaskletSettings],
 ) -> Callable[[Any], Operative]:
     """Declare a stream operative: fed by the controller through entry channels.
 
     ``id`` is the factory id. ``persistent`` is whether change bytes are flushed
-    to the per-entity WAL.
+    to the per-cell WAL.
 
-    Over a procedure body this is the short form: an entry channel named by
+    Over a tasklet body this is the short form: an entry channel named by
     ``input`` (``"input"`` when none is written) and decoded by ``codec``, the
-    procedure, and the ``sink`` plugin channel when one is written. ``settings`` are the
-    procedure's own declarations, as :func:`~flezha.procedure.procedure` takes
+    tasklet, and the ``sink`` plugin channel when one is written. ``settings`` are the
+    tasklet's own declarations, as :func:`~flezha.tasklet.tasklet` takes
     them.
     """
     return _operative(
@@ -293,11 +293,11 @@ def workflow_operative(
     sink: str | None = None,
     input: str | None = None,
     codec: _codec.ChannelCodec | None = None,
-    **settings: Unpack[ProcedureSettings],
+    **settings: Unpack[TaskletSettings],
 ) -> Callable[[Any], Operative]:
-    """Declare a workflow operative: a chain of procedures, run once or looping.
+    """Declare a workflow operative: a chain of tasklets, run once or looping.
 
-    Over a procedure body this is the short form, a ``once`` workflow whose
+    Over a tasklet body this is the short form, a ``once`` workflow whose
     entry channel receives its start values; see :func:`stream_operative`.
     """
     return _operative(

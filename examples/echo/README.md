@@ -8,8 +8,8 @@ Three files, one for each part the guides describe:
 
 | File | Part | What it does |
 |---|---|---|
-| `echo_procedure.py` | the procedure | the processing stage: prefixes each message |
-| `echo_operative.py` | the operative | the graph: `in` feeds the procedure, output lands on `out` |
+| `echo_tasklet.py` | the tasklet | the processing stage: prefixes each message |
+| `echo_operative.py` | the operative | the graph: `in` feeds the tasklet, output lands on `out` |
 | `runner.py` | the runner | this process: offers the operative and waits |
 
 ## Run it

@@ -1,17 +1,17 @@
 """Twins of the reference's durable structured workflow fixtures
 (``test/apps/rust_runner/src/workflow.rs`` and ``workflow_loop.rs``) under the
-same factory ids, procedure names, channel names and output bytes.
+same factory ids, tasklet names, channel names and output bytes.
 
 Entry payloads and plugin frames are UTF-8 text on the wire, as in the
 reference: every entry names the text codec, and a bare ``sink(name)`` sends a
 string as its UTF-8 bytes, as the reference's does, so only a sink that prefixes
-what it sends declares an encoder. An inter-procedure hop between two Python
-procedures carries MessagePack, and the core derives that channel's journal
+what it sends declares an encoder. An inter-tasklet hop between two Python
+tasklets carries MessagePack, and the core derives that channel's journal
 codec from the channel's kind, so no fixture declares one.
 
-A procedure node owns exactly one output channel, not one per outgoing edge, so
+A tasklet node owns exactly one output channel, not one per outgoing edge, so
 the whole topology vocabulary is edge reuse: a fan-out is one held ``Edge``
-wired twice, and a fan-in is two arms naming one procedure with no node name.
+wired twice, and a fan-in is two arms naming one tasklet with no node name.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ async def block_until_released() -> None:
     pool ``dispatch.resolve`` drives it to completion on the worker's own loop,
     which parks that pool worker and no other — the core's driver keeps
     answering control pings and the starvation supervisor grows the pool, so a
-    sibling procedure stays dispatchable. Under ``FLEZHA_PYTHON_EXECUTOR=asyncio``
+    sibling tasklet stays dispatchable. Under ``FLEZHA_PYTHON_EXECUTOR=asyncio``
     the same line suspends the one activation and yields the loop.
     """
     if RELEASE_ENV in os.environ:
@@ -79,7 +79,7 @@ def durable_step(
     emit: Callable[[str, flezha.Ctx[Any]], None] | None = None,
     compensate: Callable[..., Any] | None = None,
     gate: Callable[[str], bool] | None = None,
-) -> flezha.Procedure[str, str]:
+) -> flezha.Tasklet[str, str]:
     """The reference's ``durable_step!`` macro: a ``str -> str`` step committing
     one idempotent Change keyed by its own name, so a re-run after a resume
     folds to the state it already had.
@@ -87,8 +87,8 @@ def durable_step(
     ``emit`` and ``compensate`` are the two axes that macro parameterises;
     ``change`` (which value is recorded, ``None`` for none) and ``gate`` (whether this step waits
     for the release gate BEFORE recording it) are the two the reference varies
-    by hand-writing the procedure instead. Carrying all four is what lets every
-    durable procedure in this module be a single call.
+    by hand-writing the tasklet instead. Carrying all four is what lets every
+    durable tasklet in this module be a single call.
 
     The handler is a coroutine only when a gate is declared. ``resolve`` answers
     a plain value with no event loop at all, and the bench chains run this
@@ -105,7 +105,7 @@ def durable_step(
             ctx.emit(value)
 
     class Step:
-        def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+        def initial_state(self, cell_key: str | None) -> dict[str, Any]:
             return {"items": []}
 
         def apply_change(self, state: dict[str, Any], recorded: dict[str, Any]) -> None:
@@ -130,16 +130,16 @@ def durable_step(
         # A crash-resumed compensation reconstructs completed stages with EMPTY
         # outputs, so a hook that records an undo does so unconditionally.
         Step.compensate = staticmethod(compensate)
-    return flezha.procedure(Step, name=name)
+    return flezha.tasklet(Step, name=name)
 
 
-def stateless_step(name: str, handle: Callable[..., Any]) -> flezha.Procedure[str, str]:
+def stateless_step(name: str, handle: Callable[..., Any]) -> flezha.Tasklet[str, str]:
     """The reference's ``stateless_step!``: no state, no change, the whole
     behaviour is the handler."""
-    return flezha.procedure(handle, name=name)
+    return flezha.tasklet(handle, name=name)
 
 
-def failing_step(name: str) -> flezha.Procedure[str, str]:
+def failing_step(name: str) -> flezha.Tasklet[str, str]:
     """A terminal step that always fails, which is how a saga is made to unwind."""
 
     def always_fails(value: str, ctx: flezha.Ctx[None]) -> None:
@@ -159,7 +159,7 @@ def undoing(record: str) -> Callable[[list[Any], flezha.Ctx[Any]], None]:
 
 # -- echo_workflow -----------------------------------------------------------
 #
-# One procedure, run once: emits its start values back, so the pass ends and
+# One tasklet, run once: emits its start values back, so the pass ends and
 # the controller deregisters the instance.
 
 
@@ -177,7 +177,7 @@ def echo_workflow(c: flezha.Channels) -> None:
 
 # -- commit_block_workflow / sync_durable_workflow ---------------------------
 #
-# Proc A commits durable state, proc B blocks until the resumed runner sets the
+# Task A commits durable state, task B blocks until the resumed runner sets the
 # release variable — so a SIGKILL lands with A's state already on the WAL and B
 # never finished. `sync_durable_workflow` is the same chain declaring
 # SYNCHRONOUS remote durability, which is what lets the kill-the-disk drill
@@ -206,7 +206,7 @@ sync_durable_workflow = flezha.workflow_operative("sync_durable_workflow", sync_
 
 # -- optout_commit_block -----------------------------------------------------
 #
-# The opt-out twin with a live mid-chain signal: proc A's output also reaches a
+# The opt-out twin with a live mid-chain signal: task A's output also reaches a
 # plugin sink, so the crash-resume drill can observe the mid-run point without
 # durable state. A crash re-runs the chain from the top, so the sink sees A's
 # marker once per run and no journal file exists.
@@ -221,9 +221,9 @@ def optout_commit_block(c: flezha.Channels) -> None:
 
 # -- tier_commit_block_workflow ----------------------------------------------
 #
-# The effectively-once fixture. Proc A commits durable state AND emits
+# The effectively-once fixture. Task A commits durable state AND emits
 # `committed:<input>` under a stable key on a keyed hybrid channel, captured
-# into the atomic effect record; proc B blocks. A SIGKILL lands with A's effect
+# into the atomic effect record; task B blocks. A SIGKILL lands with A's effect
 # record durable and B unfinished, and the resume re-runs A — the change is
 # idempotent and the re-emit deterministic.
 
@@ -263,10 +263,10 @@ def saga_block_workflow(c: flezha.Channels) -> None:
 
 # -- outbox_block_workflow ---------------------------------------------------
 #
-# The transactional outbox. Proc A commits durable state AND emits plugin-bound
+# The transactional outbox. Task A commits durable state AND emits plugin-bound
 # output on a hybrid channel — STAGED, so it reaches the sink only after the
 # controller has journaled and fsynced A's committed entry with the output
-# inside it and flushed the outbox. Proc B blocks, so a SIGKILL lands with A
+# inside it and flushed the outbox. Task B blocks, so a SIGKILL lands with A
 # committed and flushed and B unfinished.
 
 
@@ -279,10 +279,10 @@ def outbox_block_workflow(c: flezha.Channels) -> None:
 
 # -- undo_outbox_workflow ----------------------------------------------------
 #
-# The compensation half of the transactional outbox. Proc UA commits, emits its
+# The compensation half of the transactional outbox. Task UA commits, emits its
 # forward output on a hybrid plugin channel, and compensates by EMITTING an undo
 # record — plugin-bound, so it is staged and rides a compensated journal entry
-# rather than the wire. Proc C fails immediately, so the chain always rolls
+# rather than the wire. Task C fails immediately, so the chain always rolls
 # back; the hook BLOCKS, so on the first runner the undo is
 # emitted-but-never-journaled when the SIGKILL lands, proving staged undo output
 # cannot leak. The respawn re-runs the outstanding hook, whose done marker never
@@ -310,7 +310,7 @@ def undo_outbox_workflow(c: flezha.Channels) -> None:
 #     BranchA ─┬─▶ BranchB ─▶ BranchD
 #              └─▶ BranchC
 #
-# The procedure TREE. Every procedure commits durable state and compensates by
+# The tasklet TREE. Every tasklet commits durable state and compensates by
 # emitting an undo record, so both tree behaviours are observable at one sink:
 #
 #   * crash-resume — BranchD BLOCKS, so the SIGKILL lands with A, B and C
@@ -321,8 +321,8 @@ def undo_outbox_workflow(c: flezha.Channels) -> None:
 #     blocking. A, B and C have all completed, so the rollback unwinds the two
 #     branches before the root they share: `undo-c`, `undo-b`, `undo-a`.
 #
-# The inter-proc channels are hybrid, which is what makes a non-leaf
-# procedure's forward and undo output visible at the sink.
+# The inter-task channels are hybrid, which is what makes a non-leaf
+# tasklet's forward and undo output visible at the sink.
 
 BRANCH_FAIL_ENV = "FLEZHA_BRANCH_FAIL"
 
@@ -413,7 +413,7 @@ def diamond_workflow(c: flezha.Channels) -> None:
 
 # -- retry_workflow ----------------------------------------------------------
 #
-# The per-entity retry ladder. Proc RA commits durable state, forwards on a
+# The per-cell retry ladder. Task RA commits durable state, forwards on a
 # hybrid channel, and compensates by emitting an undo record; `retry_flaky`
 # fails its first FLEZHA_WORKFLOW_RETRY_FAILS attempts (none by default — each
 # scenario arms it) and then emits `attempt:<n>:<input>`. One armed failure is
@@ -423,8 +423,8 @@ def diamond_workflow(c: flezha.Channels) -> None:
 
 RETRY_FAILS_ENV = "FLEZHA_WORKFLOW_RETRY_FAILS"
 
-# Attempts made in this process. A retry re-runs the procedure of the same
-# instance in place and dispatch is entity-affine, so one counter is the whole
+# Attempts made in this process. A retry re-runs the tasklet of the same
+# instance in place and dispatch is cell-affine, so one counter is the whole
 # ladder's view; `next` on a count is atomic, which a `+= 1` on a module global
 # under a worker pool is not.
 _attempts = itertools.count(1)
@@ -457,7 +457,7 @@ def retry_workflow(c: flezha.Channels) -> None:
 # -- the durable loop family -------------------------------------------------
 #
 # chat_loop_workflow is the durable-loop + suspension shape. One iteration per
-# inbox item: TURN commits the turn to Entity state, so a resumed iteration is
+# inbox item: TURN commits the turn to Cell state, so a resumed iteration is
 # visible in the WAL, and REPLY emits the answer to the sink. Between turns the
 # loop finds an empty inbox at a committed boundary and PARKS — the instance is
 # evicted and rehydrated by the next message. The turn whose payload is the
@@ -469,13 +469,13 @@ def retry_workflow(c: flezha.Channels) -> None:
 # the number of turns TURN holds, so the session ends once that iteration
 # commits.
 #
-# stateless_loop_workflow is the same loop MINUS its stateful first procedure:
-# chat_reply alone holds no per-Entity state, so nothing writes an Entity WAL
-# and the instance's proc-journal reaches the driver only if it rides the bind
+# stateless_loop_workflow is the same loop MINUS its stateful first tasklet:
+# chat_reply alone holds no per-Cell state, so nothing writes a Cell WAL
+# and the instance's task-journal reaches the driver only if it rides the bind
 # itself.
 #
-# chat_rewind_workflow is the loop whose replying procedure can be undone. The
-# undo handle lives in Entity state, because a rewind's compensation is rebuilt
+# chat_rewind_workflow is the loop whose replying tasklet can be undone. The
+# undo handle lives in Cell state, because a rewind's compensation is rebuilt
 # from the journal and is handed NO retained outputs, so the hook reads the last
 # thing it said, retracts it and pops it.
 
@@ -507,7 +507,7 @@ chat_reply = stateless_step("chat_reply", _reply)
 
 
 class ChatReplyUndoable:
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"said": []}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -528,7 +528,7 @@ class ChatReplyUndoable:
         ctx.emit(f"retract:{said[-1]}")
 
 
-chat_reply_undoable = flezha.procedure(ChatReplyUndoable, name="chat_reply_undoable")
+chat_reply_undoable = flezha.tasklet(ChatReplyUndoable, name="chat_reply_undoable")
 
 # A loop here ends on an external stop, or on `bye` where TURN runs; the duration
 # backstop keeps a stray instance from outliving the test run.
@@ -557,9 +557,9 @@ def chat_rewind_workflow(c: flezha.Channels) -> None:
 # What `mix bench.workflow --scenario chain` drives: K durable pass-through
 # steps in a line, the payload unchanged, so the sink receives the seed input
 # and the bench reads its own seq and send timestamp back. Each chain position
-# needs its own procedure, so the sixteen are generated rather than written out;
+# needs its own tasklet, so the sixteen are generated rather than written out;
 # the edge names follow the reference, which spells them from the step TYPE
-# rather than from the procedure name.
+# rather than from the tasklet name.
 
 BENCH_STEPS = [durable_step(f"bench_s{at}") for at in range(16)]
 
@@ -591,7 +591,7 @@ WAKE_AFTER_ENV = "FLEZHA_BENCH_WAKE_AFTER_MS"
 
 
 class BenchTurn:
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"turns": 0, "last": ""}
 
     def apply_change(self, state: dict[str, Any], seen: dict[str, Any]) -> None:
@@ -603,7 +603,7 @@ class BenchTurn:
         ctx.emit(value)
 
 
-bench_turn = flezha.procedure(BenchTurn, name="bench_turn")
+bench_turn = flezha.tasklet(BenchTurn, name="bench_turn")
 
 
 def _wake_after_ms() -> int | None:

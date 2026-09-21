@@ -122,7 +122,7 @@ def _checkpoint_class(factory_id: str, declare: Any) -> dict[str, Any]:
     def operative(c: flezha.Channels) -> None:
         c.effectively_once()
         declare(c)
-        c.input("input").into(echo, f"{factory_id}_procedure").keyed().sink("sink")
+        c.input("input").into(echo, f"{factory_id}_tasklet").keyed().sink("sink")
 
     assert submit(operative)["ack_granularity"] == "checkpoint"
     return graph.to_host_class_decl(operative.spec)
@@ -217,7 +217,7 @@ def test_a_spawn_with_no_control_plane_answers_unavailable_until_its_invocation_
     reads: list[tuple[str, str, str]] = []
     unread: list[flezha.SpawnHandle] = []
 
-    @flezha.procedure(name="spawner")
+    @flezha.tasklet(name="spawner")
     def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
         handle = ctx.spawn_workflow("worker", value, id="w1")
         for read in (handle.try_result, handle.wait):

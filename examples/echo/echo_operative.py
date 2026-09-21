@@ -1,4 +1,4 @@
-from echo_procedure import echo
+from echo_tasklet import echo
 
 import flezha
 
@@ -9,7 +9,7 @@ import flezha
 #
 # The graph is checked as a whole when the runner declares it, so one that
 # cannot work is refused at startup. The entry names the text codec, so the
-# procedure is handed a str, and the sink names none, so a str result leaves
+# tasklet is handed a str, and the sink names none, so a str result leaves
 # as its own bytes.
 @flezha.stream_operative("echo")  # the stable identity `flz operative start` takes
 def echo_operative(c: flezha.Channels) -> None:

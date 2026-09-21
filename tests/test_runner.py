@@ -18,7 +18,7 @@ from flezha.errors import FlezhaError
 from flezha.runner import Runner
 
 
-@flezha.procedure
+@flezha.tasklet
 def other(value: str) -> str:
     return value
 
@@ -387,6 +387,6 @@ def test_a_short_form_collides_with_one_of_the_other_kind(runner: Any) -> None:
         r.register_factory(twin)
 
 
-def test_registering_a_procedure_is_refused(runner: Any) -> None:
+def test_registering_a_tasklet_is_refused(runner: Any) -> None:
     with pytest.raises(FlezhaError, match="declares no operative"):
         runner().register_factory(other)  # type: ignore[arg-type]

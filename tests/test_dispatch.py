@@ -2,7 +2,7 @@
 
 ``answer`` is a pure function of the activation and the registry, so every
 mapping below asserts what it returns. The handout contract — an activation
-that returns unanswered retires its entity for the life of the process — is
+that returns unanswered retires its cell for the life of the process — is
 asserted against a real core, whose refusal of a token it never handed out is
 what both the completion and the abandon meet.
 """
@@ -55,7 +55,7 @@ def test_an_unknown_factory_is_a_non_retryable_failure(deps: DispatchDeps) -> No
 
 
 def test_a_handler_error_becomes_a_retryable_verdict(fake_core: FakeCore) -> None:
-    @flezha.procedure
+    @flezha.tasklet
     def boom(value: str) -> str:
         raise ValueError("nope")
 
@@ -66,7 +66,7 @@ def test_a_handler_error_becomes_a_retryable_verdict(fake_core: FakeCore) -> Non
 
 
 def test_a_non_retryable_error_says_so(fake_core: FakeCore) -> None:
-    @flezha.procedure
+    @flezha.tasklet
     def refuse(value: str) -> str:
         raise NonRetryableError("bad input")
 
@@ -78,7 +78,7 @@ def test_a_non_retryable_error_says_so(fake_core: FakeCore) -> None:
 def test_a_batch_stops_at_the_first_failure(fake_core: FakeCore) -> None:
     seen: list[str] = []
 
-    @flezha.procedure
+    @flezha.tasklet
     def picky(value: str) -> str:
         seen.append(value)
         if value == "bad":
@@ -88,12 +88,12 @@ def test_a_batch_stops_at_the_first_failure(fake_core: FakeCore) -> None:
     deps = solo_deps(picky, fake_core)
     effects = answered(work_activation(5, "ok", "bad", "never", factory="solo"), deps)["effects"]
     # Items after the failure are re-handed by the core, so the batch stops
-    # rather than reporting effects the entity never saw.
+    # rather than reporting effects the cell never saw.
     assert seen == ["ok", "bad"]
     assert [effect["verdict"] for effect in effects] == ["ok", "retryable"]
 
 
-def test_a_failure_inside_complete_abandons_rather_than_retiring_the_entity(
+def test_a_failure_inside_complete_abandons_rather_than_retiring_the_cell(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The guard, against the collaborator that decides it.
@@ -113,7 +113,7 @@ def test_a_failure_inside_complete_abandons_rather_than_retiring_the_entity(
 
 
 def test_an_async_handler_is_driven_off_an_event_loop(fake_core: FakeCore) -> None:
-    @flezha.procedure
+    @flezha.tasklet
     async def slow(value: str) -> str:
         await asyncio.sleep(0)
         return value.upper()
@@ -126,7 +126,7 @@ def test_an_async_handler_is_driven_off_an_event_loop(fake_core: FakeCore) -> No
 def test_a_filtered_input_is_consumed_and_reaches_no_handler(fake_core: FakeCore) -> None:
     seen: list[str] = []
 
-    @flezha.procedure
+    @flezha.tasklet
     def only_long(value: str) -> str:
         seen.append(value)
         return value
@@ -150,7 +150,7 @@ def key_request(token: int, factory: str, *payloads: bytes, channel: int = 0) ->
     return {
         "token": token,
         "operative": "op",
-        "procedure": 0,
+        "tasklet": 0,
         "change_seq": 0,
         "factory": factory,
         "kind": "key_request",
@@ -167,19 +167,19 @@ def wire_work(
     token: int,
     factory: str,
     *items: tuple[int, bytes],
-    procedure: int = 0,
-    entity: str | None = None,
+    tasklet: int = 0,
+    cell: str | None = None,
 ) -> dict[str, Any]:
     """One work activation over wire payloads, ``(channel, payload)`` per item."""
-    activation = work_activation(token, *[None] * len(items), factory=factory, procedure=procedure)
-    activation["entity_key"] = entity
+    activation = work_activation(token, *[None] * len(items), factory=factory, tasklet=tasklet)
+    activation["cell_key"] = cell
     for item, (channel, payload) in zip(activation["items"], items, strict=True):
         item.update(channel=channel, payload=payload)
     return activation
 
 
 def test_a_key_request_answers_one_entry_per_payload(fake_core: FakeCore) -> None:
-    @flezha.procedure(dynamic_entities=True)
+    @flezha.tasklet(dynamic_cells=True)
     def routed(value: dict[str, str]) -> dict[str, str]:
         return value
 
@@ -195,7 +195,7 @@ def test_a_key_request_answers_one_entry_per_payload(fake_core: FakeCore) -> Non
 
 
 def test_a_per_payload_refusal_does_not_fail_the_whole_crossing(fake_core: FakeCore) -> None:
-    @flezha.procedure(dynamic_entities=True)
+    @flezha.tasklet(dynamic_cells=True)
     def routed(value: dict[str, str]) -> dict[str, str]:
         return value
 
@@ -217,14 +217,14 @@ def test_a_per_payload_refusal_does_not_fail_the_whole_crossing(fake_core: FakeC
 
 
 def test_a_live_state_read_answers_json(deps: DispatchDeps) -> None:
-    # Straight to the stateful procedure: an answer routes no edges, so an
+    # Straight to the stateful tasklet: an answer routes no edges, so an
     # input to `echo` would never reach `count_up`.
-    answered(work_activation(11, "abc", procedure=1), deps)
+    answered(work_activation(11, "abc", tasklet=1), deps)
     result = answered(
         {
             "token": 12,
             "operative": "op",
-            "procedure": 1,
+            "tasklet": 1,
             "change_seq": 0,
             "factory": "demo",
             "kind": "live_state_read",
@@ -236,12 +236,12 @@ def test_a_live_state_read_answers_json(deps: DispatchDeps) -> None:
 
 
 def test_a_snapshot_and_a_restore_fold_round_trip(deps: DispatchDeps) -> None:
-    answered(work_activation(13, "abcd", procedure=1), deps)
+    answered(work_activation(13, "abcd", tasklet=1), deps)
     snapshot = answered(
         {
             "token": 14,
             "operative": "op",
-            "procedure": 1,
+            "tasklet": 1,
             "change_seq": 0,
             "factory": "demo",
             "kind": "snapshot_request",
@@ -253,8 +253,8 @@ def test_a_snapshot_and_a_restore_fold_round_trip(deps: DispatchDeps) -> None:
         {
             "token": 15,
             "operative": "op",
-            "procedure": 1,
-            "entity_key": "other",
+            "tasklet": 1,
+            "cell_key": "other",
             "change_seq": 0,
             "factory": "demo",
             "kind": "restore_fold",
@@ -275,7 +275,7 @@ def test_an_unknown_activation_kind_is_a_non_retryable_failure(deps: DispatchDep
 
 
 def test_reserved_metadata_is_refused_naming_the_key(fake_core: FakeCore) -> None:
-    @flezha.procedure
+    @flezha.tasklet
     def stamped(value: str, ctx: flezha.Ctx[None]) -> None:
         ctx.emit(value, metadata={"flz.seq": "1"})
 
@@ -286,7 +286,7 @@ def test_reserved_metadata_is_refused_naming_the_key(fake_core: FakeCore) -> Non
 
 
 def test_a_keyed_channel_with_no_key_is_refused_naming_it(fake_core: FakeCore) -> None:
-    @flezha.procedure
+    @flezha.tasklet
     def keyless(value: str, ctx: flezha.Ctx[None]) -> None:
         ctx.emit(value)
 
@@ -299,7 +299,7 @@ def test_a_keyed_channel_with_no_key_is_refused_naming_it(fake_core: FakeCore) -
     assert "out" in effect["message"]
 
 
-# -- a procedure ending its workflow -------------------------------------------
+# -- a tasklet ending its workflow -------------------------------------------
 #
 # The host only carries the request in the item's effect. Ending the instance
 # after the iteration commits, and failing a stream's item, are the core's.
@@ -307,7 +307,7 @@ def test_a_keyed_channel_with_no_key_is_refused_naming_it(fake_core: FakeCore) -
 _RESULTS: dict[str, Any] = {"text": "3", "bytes": b"\x00raw", "json": {"turns": 3}, "none": None}
 
 
-@flezha.procedure(name="finisher")
+@flezha.tasklet(name="finisher")
 def _finisher(value: str, ctx: flezha.Ctx[None]) -> None:
     ctx.complete("replaced")
     ctx.complete(_RESULTS[value])
@@ -336,14 +336,14 @@ def test_complete_carries_the_latest_result_in_the_effect(
     assert effect["complete"] == carried
 
 
-def test_a_stream_procedure_completing_is_carried_the_same_way(fake_core: FakeCore) -> None:
+def test_a_stream_tasklet_completing_is_carried_the_same_way(fake_core: FakeCore) -> None:
     deps = deps_for(_finishing_stream, fake_core)
     (effect,) = answered(work_activation(20, "text", factory="finishing_stream"), deps)["effects"]
     assert effect["complete"] == b"3"
 
 
 def test_a_failed_item_carries_no_completion(fake_core: FakeCore) -> None:
-    @flezha.procedure
+    @flezha.tasklet
     def fails_after_completing(value: str, ctx: flezha.Ctx[None]) -> None:
         ctx.complete(value)
         raise ValueError("after completing")
@@ -361,7 +361,7 @@ def test_a_compensation_runs_over_the_recorded_outputs(fake_core: FakeCore) -> N
         {
             "token": 20,
             "operative": "op",
-            "procedure": 0,
+            "tasklet": 0,
             "change_seq": 0,
             "factory": "solo",
             "kind": "compensate_run",
@@ -382,7 +382,7 @@ def test_a_compensation_runs_over_the_recorded_outputs(fake_core: FakeCore) -> N
 # rides alongside either way.
 
 
-@flezha.procedure(name="wf_producer")
+@flezha.tasklet(name="wf_producer")
 def _wf_producer(value: int, ctx: flezha.Ctx[None]) -> None:
     ctx.emit(value)
 
@@ -391,12 +391,12 @@ _DELIVERED: list[Any] = []
 """What a consumer of the ``handoff`` channel was handed, in delivery order."""
 
 
-@flezha.procedure(name="wf_b")
+@flezha.tasklet(name="wf_b")
 def _wf_b(value: int) -> None:
     _DELIVERED.append(value)
 
 
-@flezha.procedure(name="wf_c")
+@flezha.tasklet(name="wf_c")
 def _wf_c(value: int) -> None:
     _DELIVERED.append(value)
 
@@ -418,9 +418,9 @@ def _wf_emit_stream(c: flezha.Channels) -> None:
     _workflow_graph(c)
 
 
-def _delivered(factory: str, procedure: int, payload: bytes, deps: DispatchDeps) -> list[Any]:
+def _delivered(factory: str, tasklet: int, payload: bytes, deps: DispatchDeps) -> list[Any]:
     _DELIVERED.clear()
-    (effect,) = answered(wire_work(50, factory, (1, payload), procedure=procedure), deps)["effects"]
+    (effect,) = answered(wire_work(50, factory, (1, payload), tasklet=tasklet), deps)["effects"]
     assert effect["verdict"] == "ok"
     return list(_DELIVERED)
 
@@ -490,7 +490,7 @@ def test_the_same_graph_on_a_stream_class_releases_one_output_per_consumer(
 # stage released the value raw, so delivery is the one application.
 
 
-def test_a_stream_inter_proc_edge_applies_its_map_exactly_once(fake_core: FakeCore) -> None:
+def test_a_stream_inter_task_edge_applies_its_map_exactly_once(fake_core: FakeCore) -> None:
     deps = deps_for(_wf_emit_stream, fake_core)
     (effect,) = answered(work_activation(42, 10, factory="wf_emit_stream"), deps)["effects"]
     assert _delivered("wf_emit_stream", 1, effect["outputs"][0]["payload"], deps) == [11]
@@ -515,7 +515,7 @@ def test_plain_text_into_an_entry_naming_no_codec_never_reaches_the_handler(
     item rides the retry ladder and the handler is never handed it."""
     seen: list[Any] = []
 
-    @flezha.procedure
+    @flezha.tasklet
     def record(value: Any) -> None:
         seen.append(value)
 
@@ -529,7 +529,7 @@ def test_plain_text_into_an_entry_naming_no_codec_never_reaches_the_handler(
 # -- merge and flat_map ----------------------------------------------------------
 #
 # Driven over the test app's own `merged_input` and `transform_chain`. Both sink
-# keyed, so a work activation names the entity it is handed to.
+# keyed, so a work activation names the cell it is handed to.
 
 
 def _plugin_payloads(result: dict[str, Any]) -> list[bytes]:
@@ -541,12 +541,12 @@ def _plugin_payloads(result: dict[str, Any]) -> list[bytes]:
     ]
 
 
-def test_interleaved_merged_sources_each_reach_the_procedure_under_their_own_mapping(
+def test_interleaved_merged_sources_each_reach_the_tasklet_under_their_own_mapping(
     fake_core: FakeCore,
 ) -> None:
     deps = deps_for(fixtures.merged_input_operative, fake_core)
     activation = wire_work(
-        70, "merged_input", (0, b"MSFT:1"), (1, b"MSFT:2"), (0, b"MSFT:3"), entity="MSFT"
+        70, "merged_input", (0, b"MSFT:1"), (1, b"MSFT:2"), (0, b"MSFT:3"), cell="MSFT"
     )
     assert _plugin_payloads(answered(activation, deps)) == [
         b"ticks:MSFT:1",
@@ -573,7 +573,7 @@ def _merged_edge(c: flezha.Channels) -> None:
     ).key_by(lambda value: value["symbol"]).into(fixtures.merge_label).sink("merged")
 
 
-def test_an_inter_procedure_merge_source_is_mapped_and_keyed_as_it_is_released(
+def test_an_inter_tasklet_merge_source_is_mapped_and_keyed_as_it_is_released(
     fake_core: FakeCore,
 ) -> None:
     deps = deps_for(_merged_edge, fake_core)
@@ -585,14 +585,14 @@ def test_an_inter_procedure_merge_source_is_mapped_and_keyed_as_it_is_released(
 
     # Delivery applies nothing more: the producer already ran the edge.
     activation = wire_work(
-        73, "merged_edge", (0, b"AAPL:1"), (2, released["payload"]), procedure=1, entity="AAPL"
+        73, "merged_edge", (0, b"AAPL:1"), (2, released["payload"]), tasklet=1, cell="AAPL"
     )
     assert _plugin_payloads(answered(activation, deps)) == [b"ticks:AAPL:1", b"quotes:AAPL:2"]
 
 
 def test_a_fan_of_three_runs_the_handler_three_times_under_one_effect(fake_core: FakeCore) -> None:
     deps = deps_for(fixtures.transform_chain_operative, fake_core)
-    result = answered(wire_work(80, "transform_chain", (0, b"a:1,a:2,a:3"), entity="A"), deps)
+    result = answered(wire_work(80, "transform_chain", (0, b"a:1,a:2,a:3"), cell="A"), deps)
     (effect,) = result["effects"]
     assert (effect["verdict"], effect["consumed_offset"]) == ("ok", 80)
     assert _plugin_payloads(result) == [b"A:1", b"A:2", b"A:3"]
@@ -604,13 +604,13 @@ def test_a_fan_then_key_by_answers_every_key_once_at_the_crossing(fake_core: Fak
     assert [answer["keys"] for answer in result["prepared"]] == [["A", "B", "C"], ["A"], []]
 
 
-def test_an_entity_handed_a_fanned_payload_runs_only_the_values_keyed_to_it(
+def test_a_cell_handed_a_fanned_payload_runs_only_the_values_keyed_to_it(
     fake_core: FakeCore,
 ) -> None:
     """The core hands the raw payload to every key the crossing answered, and
-    each entity re-applies the chain."""
+    each cell re-applies the chain."""
     deps = deps_for(fixtures.transform_chain_operative, fake_core)
-    result = answered(wire_work(82, "transform_chain", (0, b"a:1,b:2,c:3"), entity="B"), deps)
+    result = answered(wire_work(82, "transform_chain", (0, b"a:1,b:2,c:3"), cell="B"), deps)
     assert _plugin_payloads(result) == [b"B:2"]
 
 
@@ -629,10 +629,10 @@ def test_a_fan_into_a_static_consumer_runs_each_value_only_where_its_router_name
     assert [answer["keys"] for answer in answered(crossing, deps)["prepared"]] == [["a", "b", "d"]]
     # `c` is named by no value, so it runs nothing even when handed the payload.
     assert {
-        entity: _plugin_payloads(
-            answered(wire_work(86, "fanned_static", (0, b"a:1,b:2,x:3"), entity=entity), deps)
+        cell: _plugin_payloads(
+            answered(wire_work(86, "fanned_static", (0, b"a:1,b:2,x:3"), cell=cell), deps)
         )
-        for entity in ("a", "b", "c", "d")
+        for cell in ("a", "b", "c", "d")
     } == {"a": [b"a:1"], "b": [b"b:2"], "c": [], "d": [b"x:3"]}
 
 
@@ -656,14 +656,14 @@ def test_a_producer_side_fan_releases_one_keyed_frame_per_value_and_none_for_an_
     assert (effect["verdict"], effect["outputs"]) == ("ok", [])
 
 
-# -- procedure-requested spawn -------------------------------------------------
+# -- tasklet-requested spawn -------------------------------------------------
 
 
 def test_a_spawn_returns_before_the_controller_answers_and_its_refusal_stays_in_the_handle(
     fake_core: FakeCore,
 ) -> None:
     """The call never waits for the controller and never raises its refusal
-    into the procedure: the handle is pending until the answer arrives, and a
+    into the tasklet: the handle is pending until the answer arrives, and a
     read is what raises it."""
     fake_core.spawn_answer_after_s = 0.5
     fake_core.spawn_answer = {
@@ -672,7 +672,7 @@ def test_a_spawn_returns_before_the_controller_answers_and_its_refusal_stays_in_
     }
     seen: dict[str, Any] = {}
 
-    @flezha.procedure
+    @flezha.tasklet
     def spawner(value: str, ctx: flezha.Ctx[None]) -> str:
         began = time.monotonic()
         handle = ctx.spawn_workflow("worker", value)
@@ -698,7 +698,7 @@ def test_a_spawn_without_an_id_asks_for_one_and_a_spawn_with_an_id_carries_it(
 ) -> None:
     results: list[flezha.SpawnResult] = []
 
-    @flezha.procedure
+    @flezha.tasklet
     def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
         results.append(ctx.spawn_workflow("worker", value).wait())
         results.append(ctx.spawn_workflow("worker", value, id="w1").wait())
@@ -733,7 +733,7 @@ def test_each_failure_a_read_meets_is_its_own_spawn_error(
     fake_core.spawn_answer = {"error": reason, "message": f"the spawn failed: {reason}"}
     raised: list[flezha.SpawnError] = []
 
-    @flezha.procedure
+    @flezha.tasklet
     def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
         handle = ctx.spawn_workflow("worker", value, id="w1", if_running="error")
         try:
@@ -755,7 +755,7 @@ def test_each_failure_a_read_meets_is_its_own_spawn_error(
 def test_if_running_without_an_id_is_refused_at_the_call_and_sends_nothing(
     fake_core: FakeCore,
 ) -> None:
-    @flezha.procedure
+    @flezha.tasklet
     def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
         ctx.spawn_workflow("worker", value, if_running="error")
 
@@ -775,7 +775,7 @@ def test_a_replayed_spawn_hands_the_replay_to_the_core_and_answers_the_id_it_was
     the SDK owns is handing it the flag and reading the answer."""
     results: list[flezha.SpawnResult | None] = []
 
-    @flezha.procedure
+    @flezha.tasklet
     def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
         results.append(ctx.spawn_workflow("worker", value).try_result())
         results.append(ctx.spawn_workflow("worker", value, id="w1").try_result())
@@ -794,7 +794,7 @@ def test_an_async_handler_awaits_a_spawn_while_its_loop_keeps_serving(fake_core:
     fake_core.spawn_answer_after_s = 0.3
     results: list[flezha.SpawnResult] = []
 
-    @flezha.procedure
+    @flezha.tasklet
     async def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
         results.append(await ctx.spawn_workflow("worker", value, id="w1"))
 

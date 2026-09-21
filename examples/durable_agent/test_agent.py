@@ -12,11 +12,11 @@ import pytest
 import flezha
 from agent import Conversation, Session, agent, agent_session, durable_agent, session_turn
 from flezha import graph, native
-from flezha.testing import ProcedureTestHarness
+from flezha.testing import TaskletTestHarness
 
 
-def harness() -> ProcedureTestHarness[Conversation]:
-    return ProcedureTestHarness(agent, entity_key="user-1")
+def harness() -> TaskletTestHarness[Conversation]:
+    return TaskletTestHarness(agent, cell_key="user-1")
 
 
 def test_a_turn_is_recorded_and_answered() -> None:
@@ -62,7 +62,7 @@ def test_compensation_cancels_what_the_turn_booked() -> None:
 
 
 def test_a_session_keeps_its_goal_and_turns_and_records_nothing_on_done() -> None:
-    h: ProcedureTestHarness[Session] = ProcedureTestHarness(session_turn)
+    h: TaskletTestHarness[Session] = TaskletTestHarness(session_turn)
     h.apply_inputs([{"goal": "book a table"}, "hello", "again"])
     assert (h.state.goal, h.state.turns) == ("book a table", 2)
     assert h.replay_equals()

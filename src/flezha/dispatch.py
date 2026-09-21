@@ -1,8 +1,8 @@
 """Turning one activation into one answer, exactly once.
 
-Per-entity exclusivity IS the handout: the core holds an entity's next
+Per-cell exclusivity IS the handout: the core holds a cell's next
 activation until this one is answered, so an activation that returns unanswered
-retires that entity for the life of the process. Every path out of
+retires that cell for the life of the process. Every path out of
 :func:`dispatch` therefore ends in a completion or an abandon, through a
 ``finally`` rather than a rule applied at each return site — a raised handler,
 an encoding failure and a killed thread all reach the same guard.
@@ -19,17 +19,17 @@ from typing import Any
 
 from . import codec as _codec
 from . import determinism
-from .builder import DROPPED, ChannelSpec, ClassSpec, ConsumerEdge, ProcNode, apply_transforms
+from .builder import DROPPED, ChannelSpec, ClassSpec, ConsumerEdge, TaskNode, apply_transforms
+from .cell_state import fold_restore
 from .ctx import Ctx
-from .entity_state import fold_restore
 from .errors import FlezhaError
 from .logger import log
-from .procedure import Procedure
+from .tasklet import Tasklet
 
 __all__ = [
     "Registry",
     "RegisteredClass",
-    "Entity",
+    "Cell",
     "DispatchDeps",
     "answer",
     "dispatch",
@@ -42,21 +42,21 @@ __all__ = [
 
 
 @dataclass(slots=True)
-class Entity:
-    """One Entity of one declared class: what every activation kind operates on.
+class Cell:
+    """One Cell of one declared class: what every activation kind operates on.
 
     The `(registered, node, key)` triple every activation kind names, and where
     `state` is read and written — so the lock stays inside
-    :class:`RegisteredClass` and nothing else touches the entity table.
+    :class:`RegisteredClass` and nothing else touches the cell table.
     """
 
     registered: RegisteredClass
-    node: ProcNode
+    node: TaskNode
     key: str | None
 
     @property
-    def proc(self) -> Procedure[Any, Any]:
-        return self.node.proc
+    def task(self) -> Tasklet[Any, Any]:
+        return self.node.task
 
     @property
     def name(self) -> str:
@@ -73,42 +73,42 @@ class Entity:
 
 
 class RegisteredClass:
-    """A declared class, with the lookups dispatch needs, and its live entities."""
+    """A declared class, with the lookups dispatch needs, and its live cells."""
 
-    __slots__ = ("spec", "outgoing", "_entities", "_lock")
+    __slots__ = ("spec", "outgoing", "_cells", "_lock")
 
     def __init__(self, spec: ClassSpec) -> None:
         self.spec = spec
         self.outgoing: list[list[ChannelSpec]] = [
             [channel for channel in spec.channels if channel.producer == node.index]
-            for node in spec.procedures
+            for node in spec.tasklets
         ]
-        self._entities: dict[tuple[int, str | None], Any] = {}
-        # Entities of one class are touched from every worker thread, and the
-        # core's per-entity exclusivity does not extend to this dict: two
-        # different entities of the same class run concurrently by design.
+        self._cells: dict[tuple[int, str | None], Any] = {}
+        # Cells of one class are touched from every worker thread, and the
+        # core's per-cell exclusivity does not extend to this dict: two
+        # different cells of the same class run concurrently by design.
         self._lock = threading.Lock()
 
-    def state_of(self, node: ProcNode, entity_key: str | None) -> Any:
-        """The entity's live state, created from the declaration on first touch."""
-        key = (node.index, entity_key)
+    def state_of(self, node: TaskNode, cell_key: str | None) -> Any:
+        """The cell's live state, created from the declaration on first touch."""
+        key = (node.index, cell_key)
         with self._lock:
-            if key not in self._entities:
-                self._entities[key] = node.proc.build_initial_state(entity_key)
-            return self._entities[key]
+            if key not in self._cells:
+                self._cells[key] = node.task.build_initial_state(cell_key)
+            return self._cells[key]
 
-    def set_state(self, node: ProcNode, entity_key: str | None, state: Any) -> None:
+    def set_state(self, node: TaskNode, cell_key: str | None, state: Any) -> None:
         with self._lock:
-            self._entities[(node.index, entity_key)] = state
+            self._cells[(node.index, cell_key)] = state
 
-    def has_entities(self) -> bool:
-        """Whether any entity of this class has been materialised."""
+    def has_cells(self) -> bool:
+        """Whether any cell of this class has been materialised."""
         with self._lock:
-            return bool(self._entities)
+            return bool(self._cells)
 
-    def entity(self, node: ProcNode, key: str | None) -> Entity:
+    def cell(self, node: TaskNode, key: str | None) -> Cell:
         """The handle every activation kind operates through."""
-        return Entity(self, node, key)
+        return Cell(self, node, key)
 
     def channel_at(self, index: int) -> ChannelSpec | None:
         """The channel an activation names, or ``None`` when it names none.
@@ -265,7 +265,7 @@ def values_of(channel: ChannelSpec | None, edge: ConsumerEdge | None, payload: A
     """A payload as the handler sees it: every value the edge yields for it.
 
     The entry channel's decoder, or the class codec for a payload between
-    procedures, then the consuming edge's transforms in declaration order.
+    tasklets, then the consuming edge's transforms in declaration order.
     Empty when a filter rejected it. One function for the two places a payload
     crosses in — an input item, and a payload at the prepare crossing — so a
     filter cannot mean one thing on one path and another on the other.
@@ -278,32 +278,32 @@ def values_of(channel: ChannelSpec | None, edge: ConsumerEdge | None, payload: A
 
 
 async def invoke(
-    entity: Entity,
+    cell: Cell,
     activation: dict[str, Any],
     deps: DispatchDeps,
     now: int,
     replay: bool,
     body: Callable[[Ctx[Any]], Any],
 ) -> tuple[Ctx[Any], Any]:
-    """Run user code against one entity, and keep the state it produced.
+    """Run user code against one cell, and keep the state it produced.
 
     Every activation kind that reaches a handler goes through here — an input, a
     timer firing, a compensation — so the context they receive and the state
     they leave behind cannot differ between them. The state is written back
     whether or not the body raised: a change recorded before the raise is
-    already journaled, and dropping it here would make the live entity disagree
+    already journaled, and dropping it here would make the live cell disagree
     with its own log.
     """
     ctx: Ctx[Any] = Ctx(
-        spec=entity.registered.spec,
-        node=entity.node,
-        outgoing=entity.registered.outgoing[entity.node.index],
+        spec=cell.registered.spec,
+        node=cell.node,
+        outgoing=cell.registered.outgoing[cell.node.index],
         operative=activation.get("operative", ""),
-        entity_key=entity.key,
+        cell_key=cell.key,
         change_seq=activation.get("change_seq", 0),
         now=now,
         replay=replay,
-        state=entity.state,
+        state=cell.state,
         bridge=deps.bridge,
         token=activation["token"],
     )
@@ -311,14 +311,14 @@ async def invoke(
         with determinism.invocation():
             return ctx, await resolve(body(ctx))
     finally:
-        entity.state = ctx.state
+        cell.state = ctx.state
 
 
 async def answer(activation: dict[str, Any], deps: DispatchDeps) -> dict[str, Any]:
     """Produce the answer for one activation.
 
     Raising is not an option here: every failure becomes a result the core can
-    act on, because the alternative is an entity that never receives work again.
+    act on, because the alternative is a cell that never receives work again.
     """
     token = activation["token"]
     try:
@@ -331,75 +331,73 @@ async def answer(activation: dict[str, Any], deps: DispatchDeps) -> dict[str, An
                 non_retryable=True,
             )
 
-        procedures = registered.spec.procedures
-        index = activation["procedure"]
-        if index >= len(procedures):
+        tasklets = registered.spec.tasklets
+        index = activation["tasklet"]
+        if index >= len(tasklets):
             return failed(
                 token,
-                f"class `{activation['factory']}` has no procedure at index {index}",
+                f"class `{activation['factory']}` has no tasklet at index {index}",
                 non_retryable=True,
             )
-        entity = registered.entity(procedures[index], activation.get("entity_key"))
-        return await _answer_kind(entity, activation, registered, deps)
+        cell = registered.cell(tasklets[index], activation.get("cell_key"))
+        return await _answer_kind(cell, activation, registered, deps)
     except Exception as error:  # noqa: BLE001 - every failure becomes a result
         return failed(token, error_message(error), non_retryable=is_non_retryable(error))
 
 
 async def _answer_kind(
-    entity: Entity, activation: dict[str, Any], registered: RegisteredClass, deps: DispatchDeps
+    cell: Cell, activation: dict[str, Any], registered: RegisteredClass, deps: DispatchDeps
 ) -> dict[str, Any]:
     """One arm per activation kind the boundary defines."""
     token = activation["token"]
     kind = activation["kind"]
 
     if kind == "work":
-        return await _run_work(entity, activation, deps)
+        return await _run_work(cell, activation, deps)
     if kind == "restore_fold":
-        return _restore_fold(entity, activation)
+        return _restore_fold(cell, activation)
     if kind == "snapshot_request":
         return {
             "token": token,
             "outcome": "snapshot",
-            "state": entity.proc.encode_state(entity.state),
+            "state": cell.task.encode_state(cell.state),
         }
     # Two names for one read: a live query and a migration handover both want
     # the state as JSON, and only the outcome key differs.
     if kind in ("live_state_read", "migration_serialize"):
         outcome = "state_json" if kind == "live_state_read" else "migration_state"
-        return {"token": token, "outcome": outcome, "json": _codec.to_state_json(entity.state)}
+        return {"token": token, "outcome": outcome, "json": _codec.to_state_json(cell.state)}
     if kind == "apply_state":
-        entity.state = _codec.from_state_json(activation.get("state_json"))
+        cell.state = _codec.from_state_json(activation.get("state_json"))
         return {"token": token, "outcome": "state_applied"}
     if kind == "key_request":
         return _prepare(activation, registered)
     if kind == "compensate_run":
-        return await _compensate(entity, activation, deps)
+        return await _compensate(cell, activation, deps)
     return failed(token, f"unknown activation kind `{kind}`", non_retryable=True)
 
 
-async def _run_work(
-    entity: Entity, activation: dict[str, Any], deps: DispatchDeps
-) -> dict[str, Any]:
+async def _run_work(cell: Cell, activation: dict[str, Any], deps: DispatchDeps) -> dict[str, Any]:
     effects: list[dict[str, Any]] = []
 
     for item in activation.get("items") or ():
         now = item.get("now") or 0
         try:
             ctx, _ = await invoke(
-                entity,
+                cell,
                 activation,
                 deps,
                 now,
                 bool(item.get("replay")),
-                lambda c, item=item: _run_item(entity, item, c),
+                lambda c, item=item: _run_item(cell, item, c),
             )
             effects.append(ctx.effect(item.get("consumed_offset")))
         except Exception as error:  # noqa: BLE001 - the verdict is the report
             # The traceback is a host diagnostic, not a record: the verdict
             # below travels to the dead-letter entry and the controller's log.
-            log().debug("%s failed an item", entity.name, exc_info=error)
+            log().debug("%s failed an item", cell.name, exc_info=error)
             # Items after this one are re-handed by the core, so the batch stops
-            # here rather than reporting effects the entity never saw.
+            # here rather than reporting effects the cell never saw.
             effects.append(
                 {
                     "verdict": "non_retryable" if is_non_retryable(error) else "retryable",
@@ -421,18 +419,18 @@ def emit_returned(ctx: Ctx[Any], returned: Any) -> None:
         ctx.emit(returned)
 
 
-async def _run_item(entity: Entity, item: dict[str, Any], ctx: Ctx[Any]) -> None:
-    proc = entity.proc
+async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any]) -> None:
+    task = cell.task
     if item["kind"] == "timer":
-        if proc.on_timer is None:
+        if task.on_timer is None:
             raise FlezhaError(
-                f"{proc.name} registered a timer but declares no on_timer; registration is a "
+                f"{task.name} registered a timer but declares no on_timer; registration is a "
                 f"runtime call, so this cannot be refused at declaration time"
             )
         emit_returned(
             ctx,
             await resolve(
-                proc.on_timer(
+                task.on_timer(
                     {
                         "kind": item.get("timer_kind"),
                         "scheduled_at": item.get("scheduled_at") or item.get("now") or 0,
@@ -443,7 +441,7 @@ async def _run_item(entity: Entity, item: dict[str, Any], ctx: Ctx[Any]) -> None
         )
         return
 
-    channel = entity.registered.channel_at(item.get("channel") or 0)
+    channel = cell.registered.channel_at(item.get("channel") or 0)
     # This node's own edge off the channel: a transform chain declared before
     # one `into` belongs to that consumer and to no other. It is evaluated here
     # only for a payload that reached us untransformed — an entry payload,
@@ -451,23 +449,23 @@ async def _run_item(entity: Entity, item: dict[str, Any], ctx: Ctx[Any]) -> None
     # stream producer evaluated it as its activation completed, and evaluating
     # it again would compose the chain with itself.
     untransformed = (
-        channel is None or channel.kind == "entry" or entity.registered.spec.structured_workflow
+        channel is None or channel.kind == "entry" or cell.registered.spec.structured_workflow
     )
-    edge = _edge_into(channel, entity.node.index) if untransformed else None
+    edge = _edge_into(channel, cell.node.index) if untransformed else None
     # A filtered value is consumed and reaches no handler, and a fanned one
     # reaches it once per value. Either way the item produces one effect, so
     # its offset advances once and nothing is retried.
     for value in values_of(channel, edge, item.get("payload") or b""):
-        if edge is None or _routes_to(entity, edge, value):
-            emit_returned(ctx, await resolve(proc(value, ctx)))
+        if edge is None or _routes_to(cell, edge, value):
+            emit_returned(ctx, await resolve(task(value, ctx)))
 
 
-def _restore_fold(entity: Entity, activation: dict[str, Any]) -> dict[str, Any]:
-    entity.state = fold_restore(
-        entity.proc,
+def _restore_fold(cell: Cell, activation: dict[str, Any]) -> dict[str, Any]:
+    cell.state = fold_restore(
+        cell.task,
         {"snapshot": activation.get("snapshot"), "changes": activation.get("changes")},
-        entity.key,
-        entity.name,
+        cell.key,
+        cell.name,
     )
     return {"token": activation["token"], "outcome": "restored"}
 
@@ -481,7 +479,7 @@ def _prepare(activation: dict[str, Any], registered: RegisteredClass) -> dict[st
     # The crossing answers one key set for the whole payload, so it reads the
     # first consumer edge — the one the core routes the answer to.
     edge = channel.consumers[0] if channel and channel.consumers else None
-    proc = registered.spec.procedures[edge.procedure].proc if edge is not None else None
+    task = registered.spec.tasklets[edge.tasklet].task if edge is not None else None
 
     answers: list[dict[str, Any]] = []
     for payload in request["payloads"]:
@@ -489,7 +487,7 @@ def _prepare(activation: dict[str, Any], registered: RegisteredClass) -> dict[st
             values = values_of(channel, edge, payload)
             # A filtered payload answers no key. For a dynamic consumer that is
             # what tells the core not to route it at all — the drop happens
-            # before an entity is minted rather than inside one.
+            # before a cell is minted rather than inside one.
             if not values:
                 answers.append({"keys": []})
                 continue
@@ -497,10 +495,10 @@ def _prepare(activation: dict[str, Any], registered: RegisteredClass) -> dict[st
             keys: dict[str, None] = {}
             if request["want_keys"]:
                 for value in values:
-                    keys.update(dict.fromkeys(_keys_of(edge, proc, value) or ()))
+                    keys.update(dict.fromkeys(_keys_of(edge, task, value) or ()))
             event_time = (
-                proc.event_time_of(values[0])
-                if request["want_event_time"] and proc is not None and proc.event_time is not None
+                task.event_time_of(values[0])
+                if request["want_event_time"] and task is not None and task.event_time is not None
                 else None
             )
             answers.append({"keys": list(keys), "event_time": event_time})
@@ -519,52 +517,50 @@ def _edge_into(channel: ChannelSpec | None, node: int) -> ConsumerEdge | None:
     """The channel's edge that feeds `node`, or ``None`` when it feeds none."""
     if channel is None:
         return None
-    return next((edge for edge in channel.consumers if edge.procedure == node), None)
+    return next((edge for edge in channel.consumers if edge.tasklet == node), None)
 
 
 def _keys_of(
-    edge: ConsumerEdge | None, proc: Procedure[Any, Any] | None, value: Any
+    edge: ConsumerEdge | None, task: Tasklet[Any, Any] | None, value: Any
 ) -> list[str] | None:
-    """The entity keys one value routes to: the edge's key, else the procedure's
+    """The cell keys one value routes to: the edge's key, else the tasklet's
     router, else ``None`` when neither is declared."""
     if edge is not None and edge.key_by is not None:
         return [str(edge.key_by(value))]
-    if proc is not None and proc.entities_for is not None:
-        return proc.entities_of(value)
+    if task is not None and task.cells_for is not None:
+        return task.cells_of(value)
     return None
 
 
-def _routes_to(entity: Entity, edge: ConsumerEdge, value: Any) -> bool:
-    """Whether a value the edge yielded belongs to this entity.
+def _routes_to(cell: Cell, edge: ConsumerEdge, value: Any) -> bool:
+    """Whether a value the edge yielded belongs to this cell.
 
-    The core hands an untransformed payload to every entity its crossing
+    The core hands an untransformed payload to every cell its crossing
     named, and each re-applies the chain, so a fan across keys keeps only the
-    values keyed to the entity that received it. With no entity key, or no key
+    values keyed to the cell that received it. With no cell key, or no key
     and no router to name one, every value belongs.
     """
-    if entity.key is None:
+    if cell.key is None:
         return True
-    keys = _keys_of(edge, entity.proc, value)
-    return keys is None or entity.key in keys
+    keys = _keys_of(edge, cell.task, value)
+    return keys is None or cell.key in keys
 
 
-async def _compensate(
-    entity: Entity, activation: dict[str, Any], deps: DispatchDeps
-) -> dict[str, Any]:
-    proc = entity.proc
-    if proc.compensate is None:
+async def _compensate(cell: Cell, activation: dict[str, Any], deps: DispatchDeps) -> dict[str, Any]:
+    task = cell.task
+    if task.compensate is None:
         return failed(
-            activation["token"], f"{entity.name} declares no compensate hook", non_retryable=True
+            activation["token"], f"{cell.name} declares no compensate hook", non_retryable=True
         )
 
     outputs = [_codec.decode(payload) for payload in activation.get("outputs") or ()]
     ctx, _ = await invoke(
-        entity,
+        cell,
         activation,
         deps,
         0,
         False,
-        lambda c: proc.compensate(outputs, c),  # type: ignore[misc]
+        lambda c: task.compensate(outputs, c),  # type: ignore[misc]
     )
     return {"token": activation["token"], "outcome": "work", "effects": [ctx.effect(None)]}
 
@@ -598,7 +594,7 @@ async def dispatch(activation: dict[str, Any], core: Any, deps: DispatchDeps) ->
     """Dispatch one activation and answer it exactly once.
 
     The guard is the contract, not politeness. An unanswered activation retires
-    its entity for the life of the process, so a raise from the dispatcher, from
+    its cell for the life of the process, so a raise from the dispatcher, from
     encoding the result, or from ``complete`` itself abandons rather than
     logging and returning.
     """

@@ -15,9 +15,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 from . import codec as _codec
-from .builder import ChannelSpec, ClassSpec, ConsumerEdge, ProcNode, apply_transforms
+from .builder import ChannelSpec, ClassSpec, ConsumerEdge, TaskNode, apply_transforms
 from .errors import EmitError, SpawnError
-from .identity import entity_identity, stable_id
+from .identity import cell_identity, stable_id
 
 if TYPE_CHECKING:
     from .native import Core
@@ -44,7 +44,7 @@ RESERVED_PREFIX = "flz."
 #: Byte-shape and condition both mirror the Java host, because a sink
 #: deduplicates on them and two SDKs disagreeing about the shape is a sink that
 #: silently stops deduplicating.
-ENTITY_STAMP = "flz.entity"
+CELL_STAMP = "flz.cell"
 SEQ_STAMP = "flz.seq"
 KEY_STAMP = "flz.key"
 
@@ -129,7 +129,7 @@ class Ctx(Generic[S]):
         "changes",
         "outputs",
         "timers",
-        "entity_key",
+        "cell_key",
         "replay",
         "state",
         "checkpointed",
@@ -140,10 +140,10 @@ class Ctx(Generic[S]):
         self,
         *,
         spec: ClassSpec,
-        node: ProcNode,
+        node: TaskNode,
         outgoing: list[ChannelSpec],
         operative: str,
-        entity_key: str | None,
+        cell_key: str | None,
         change_seq: int,
         now: int,
         replay: bool,
@@ -166,9 +166,9 @@ class Ctx(Generic[S]):
         # and a handler that does one and not the other must not shift the
         # sequence the sink deduplicates on.
         self._emit_ordinal = 0
-        self.entity_key = entity_key
+        self.cell_key = cell_key
         self.replay = replay
-        #: The entity's state. Mutated only through :meth:`change`: a field
+        #: The cell's state. Mutated only through :meth:`change`: a field
         #: assigned directly is live in this process and gone after a restart,
         #: which is what the state guard refuses.
         self.state = state
@@ -189,7 +189,7 @@ class Ctx(Generic[S]):
         if self._identity is None:
             # Lazily, because most invocations never ask and the identity is
             # the one part of the derivation that costs an allocation.
-            self._identity = entity_identity(self._operative, self._node.name, self.entity_key)
+            self._identity = cell_identity(self._operative, self._node.name, self.cell_key)
         answer = stable_id(self._identity, self._change_seq, self._ordinal)
         self._ordinal += 1
         return answer
@@ -198,16 +198,16 @@ class Ctx(Generic[S]):
 
     def change(self, change: Any) -> None:
         """Record one declared change: journaled, then folded into the state."""
-        proc = self._node.proc
-        if proc.apply_change is None:
+        task = self._node.task
+        if task.apply_change is None:
             raise EmitError(
                 f"{self._node.name}: recorded a change but declares no apply_change; a change "
                 f"that cannot be folded cannot rebuild the state it describes"
             )
-        self.changes.append(proc.encode_change(change))
+        self.changes.append(task.encode_change(change))
         # Fold it live through the same path the restore fold uses, so the live
         # path and the replay path cannot drift.
-        proc.fold_change(self.state, change)
+        task.fold_change(self.state, change)
 
     def emit(
         self,
@@ -217,9 +217,9 @@ class Ctx(Generic[S]):
         channel: str | None = None,
         metadata: Mapping[str, Any] | Iterable[tuple[str, Any]] | None = None,
     ) -> None:
-        """Emit one output value on the procedure's declared output.
+        """Emit one output value on the tasklet's declared output.
 
-        ``channel`` selects one when the procedure produces on several.
+        ``channel`` selects one when the tasklet produces on several.
         """
         targets = [c for c in self._outgoing if c.name == channel] if channel else self._outgoing
         if not targets:
@@ -257,7 +257,7 @@ class Ctx(Generic[S]):
         self.checkpointed = True
 
     def complete(self, result: Any = None) -> None:
-        """End the workflow instance this procedure runs in, with ``result``.
+        """End the workflow instance this tasklet runs in, with ``result``.
 
         The rest of the iteration still runs and commits; the instance then
         ends with status ``ok`` instead of waiting for its next input. In a
@@ -266,7 +266,7 @@ class Ctx(Generic[S]):
         string as UTF-8 and anything else as JSON; ``None`` carries no result. A
         later call in the same invocation replaces an earlier one.
 
-        A stream never completes: a stream procedure calling this fails its
+        A stream never completes: a stream tasklet calling this fails its
         input, without a retry, with an error naming ``CompleteOutsideWorkflow``.
         """
         self.completion = b"" if result is None else _codec.plain_payload(result, self._node.name)
@@ -355,7 +355,7 @@ class Ctx(Generic[S]):
         return {
             "target": "edge",
             "channel": channel.index,
-            "consumer": edge.procedure,
+            "consumer": edge.tasklet,
             "plugin_channel": None,
             "key": None,
             "event_time": None,
@@ -373,7 +373,7 @@ class Ctx(Generic[S]):
     ) -> list[dict[str, Any]]:
         """One consumer's frames, one per value its transforms yield, each with
         its own key and its own clock."""
-        consumer_proc = self._spec.procedures[edge.procedure].proc
+        consumer_task = self._spec.tasklets[edge.tasklet].task
         outputs = []
         # Producer-side, in declaration order: the core routes on `(edge, key)`
         # and never evaluates a host closure.
@@ -382,17 +382,17 @@ class Ctx(Generic[S]):
             if resolved is None and edge.key_by is not None:
                 resolved = edge.key_by(transformed)
             if resolved is None:
-                resolved = self.entity_key
+                resolved = self.cell_key
             outputs.append(
                 {
                     "target": "edge",
                     "channel": channel.index,
-                    "consumer": edge.procedure,
+                    "consumer": edge.tasklet,
                     "plugin_channel": None,
                     "key": None if resolved is None else str(resolved),
                     "event_time": (
-                        consumer_proc.event_time_of(transformed)
-                        if consumer_proc.event_time is not None
+                        consumer_task.event_time_of(transformed)
+                        if consumer_task.event_time is not None
                         else None
                     ),
                     "metadata": self._meta_list(metadata),
@@ -412,11 +412,11 @@ class Ctx(Generic[S]):
 
         An edge's transforms belong to that edge, so they never reach the sink.
         """
-        resolved = key if key is not None else self.entity_key
+        resolved = key if key is not None else self.cell_key
         if channel.keyed and resolved is None:
             raise EmitError(
                 f"{self._node.name}: emits on keyed channel `{channel.name}` with no key, and "
-                f"has no entity key of its own to fall back on; pass `key=` on the emit"
+                f"has no cell key of its own to fall back on; pass `key=` on the emit"
             )
         resolved = None if resolved is None else str(resolved)
         # `sink` sets the encoder with the sink, so a plugin channel has one.
@@ -444,7 +444,7 @@ class Ctx(Generic[S]):
         if not channel.keyed or self._spec.effectively_once:
             return []
         return [
-            (ENTITY_STAMP, f"{self._operative}/{self._node.name}/{self.entity_key or ''}"),
+            (CELL_STAMP, f"{self._operative}/{self._node.name}/{self.cell_key or ''}"),
             (SEQ_STAMP, f"{self._change_seq}.{self._emit_ordinal}"),
             (KEY_STAMP, key or ""),
         ]
@@ -460,7 +460,7 @@ class Ctx(Generic[S]):
             if str(key).startswith(RESERVED_PREFIX):
                 raise EmitError(
                     f"{self._node.name}: metadata key `{key}` is inside the reserved "
-                    f"`{RESERVED_PREFIX}` namespace, which the runtime stamps itself (entity "
+                    f"`{RESERVED_PREFIX}` namespace, which the runtime stamps itself (cell "
                     f"identity, sequence, key and offset); choose a key outside it"
                 )
             out.append((str(key), str(value)))

@@ -22,7 +22,7 @@ from flezha.errors import FlezhaError
 from flezha.executor import AsyncioExecutor, ThreadExecutor, build
 
 
-@flezha.procedure
+@flezha.tasklet
 def passthrough(value: str) -> str:
     return value
 
@@ -78,7 +78,7 @@ def test_blocked_handlers_buy_threads_and_the_grown_ones_retire() -> None:
     """The supervisor is what turns a starving core into more servicing."""
     release = threading.Event()
 
-    @flezha.procedure
+    @flezha.tasklet
     def blocks(value: str) -> str:
         release.wait(timeout=5)
         return value
@@ -110,7 +110,7 @@ def test_blocked_handlers_buy_threads_and_the_grown_ones_retire() -> None:
 def test_the_supervisor_stops_growing_at_the_ceiling() -> None:
     release = threading.Event()
 
-    @flezha.procedure
+    @flezha.tasklet
     def blocks(value: str) -> str:
         release.wait(timeout=5)
         return value
@@ -204,7 +204,7 @@ def test_ordering_is_identical_under_either_executor(kind: str) -> None:
     """An executor may affect throughput and latency; it may not affect order.
 
     With one activation outstanding at a time — which is what the core's
-    per-entity handout guarantees — every executor serves the same sequence.
+    per-cell handout guarantees — every executor serves the same sequence.
     """
     payloads = [f"v{i}" for i in range(12)]
     core = FakeCore()
@@ -239,7 +239,7 @@ def test_the_asyncio_executor_polls_on_a_real_thread_and_completes_on_the_loop()
 def test_an_async_handler_is_driven_under_either_executor(kind: str) -> None:
     import asyncio
 
-    @flezha.procedure
+    @flezha.tasklet
     async def slow(value: str) -> str:
         await asyncio.sleep(0.001)
         return value.upper()
@@ -267,7 +267,7 @@ def test_a_drain_has_a_time_limit_and_says_what_it_abandoned(
     never = threading.Event()
     entered = threading.Event()
 
-    @flezha.procedure
+    @flezha.tasklet
     def wedged(value: str) -> str:
         entered.set()
         never.wait(timeout=30)

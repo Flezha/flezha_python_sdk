@@ -8,7 +8,7 @@ sequence survivable; this file is only the part that is about the agent.
 What each piece is doing, and why it is not the obvious thing:
 
 * **The state is declared, and mutated only through changes.** The transcript
-  IS the durable record: on a restart the entity is rebuilt by folding the
+  IS the durable record: on a restart the cell is rebuilt by folding the
   change log, so an append that recorded no change would be live now and gone
   after the restart. ``@flezha.state`` refuses the direct assignment rather
   than letting that happen.
@@ -118,7 +118,7 @@ class Agent:
         )
         ctx.emit(answer, key=call_id)
 
-    def initial_state(self, entity_key: str | None) -> Conversation:
+    def initial_state(self, cell_key: str | None) -> Conversation:
         return Conversation()
 
     def apply_change(self, state: Conversation, change: TurnRecorded) -> None:
@@ -163,12 +163,10 @@ class Agent:
         return f"answered({call_id[:8]}): {prompt}"
 
 
-# One entity per conversation, appearing on first sight of its key: an agent
+# One cell per conversation, appearing on first sight of its key: an agent
 # deployment does not know its users in advance, and `idle_ttl_ms` is what stops
 # a finished conversation holding memory forever.
-agent = flezha.procedure(
-    Agent, name="agent_turn", dynamic_entities=True, idle_ttl_ms=15 * 60 * 1000
-)
+agent = flezha.tasklet(Agent, name="agent_turn", dynamic_cells=True, idle_ttl_ms=15 * 60 * 1000)
 
 
 @flezha.stream_operative("durable_agent")
@@ -176,8 +174,8 @@ def durable_agent(c: flezha.Channels) -> None:
     """One conversation per key, with a retry ladder on the model call.
 
     The key is the text before the first ``|``, so ``user-1|hello`` reaches
-    user-1's conversation. Every edge into a dynamic procedure must name the
-    entity its inputs reach; the SDK refuses one that does not.
+    user-1's conversation. Every edge into a dynamic tasklet must name the
+    cell its inputs reach; the SDK refuses one that does not.
     """
     c.input("prompts", codec="text").retry_max(4).retry_backoff_ms(250).key_by(
         lambda prompt: prompt.split("|", 1)[0]
@@ -222,7 +220,7 @@ class SessionTurn:
             ctx.change(SessionEvent())
             ctx.emit({"event": "turn", "n": ctx.state.turns, "message": message})
 
-    def initial_state(self, entity_key: str | None) -> Session:
+    def initial_state(self, cell_key: str | None) -> Session:
         return Session()
 
     def apply_change(self, state: Session, change: SessionEvent) -> None:
@@ -232,7 +230,7 @@ class SessionTurn:
             state.turns += 1
 
 
-session_turn = flezha.procedure(SessionTurn, name="session_turn")
+session_turn = flezha.tasklet(SessionTurn, name="session_turn")
 
 
 @flezha.workflow_operative("agent_session", loop_mode="per_input", max_duration_ms=3_600_000)

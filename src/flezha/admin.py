@@ -1,6 +1,6 @@
 """Administering the namespace this runner's connection proved.
 
-No procedure has to be running and the application holds no credential of its
+No tasklet has to be running and the application holds no credential of its
 own: the controller judges every call as the identity the connection already
 established, so nothing an unattended process holds expires. An operator grants
 a namespace's applications the authority once and revokes it the same way, and
@@ -96,9 +96,9 @@ class Admin:
         """The plugins enabled on the controller node answering this call."""
         return self.call("PluginManager.list")
 
-    def entity_state(self, operative_id: str, entity_key: str) -> Any:
-        """One entity's live state, and the change sequence it was read at."""
-        return self.call("Operative.entity_state", operative_id, entity_key)
+    def cell_state(self, operative_id: str, cell_key: str) -> Any:
+        """One cell's live state, and the change sequence it was read at."""
+        return self.call("Operative.cell_state", operative_id, cell_key)
 
     def call(self, verb: str, *args: Any) -> Any:
         """Any published function, by name.

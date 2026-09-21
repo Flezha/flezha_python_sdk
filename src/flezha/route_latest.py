@@ -1,12 +1,12 @@
 """The latest-document router :meth:`Channels.route_latest` expands to.
 
-A dynamically keyed procedure cannot receive a broadcast, and fanning an
+A dynamically keyed tasklet cannot receive a broadcast, and fanning an
 operative-wide document out over a remembered key set emits keys this member
 may no longer own after a rescale. The router delivers on a key's own next
 traffic item instead, so every key it emits is one whose traffic just proved
 this member owns it, at the price of one item of latency per key.
 
-The expansion is a merge into one single-entity procedure whose
+The expansion is a merge into one single-cell tasklet whose
 ``{document, version, delivered}`` state rides the ordinary change journal:
 authoring sugar over existing primitives, with no runtime path of its own.
 """
@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from . import codec as _codec
-from .procedure import procedure
+from .tasklet import tasklet
 
 if TYPE_CHECKING:
     from .ctx import Ctx
@@ -59,7 +59,7 @@ class LatestRouter:
         ctx.emit((key, state["document"]))
         ctx.change({"delivered": key, "version": version})
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"document": None, "version": 0, "delivered": {}}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -70,4 +70,4 @@ class LatestRouter:
             state["delivered"][change["delivered"]] = change["version"]
 
 
-ROUTER = procedure(name="route_latest")(LatestRouter)
+ROUTER = tasklet(name="route_latest")(LatestRouter)

@@ -1,5 +1,5 @@
 """The Python SDK's local mode: a user's own operative, its declared
-two-procedure graph, and no controller anywhere.
+two-tasklet graph, and no controller anywhere.
 
 The graph and its expected sink output are read from
 ``test/fixtures/local_mode_word_count.txt``, which the Rust, Java, Node and
@@ -16,12 +16,12 @@ from typing import Any
 import pytest
 
 import contract
-from flezha import Channels, CoreError, Ctx, LocalOperative, procedure, state, stream_operative
+from flezha import Channels, CoreError, Ctx, LocalOperative, state, stream_operative, tasklet
 
 FIXTURE = contract.member("test/fixtures/local_mode_word_count.txt")
 
 
-@procedure(name="split")
+@tasklet(name="split")
 def split(line: str, ctx: Ctx[None]) -> None:
     """One line into its words: the hop to `tally` is the runtime's job."""
     for word in line.split():
@@ -39,16 +39,16 @@ class Seen:
     seen: int
 
 
-@procedure(name="tally", state=Count, change=Seen, dynamic_entities=True, idle_ttl_ms=300_000)
+@tasklet(name="tally", state=Count, change=Seen, dynamic_cells=True, idle_ttl_ms=300_000)
 class Tally:
-    """One Entity per word, minted on first sight of it."""
+    """One Cell per word, minted on first sight of it."""
 
     def run(self, word: str, ctx: Ctx[Count]) -> None:
         seen = ctx.state.seen + 1
         ctx.change(Seen(seen=seen))
         ctx.emit(f"{word} {seen}")
 
-    def initial_state(self, entity_key: str | None) -> Count:
+    def initial_state(self, cell_key: str | None) -> Count:
         return Count()
 
     def apply_change(self, state: Count, change: Seen) -> None:
@@ -85,12 +85,12 @@ def test_a_declared_graph_runs_locally_and_releases_the_recorded_output() -> Non
 
     counted = Counter(output.payload.decode() for output in released)
     assert counted == expected, (
-        "both procedures ran, the runtime performed the hop, and one Entity per word counted"
+        "both tasklets ran, the runtime performed the hop, and one Cell per word counted"
     )
 
     first = released[0]
     assert first.channel == "totals"
-    for stamp in ("flz.entity", "flz.seq", "flz.key"):
+    for stamp in ("flz.cell", "flz.seq", "flz.key"):
         assert stamp in first.metadata, f"a keyed sink carries {stamp}: {first.metadata}"
 
 
@@ -103,7 +103,7 @@ def test_a_channel_the_class_does_not_declare_is_refused_by_name() -> None:
     )
 
 
-@procedure(name="defaults")
+@tasklet(name="defaults")
 def defaults(value: Any, ctx: Ctx[None]) -> None:
     """Reads the map an undeclared entry decodes, and emits a string and a map."""
     ctx.emit(f"a is {value['a']}")

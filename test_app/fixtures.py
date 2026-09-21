@@ -1,10 +1,10 @@
 """Twins of the rust_runner e2e fixtures (``test/apps/rust_runner/src/main.rs``)
-under the same factory ids, procedure names, channel names and output bytes.
+under the same factory ids, tasklet names, channel names and output bytes.
 
 Entry payloads and plugin frames are UTF-8 text on the wire, the same as the
 reference: every entry names the text codec, and a sink naming no codec sends a
-string as its UTF-8 bytes and a bytes value unchanged. An inter-procedure hop
-between two Python procedures carries MessagePack, which no one else reads.
+string as its UTF-8 bytes and a bytes value unchanged. An inter-tasklet hop
+between two Python tasklets carries MessagePack, which no one else reads.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from fixtures_workflow import stateless_loop_workflow
 
 # -- do_nothing / bench_echo -------------------------------------------------
 
-do_nothing = passthrough("do_nothing_procedure")
+do_nothing = passthrough("do_nothing_tasklet")
 
 
 @flezha.stream_operative("do_nothing")
@@ -60,17 +60,17 @@ def bench_echo_operative(c: flezha.Channels) -> None:
 class CompareFilter:
     """State seeded by the controller's init values and then only read.
 
-    There is nothing to journal, so the procedure declares no change fold.
+    There is nothing to journal, so the tasklet declares no change fold.
     """
 
     def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str | None:
         return value if ctx.state["comparable"] == value else None
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"comparable": "default", "inverted": False}
 
 
-compare_filter = flezha.procedure(CompareFilter, name="compare_filter_procedure")
+compare_filter = flezha.tasklet(CompareFilter, name="compare_filter_tasklet")
 
 
 @flezha.stream_operative("compare_filter")
@@ -78,7 +78,7 @@ def compare_filter_operative(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(compare_filter).sink("sink")
 
 
-# -- static_entity / sugar_static_entity / mixed_operative -------------------
+# -- static_cell / sugar_static_cell / mixed_operative -------------------
 
 STATIC_KEYS = ["a", "b", "c", "d"]
 
@@ -87,12 +87,12 @@ class SeenLog:
     """The reference's `seen: Vec<String>` state and its append-only fold.
 
     Four fixtures declare exactly this (the static entry, the sinkless short
-    form, the partition relay and the dynamic entity) and differ only in what
+    form, the partition relay and the dynamic cell) and differ only in what
     they do after recording.
     Sharing it is how the Ruby app spells the same thing.
     """
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"seen": []}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -106,32 +106,32 @@ class StaticEntry(SeenLog):
         ctx.change({"push": value})
         return value
 
-    def entities_for(self, value: str) -> list[str]:
+    def cells_for(self, value: str) -> list[str]:
         first = value[0] if value else ""
         return [first if first in STATIC_KEYS else "d"]
 
 
-static_entry = flezha.procedure(StaticEntry, name="static_entry_procedure", entity_keys=STATIC_KEYS)
-macro_static_entry = flezha.procedure(
-    StaticEntry, name="macro_static_entry_procedure", entity_keys=STATIC_KEYS
+static_entry = flezha.tasklet(StaticEntry, name="static_entry_tasklet", cell_keys=STATIC_KEYS)
+macro_static_entry = flezha.tasklet(
+    StaticEntry, name="macro_static_entry_tasklet", cell_keys=STATIC_KEYS
 )
 
 
-static_downstream = passthrough("static_downstream_procedure")
+static_downstream = passthrough("static_downstream_tasklet")
 
 
-macro_static_downstream = passthrough("macro_static_downstream_procedure")
+macro_static_downstream = passthrough("macro_static_downstream_tasklet")
 
 
-@flezha.stream_operative("static_entity")
-def static_entity_operative(c: flezha.Channels) -> None:
+@flezha.stream_operative("static_cell")
+def static_cell_operative(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(static_entry).named("hop").into(static_downstream).sink(
         "kafka"
     )
 
 
-@flezha.stream_operative("sugar_static_entity")
-def sugar_static_entity_operative(c: flezha.Channels) -> None:
+@flezha.stream_operative("sugar_static_cell")
+def sugar_static_cell_operative(c: flezha.Channels) -> None:
     """The reference pipeline sugar leaves the hop unnamed and lets the sink
     name the producing channel."""
     c.input("input", codec="text").into(macro_static_entry).into(macro_static_downstream).sink(
@@ -139,7 +139,7 @@ def sugar_static_entity_operative(c: flezha.Channels) -> None:
     )
 
 
-mixed_macro_entry = passthrough("mixed_macro_entry_procedure")
+mixed_macro_entry = passthrough("mixed_macro_entry_tasklet")
 
 
 mixed_hand_downstream = passthrough("mixed_hand_downstream")
@@ -154,8 +154,8 @@ def mixed_operative(c: flezha.Channels) -> None:
 
 # -- the §5 short forms ------------------------------------------------------
 #
-# One operative declaration each, carrying a procedure body instead of a
-# channels body. No hand-written operative or procedure stands beside them.
+# One operative declaration each, carrying a tasklet body instead of a
+# channels body. No hand-written operative or tasklet stands beside them.
 
 
 @flezha.stream_operative(id="sugar_do_nothing", sink="sugar_do_nothing_echo", codec="text")
@@ -169,7 +169,7 @@ class SugarStoreInput:
         ctx.change({"push": value})
         return value
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"text_inputs": []}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -200,7 +200,7 @@ class SugarStateOnly(SeenLog):
 
 # -- hybrid_channel ----------------------------------------------------------
 #
-# One emit reaching two destinations: an inter-procedure consumer and a plugin
+# One emit reaching two destinations: an inter-tasklet consumer and a plugin
 # wire with its own serializer. The serializer refuses a sentinel value, so an
 # operator can observe end to end that a refusal is isolated to the emit rather
 # than failing the item.
@@ -208,7 +208,7 @@ class SugarStateOnly(SeenLog):
 HYBRID_SENTINEL = 0xDEADBEEF
 
 
-@flezha.procedure(name="hybrid_producer_procedure")
+@flezha.tasklet(name="hybrid_producer_tasklet")
 def hybrid_producer(value: str, ctx: flezha.Ctx[None]) -> None:
     try:
         parsed = int(value)
@@ -219,15 +219,15 @@ def hybrid_producer(value: str, ctx: flezha.Ctx[None]) -> None:
         ctx.emit(number)
     except Exception as error:  # noqa: BLE001 - the isolation is the fixture
         print(
-            f"hybrid_producer_procedure: serializer refused an emit: {error}",
+            f"hybrid_producer_tasklet: serializer refused an emit: {error}",
             file=sys.stderr,
             flush=True,
         )
 
 
-@flezha.procedure(name="hybrid_consumer_procedure")
+@flezha.tasklet(name="hybrid_consumer_tasklet")
 def hybrid_consumer(value: int) -> None:
-    print(f"hybrid_consumer_procedure: received {value}", flush=True)
+    print(f"hybrid_consumer_tasklet: received {value}", flush=True)
 
 
 def hybrid_encode(value: int) -> bytes:
@@ -248,7 +248,7 @@ def hybrid_channel_operative(c: flezha.Channels) -> None:
 
 # -- merged_input ------------------------------------------------------------
 #
-# Two entry channels merged into one procedure. Each source's mapping tags the
+# Two entry channels merged into one tasklet. Each source's mapping tags the
 # value with the channel it came from, the merge keys on the symbol the mapping
 # read, and the emitted line is `<source>:<payload>`.
 
@@ -260,7 +260,7 @@ def tagged(source: str) -> Callable[[str], dict[str, str]]:
     return tag
 
 
-@flezha.procedure(name="merge_label_procedure", dynamic_entities=True)
+@flezha.tasklet(name="merge_label_tasklet", dynamic_cells=True)
 def merge_label(value: dict[str, str]) -> str:
     return f"{value['source']}:{value['payload']}"
 
@@ -280,7 +280,7 @@ def merged_input_operative(c: flezha.Channels) -> None:
 # out into one value per element, each is upper-cased and keyed on its prefix.
 
 
-transform_label = passthrough("transform_label_procedure", dynamic_entities=True)
+transform_label = passthrough("transform_label_tasklet", dynamic_cells=True)
 
 
 @flezha.stream_operative("transform_chain")
@@ -290,22 +290,22 @@ def transform_chain_operative(c: flezha.Channels) -> None:
     ).map(str.upper).key_by(prefix).into(transform_label).keyed().sink("transformed")
 
 
-# -- entity_stress -----------------------------------------------------------
+# -- cell_stress -----------------------------------------------------------
 
 STRESS_KEYS = ["p0", "p1", "p2", "p3", "p4", "p5", "p6", "p7"]
 
 
 class StressFanOut:
-    """Answers its input; the fan-out is which entities it names."""
+    """Answers its input; the fan-out is which cells it names."""
 
-    #: The entities every input reaches. `stress_a` fans out to all of them and
+    #: The cells every input reaches. `stress_a` fans out to all of them and
     #: the rest funnel back to one, which is the topology the stress exercises.
     targets: ClassVar[list[str]] = STRESS_KEYS
 
     def run(self, value: str) -> str:
         return value
 
-    def entities_for(self, value: str) -> list[str]:
+    def cells_for(self, value: str) -> list[str]:
         return self.targets
 
 
@@ -313,14 +313,14 @@ class StressToP0(StressFanOut):
     targets: ClassVar[list[str]] = ["p0"]
 
 
-stress_a = flezha.procedure(StressFanOut, name="stress_a", entity_keys=STRESS_KEYS)
-stress_b = flezha.procedure(StressToP0, name="stress_b", entity_keys=STRESS_KEYS)
-stress_c = flezha.procedure(StressToP0, name="stress_c", entity_keys=STRESS_KEYS)
-stress_d = flezha.procedure(StressToP0, name="stress_d", entity_keys=STRESS_KEYS)
+stress_a = flezha.tasklet(StressFanOut, name="stress_a", cell_keys=STRESS_KEYS)
+stress_b = flezha.tasklet(StressToP0, name="stress_b", cell_keys=STRESS_KEYS)
+stress_c = flezha.tasklet(StressToP0, name="stress_c", cell_keys=STRESS_KEYS)
+stress_d = flezha.tasklet(StressToP0, name="stress_d", cell_keys=STRESS_KEYS)
 
 
-@flezha.stream_operative("entity_stress")
-def entity_stress_operative(c: flezha.Channels) -> None:
+@flezha.stream_operative("cell_stress")
+def cell_stress_operative(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(stress_a).named("a_to_b").into(stress_b).named(
         "b_to_c"
     ).into(stress_c).named("c_to_d").into(stress_d).sink("echo")
@@ -345,7 +345,7 @@ class Candle:
         bucket = event_time // 1_000
         ctx.emit(f"{bucket}={value}", key=f"candle/{bucket}")
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         #: Event times in fold order. The assertion surface.
         return {"folded": []}
 
@@ -356,7 +356,7 @@ class Candle:
         return _as_int(value.split(":", 1)[0])
 
 
-candle = flezha.procedure(Candle, name="candle_procedure", clock="event_time")
+candle = flezha.tasklet(Candle, name="candle_tasklet", clock="event_time")
 
 
 @flezha.stream_operative("candle")
@@ -370,7 +370,7 @@ def candle_operative(c: flezha.Channels) -> None:
 _ANTIDOTE = {"taken": False}
 
 
-@flezha.procedure(name="poison_probe_procedure")
+@flezha.tasklet(name="poison_probe_tasklet")
 def poison_probe(value: str) -> str:
     if value == "antidote":
         _ANTIDOTE["taken"] = True
@@ -387,7 +387,7 @@ def poison_probe_operative(c: flezha.Channels) -> None:
 _ABORTED = {"done": False}
 
 
-@flezha.procedure(name="wedge_probe_procedure")
+@flezha.tasklet(name="wedge_probe_tasklet")
 def wedge_probe(value: str) -> str:
     """The ``pool_wedge`` fixture: the two ways a runner stops doing work.
 
@@ -397,7 +397,7 @@ def wedge_probe(value: str) -> str:
     its activation as violently as this host allows, WITHOUT emitting, once per
     process — CPython has no way for user code to kill a worker outright (the
     dispatcher catches per item and the raise rides the retry ladder), so what
-    the scenario asserts is that the Entity is served again and the aborting
+    the scenario asserts is that the Cell is served again and the aborting
     item does not produce twice.
     """
     if value == "wedge":
@@ -416,9 +416,9 @@ def wedge_probe_operative(c: flezha.Channels) -> None:
 
 # -- session_timeout ---------------------------------------------------------
 #
-# The worked session-timeout shape (`entity_timers`): each input pushes the idle
-# deadline out, and the firing closes the session. Single-entity so the e2e's
-# crash-resume half exercises a durable Entity. The timeout is read from
+# The worked session-timeout shape (`cell_timers`): each input pushes the idle
+# deadline out, and the firing closes the session. Single-cell so the e2e's
+# crash-resume half exercises a durable Cell. The timeout is read from
 # `TIMER_TEST_TIMEOUT_MS` (the e2e sets it short).
 
 
@@ -434,7 +434,7 @@ class SessionTimeout:
         ctx.change({"closed": fired_at})
         return f"closed@{fired_at}".encode()
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"touched": [], "closed_at": []}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -444,7 +444,7 @@ class SessionTimeout:
             state["closed_at"].append(change["closed"])
 
 
-session_timeout = flezha.procedure(SessionTimeout, name="session_timeout_procedure")
+session_timeout = flezha.tasklet(SessionTimeout, name="session_timeout_tasklet")
 
 
 @flezha.stream_operative("session_timeout")
@@ -460,7 +460,7 @@ class BoundedMailbox:
         ctx.change({"processed": True})
         return value
 
-    def initial_state(self, entity_key: str | None) -> dict[str, Any]:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"processed": 0}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -468,14 +468,12 @@ class BoundedMailbox:
 
 
 def _bounded_mailbox(policy: str) -> flezha.Operative:
-    """One operative per overflow policy, over the same bounded-mailbox procedure."""
-    procedure = flezha.procedure(
-        BoundedMailbox, name=f"{policy}_test_procedure", mailbox_capacity=4
-    )
+    """One operative per overflow policy, over the same bounded-mailbox tasklet."""
+    tasklet = flezha.tasklet(BoundedMailbox, name=f"{policy}_test_tasklet", mailbox_capacity=4)
 
     @flezha.stream_operative(f"bounded_mailbox_{policy}")
     def operative(c: flezha.Channels) -> None:
-        c.input(f"{policy}_input", codec="text").on_full(policy).into(procedure).sink(
+        c.input(f"{policy}_input", codec="text").on_full(policy).into(tasklet).sink(
             f"{policy}_echo"
         )
 
@@ -502,9 +500,7 @@ class PartitionRelay(SeenLog):
         ctx.emit(value, key=prefix(value))
 
 
-partition_relay = flezha.procedure(
-    PartitionRelay, name="partition_relay_procedure", dynamic_entities=True
-)
+partition_relay = flezha.tasklet(PartitionRelay, name="partition_relay_tasklet", dynamic_cells=True)
 
 
 @flezha.stream_operative("partition_relay")
@@ -512,40 +508,40 @@ def partition_relay_operative(c: flezha.Channels) -> None:
     c.input("in", codec="text").key_by(prefix).into(partition_relay).keyed().sink("input")
 
 
-# -- dynamic_entity ----------------------------------------------------------
+# -- dynamic_cell ----------------------------------------------------------
 
 
-class DynamicEntity(SeenLog):
+class DynamicCell(SeenLog):
     def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
         ctx.change({"push": value})
         return value
 
 
-dynamic_entity = flezha.procedure(
-    DynamicEntity,
-    name="dynamic_entity_procedure",
-    dynamic_entities=True,
+dynamic_cell = flezha.tasklet(
+    DynamicCell,
+    name="dynamic_cell_tasklet",
+    dynamic_cells=True,
     idle_ttl_ms=_env_int("DYN_TEST_TTL_MS", None),
 )
 
 
-@flezha.stream_operative("dynamic_entity")
-def dynamic_entity_operative(c: flezha.Channels) -> None:
+@flezha.stream_operative("dynamic_cell")
+def dynamic_cell_operative(c: flezha.Channels) -> None:
     c.input("input", codec="text").on_full("drop_nothing").filter(
         # Filtered before keying: a dropped value answers no key, so the core
-        # never mints an entity for it.
+        # never mints a cell for it.
         lambda value: value != "drop"
-    ).key_by(prefix).into(dynamic_entity).sink("kafka")
+    ).key_by(prefix).into(dynamic_cell).sink("kafka")
 
 
 # -- spawn_requester ---------------------------------------------------------
 #
 # On each input it spawns `stateless_loop_workflow` once with no id and once
 # under the input as its id, and prints both answers, because a handle's answer
-# is observable nowhere but in the procedure that read it.
+# is observable nowhere but in the tasklet that read it.
 
 
-@flezha.procedure(name="spawn_requester")
+@flezha.tasklet(name="spawn_requester")
 def spawn_requester(value: str, ctx: flezha.Ctx[None]) -> None:
     factory = stateless_loop_workflow.factory_id
     handles = [
@@ -570,8 +566,8 @@ ALL: list[flezha.Operative] = [
     do_nothing_operative,
     bench_echo_operative,
     compare_filter_operative,
-    static_entity_operative,
-    sugar_static_entity_operative,
+    static_cell_operative,
+    sugar_static_cell_operative,
     mixed_operative,
     sugar_do_nothing,
     SugarStoreInput,
@@ -581,7 +577,7 @@ ALL: list[flezha.Operative] = [
     hybrid_channel_operative,
     merged_input_operative,
     transform_chain_operative,
-    entity_stress_operative,
+    cell_stress_operative,
     bench_keyed_nopersist_operative,
     store_input_operative,
     stateful_counter_operative,
@@ -601,6 +597,6 @@ ALL: list[flezha.Operative] = [
     session_timeout_operative,
     *BOUNDED_MAILBOX,
     partition_relay_operative,
-    dynamic_entity_operative,
+    dynamic_cell_operative,
     spawn_requester_operative,
 ]

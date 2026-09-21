@@ -9,7 +9,7 @@ from __future__ import annotations
 import flezha
 
 
-@flezha.procedure
+@flezha.tasklet
 def handle(value: str) -> str:
     return value
 

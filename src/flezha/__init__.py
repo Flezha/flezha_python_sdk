@@ -1,6 +1,6 @@
 """The Flezha Python SDK: a poll host over ``flz_core``.
 
-The SDK contains no kernel code. Transport, framing, ordering, per-entity
+The SDK contains no kernel code. Transport, framing, ordering, per-cell
 exclusivity, durability, retries, the retry-to-park ladder, timers, credit,
 routing, the workflow driver and reconnect all live in the core; this package
 brings the authoring surface, the codec for user types, the threading host and
@@ -10,7 +10,7 @@ idiomatic errors.
 
     import flezha
 
-    @flezha.procedure
+    @flezha.tasklet
     def echo(value: str) -> str:
         return value
 
@@ -25,9 +25,9 @@ from __future__ import annotations
 
 from .admin import Admin, StartResult
 from .builder import DROPPED, Channels, Edge, Merge
+from .cell_state import state
 from .codec import ChannelCodec, TypeCodec, ValueCodec
 from .ctx import Ctx, SpawnHandle, SpawnResult
-from .entity_state import state
 from .errors import (
     CoreError,
     DeclarationError,
@@ -48,15 +48,15 @@ from .errors import (
 from .local import LocalOperative, SinkOutput
 from .logger import configure as configure_logging
 from .operative import Operative, stream_operative, workflow_operative
-from .procedure import Procedure, procedure
 from .runner import ACTIVATION_SCHEMA_VERSION, Runner, create_runner
+from .tasklet import Tasklet, tasklet
 from .version import __version__
 
 __all__ = [
     "Admin",
     "StartResult",
     # authoring
-    "procedure",
+    "tasklet",
     "state",
     "stream_operative",
     "workflow_operative",
@@ -66,7 +66,7 @@ __all__ = [
     "Ctx",
     "SpawnHandle",
     "SpawnResult",
-    "Procedure",
+    "Tasklet",
     "Operative",
     "DROPPED",
     # runner

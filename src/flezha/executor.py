@@ -1,8 +1,8 @@
 """The concurrency host: what runs ``poll -> dispatch -> complete``, and on what.
 
 Two members in v1, and the seam between them may never observe or affect
-per-entity ordering. Exclusivity is the core's handout guarantee — one
-outstanding activation per Entity — and an activation is completed only after
+per-cell ordering. Exclusivity is the core's handout guarantee — one
+outstanding activation per Cell — and an activation is completed only after
 its dispatch has returned, so ordering holds for any executor that does not
 complete early. That invariant is this seam's entire contract: an executor can
 affect throughput and latency; it cannot affect correctness.
@@ -405,7 +405,7 @@ class _Host:
 
         The core says when: a worker leaves on the poll that reports the core
         shutting down, which the core reports only once the shutdown sequence
-        has shipped every Entity's state through these same workers. A worker
+        has shipped every Cell's state through these same workers. A worker
         inside a handler finishes it, completes it, and only then observes it.
         Bounded by :data:`DRAIN_TIMEOUT_S` — a handler that never returns must
         not keep the runner alive forever — and the flag is raised after the
@@ -504,7 +504,7 @@ class AsyncioExecutor(_Host):
         """Keep the loop alive until the drain, then let its dispatches finish.
 
         Closing the loop with tasks still running would abandon activations the
-        core is holding entities for, so the drain waits for them the way the
+        core is holding cells for, so the drain waits for them the way the
         pool's join does — and is time-limited the same way.
         """
         while not self._stopping:

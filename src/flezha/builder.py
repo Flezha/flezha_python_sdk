@@ -6,7 +6,7 @@ prefix can be branched without the arms colliding.
 
 Edges are generic in the value that flows on them, which is what makes a wrong
 wiring a type error before it is a registration error: ``Edge[Invoice].into``
-takes a ``Procedure[Invoice, O]`` and nothing else, so a type checker rejects
+takes a ``Tasklet[Invoice, O]`` and nothing else, so a type checker rejects
 the mismatch in the editor and the registration-time refusal is the backstop
 for what a type checker cannot see.
 """
@@ -21,7 +21,7 @@ from . import codec as _codec
 from . import route_latest as _latest_router
 from .codec import ChannelCodec
 from .errors import DeclarationError
-from .procedure import Procedure
+from .tasklet import Tasklet
 
 __all__ = [
     "DROPPED",
@@ -32,7 +32,7 @@ __all__ = [
     "ChannelSpec",
     "ClassSpec",
     "Link",
-    "ProcNode",
+    "TaskNode",
     "apply_transforms",
 ]
 
@@ -109,12 +109,12 @@ def apply_transforms(transforms: Iterable[Callable[[Any], Any]], value: Any) -> 
 
 
 @dataclass(slots=True)
-class ProcNode:
-    """A procedure as the graph holds it, with its position in the declaration."""
+class TaskNode:
+    """A tasklet as the graph holds it, with its position in the declaration."""
 
     index: int
     name: str
-    proc: Procedure[Any, Any]
+    task: Tasklet[Any, Any]
     output: ChannelSpec | None = None
     """The one channel this node produces on, created on first wiring."""
 
@@ -123,7 +123,7 @@ class ProcNode:
 class ConsumerEdge:
     """One consumer of a channel, with the transforms and key of its own edge."""
 
-    procedure: int
+    tasklet: int
     transforms: list[Callable[[Any], Any]] = field(default_factory=list)
     key_by: Callable[[Any], Any] | None = None
 
@@ -157,9 +157,9 @@ class ChannelSpec:
     sink_encode: Callable[[Any], bytes] | None = None
     """The plugin sink's payload encoder, set with the sink by ``sink``.
 
-    It belongs to the sink frame alone: an inter-procedure frame is decoded
+    It belongs to the sink frame alone: an inter-tasklet frame is decoded
     with the class codec, so encoding one with this hands the consuming
-    procedure bytes it cannot read.
+    tasklet bytes it cannot read.
     """
 
 
@@ -170,7 +170,7 @@ class ClassSpec:
     factory_id: str
     kind: str
     persistent: bool
-    procedures: list[ProcNode]
+    tasklets: list[TaskNode]
     channels: list[ChannelSpec]
     effectively_once: bool = False
     checkpoint_ack: bool = False
@@ -202,7 +202,7 @@ class Channels:
 
     def __init__(self, factory_id: str) -> None:
         self.factory_id = factory_id
-        self.procedures: list[ProcNode] = []
+        self.tasklets: list[TaskNode] = []
         self.channels: list[ChannelSpec] = []
         self.effectively_once_flag = False
         self.checkpoint_ack_flag = False
@@ -284,11 +284,11 @@ class Channels:
         return Edge(self, ("entry", channel), {})
 
     def merge(self) -> Merge:
-        """Declare one procedure fed by several source edges.
+        """Declare one tasklet fed by several source edges.
 
         Each ``from_`` names a source and the mapping that lifts its values into
         the merged input, ``key_by`` keys the mapped value on every source, and
-        ``into`` closes the merge on its procedure.
+        ``into`` closes the merge on its tasklet.
         """
         return Merge(self)
 
@@ -315,7 +315,7 @@ class Channels:
         self, documents: Edge[Any], traffic: Edge[T], key: Callable[[T], Any], name: str | None
     ) -> Edge[tuple[str, Any]]:
         # Unnamed passes no name, so the router is an unnamed mention of its
-        # procedure exactly as `into(proc)` is.
+        # tasklet exactly as `into(task)` is.
         return (
             self.merge()
             .from_(documents, _latest_router.document_input)
@@ -343,33 +343,33 @@ class Channels:
             )
         return codec
 
-    def node_for(self, proc: Procedure[Any, Any], name: str | None = None) -> ProcNode:
-        """The node for a procedure.
+    def node_for(self, task: Tasklet[Any, Any], name: str | None = None) -> TaskNode:
+        """The node for a tasklet.
 
-        Two unnamed mentions of one procedure are one node — the naming
+        Two unnamed mentions of one tasklet are one node — the naming
         convention every SDK mirrors — so a diamond that fans out and back in
         has one instance, not two.
         """
-        identity = name or proc.name
-        for node in self.procedures:
-            if node.name == identity and node.proc is proc:
+        identity = name or task.name
+        for node in self.tasklets:
+            if node.name == identity and node.task is task:
                 return node
-        if any(node.name == identity for node in self.procedures):
+        if any(node.name == identity for node in self.tasklets):
             # The node table is keyed by identity and physically cannot hold
             # two, so the record the core would judge is unwritable. The
             # refusal answers under the core's own name all the same.
             raise DeclarationError(
                 self.factory_id,
                 identity,
-                "two different procedures claim this node identity; name one of them on the "
+                "two different tasklets claim this node identity; name one of them on the "
                 "`into(...)` so each node has its own",
                 ["NodeIdentityCollision"],
             )
-        node = ProcNode(index=len(self.procedures), name=identity, proc=proc)
-        self.procedures.append(node)
+        node = TaskNode(index=len(self.tasklets), name=identity, task=task)
+        self.tasklets.append(node)
         return node
 
-    def output_channel_for(self, node: ProcNode) -> ChannelSpec:
+    def output_channel_for(self, node: TaskNode) -> ChannelSpec:
         """The channel this node produces on, created on first use.
 
         Lazily, so a leaf node never carries a phantom channel. Named by the
@@ -383,7 +383,7 @@ class Channels:
         channel = ChannelSpec(
             index=len(self.channels),
             name=node.name,
-            kind="inter_proc",
+            kind="inter_task",
             producer=node.index,
         )
         self.channels.append(channel)
@@ -414,21 +414,21 @@ class Merge:
         return self
 
     def key_by(self, key: Callable[[Any], Any]) -> Merge:
-        """Key the merged procedure on the mapped value, from every source."""
+        """Key the merged tasklet on the mapped value, from every source."""
         self._keys.append(key)
         return self
 
-    def into(self, proc: Procedure[Any, O], name: str | None = None) -> Edge[O]:
-        """Close the merge on a procedure, and answer that procedure's output edge."""
-        node = self._builder.node_for(proc, name)
+    def into(self, task: Tasklet[Any, O], name: str | None = None) -> Edge[O]:
+        """Close the merge on a tasklet, and answer that tasklet's output edge."""
+        node = self._builder.node_for(task, name)
         group = self._builder.merge_groups
         self._builder.merge_groups += 1
         for source in self._sources:
             # A second key is recorded as a second link, which the core refuses.
             for key in self._keys:
                 source = source.key_by(key)
-            source._close(node, {"link": "merge", "procedure": node.index, "group": group})
-        return Edge(self._builder, ("procedure", node), {})
+            source._close(node, {"link": "merge", "tasklet": node.index, "group": group})
+        return Edge(self._builder, ("tasklet", node), {})
 
 
 class Edge(Generic[T]):
@@ -486,7 +486,7 @@ class Edge(Generic[T]):
         return self._relink({"link": "transform"}, transforms=[*self._transforms, fan])
 
     def key_by(self, key: Callable[[T], Any]) -> Edge[T]:
-        """Route by a computed key: the consumer becomes a dynamic keyed procedure."""
+        """Route by a computed key: the consumer becomes a dynamic keyed tasklet."""
         return self._relink({"link": "key"}, key_by=key)
 
     def on_full(self, policy: str) -> Edge[T]:
@@ -516,11 +516,11 @@ class Edge(Generic[T]):
             arm(self)
         return self
 
-    def into(self, proc: Procedure[T, O], name: str | None = None) -> Edge[O]:
-        """Wire this edge into a procedure."""
-        node = self._builder.node_for(proc, name)
-        self._close(node, {"link": "into", "procedure": node.index})
-        return Edge(self._builder, ("procedure", node), {})
+    def into(self, task: Tasklet[T, O], name: str | None = None) -> Edge[O]:
+        """Wire this edge into a tasklet."""
+        node = self._builder.node_for(task, name)
+        self._close(node, {"link": "into", "tasklet": node.index})
+        return Edge(self._builder, ("tasklet", node), {})
 
     def sink(
         self,
@@ -543,14 +543,14 @@ class Edge(Generic[T]):
         string as UTF-8 and any other value as JSON, so a sink needs neither for
         a string, bytes or a JSON value.
         """
-        if self._from[0] != "procedure":
+        if self._from[0] != "tasklet":
             # Not a topology rule the core states: a record whose entry channel
             # carries a sink derives a plugin channel with no producer, and
             # there is nothing in it that says which end fed the plugin.
             raise DeclarationError(
                 self._builder.factory_id,
                 name or "<derived>",
-                "a plugin sink is fed by a procedure; wire the entry channel into one first",
+                "a plugin sink is fed by a tasklet; wire the entry channel into one first",
             )
         channel = self._channel()
         # A chain of its own: the sink terminates the channel rather than this
@@ -572,11 +572,11 @@ class Edge(Generic[T]):
     def _transforms(self) -> list[Callable[[Any], Any]]:
         return self._pending.get("transforms", [])
 
-    def _close(self, node: ProcNode, link: Link) -> None:
+    def _close(self, node: TaskNode, link: Link) -> None:
         """Close this edge's chain onto ``node`` with a terminator link.
 
         The transforms and the key belong to this edge, not to the channel: one
-        channel may feed several procedures, and a chain declared before one
+        channel may feed several tasklets, and a chain declared before one
         `into` must not reach another. The edge is held under the chain that
         declared it and wired by ``validate`` from the core's own answer, so a
         re-declaration is judged there rather than here.
@@ -584,7 +584,7 @@ class Edge(Generic[T]):
         channel = self._channel()
         recorded = self._record(channel, link)
         channel.chain_edges[recorded["chain"]] = ConsumerEdge(
-            procedure=node.index,
+            tasklet=node.index,
             transforms=list(self._transforms),
             key_by=self._pending.get("key_by"),
         )
@@ -622,7 +622,7 @@ class Edge(Generic[T]):
     def _channel(self) -> ChannelSpec:
         """The channel this edge's values leave on, with the pending options applied.
 
-        An entry edge already has one; a procedure edge's is created on first
+        An entry edge already has one; a tasklet edge's is created on first
         use and reused after.
         """
         if self._from[0] == "entry":

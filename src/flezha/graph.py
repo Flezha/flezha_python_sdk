@@ -8,8 +8,8 @@ holds — a refusal added there reaches Python with no edit to this file.
 
 What a type checker *can* see — a wrong value type on a wired edge — is caught
 earlier still, by the generic :class:`~flezha.builder.Edge`, and what one
-procedure's own declaration can be refused for is caught earlier still by
-:class:`~flezha.procedure.Procedure` when the decorator builds it.
+tasklet's own declaration can be refused for is caught earlier still by
+:class:`~flezha.tasklet.Tasklet` when the decorator builds it.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from .builder import ChannelSpec, ClassSpec, ProcNode
+from .builder import ChannelSpec, ClassSpec, TaskNode
 from .errors import CoreError, DeclarationError
 from .version import __version__
 
@@ -107,28 +107,28 @@ def _channel_json(channel: ChannelSpec) -> dict[str, Any]:
     )
 
 
-def _procedure_json(spec: ClassSpec, node: ProcNode) -> dict[str, Any]:
-    proc = node.proc
+def _tasklet_json(spec: ClassSpec, node: TaskNode) -> dict[str, Any]:
+    task = node.task
     return _compact(
         {
             "name": node.name,
-            "entity_mode": proc.entity_mode,
-            "entity_keys": proc.entity_keys or [],
-            "idle_ttl_ms": proc.idle_ttl_ms,
-            "max_entities": proc.max_entities,
-            "entities_for_overridden": proc.entities_for is not None,
-            "compensate_overridden": proc.compensate is not None,
-            "clock": proc.clock,
+            "cell_mode": task.cell_mode,
+            "cell_keys": task.cell_keys or [],
+            "idle_ttl_ms": task.idle_ttl_ms,
+            "max_cells": task.max_cells,
+            "cells_for_overridden": task.cells_for is not None,
+            "compensate_overridden": task.compensate is not None,
+            "clock": task.clock,
             # `is None`, not a falsy test: a declared 0 is what the core
             # refuses as `MailboxCapacityZero`, and rewriting it to the default
             # would hide the very declaration the author made.
-            "mailbox_capacity": 1024 if proc.mailbox_capacity is None else proc.mailbox_capacity,
-            # A procedure that folds no change has the empty Change type, so a
+            "mailbox_capacity": 1024 if task.mailbox_capacity is None else task.mailbox_capacity,
+            # A tasklet that folds no change has the empty Change type, so a
             # logical clock over it would never advance; a class that journals
-            # nothing has it for every procedure.
-            "change_is_nochange": not spec.persistent or proc.apply_change is None,
-            "schema_version": proc.schema_version or 1,
-            "min_readable_schema_version": proc.min_readable_schema_version,
+            # nothing has it for every tasklet.
+            "change_is_nochange": not spec.persistent or task.apply_change is None,
+            "schema_version": task.schema_version or 1,
+            "min_readable_schema_version": task.min_readable_schema_version,
         }
     )
 
@@ -175,7 +175,7 @@ def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
             "compact_after_bytes": spec.compact_after_bytes,
             "sync_durability": spec.sync_durability,
             "channels": [_channel_json(channel) for channel in spec.channels],
-            "procedures": [_procedure_json(spec, node) for node in spec.procedures],
+            "tasklets": [_tasklet_json(spec, node) for node in spec.tasklets],
             "workflow": _compact(spec.workflow) if spec.workflow else None,
         }
     )

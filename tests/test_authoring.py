@@ -4,7 +4,7 @@ Every topology rule now lives in ``flz_core::host::register::check``, and
 ``test/fixtures/reference_topologies.txt`` is where each one's case lives — one
 row per refusal, read by every SDK's conformance run. What is left here is the
 authoring surface: the shape a declaration builds, the names it derives, which
-closure reaches which edge, and the defects a procedure's own declaration is
+closure reaches which edge, and the defects a tasklet's own declaration is
 refused for when the decorator builds it. The ones a type checker can see are
 proved by ``test_typing.py``.
 """
@@ -36,7 +36,7 @@ def _derived(operative: flezha.Operative) -> list[tuple[object, ...]]:
             channel["name"],
             channel["kind"],
             channel["producer"],
-            [edge["procedure"] for edge in channel["consumers"]],
+            [edge["tasklet"] for edge in channel["consumers"]],
         )
         for channel in declare(operative)["channels"]
     ]
@@ -52,7 +52,7 @@ def test_a_decorated_handler_is_an_ordinary_callable() -> None:
     assert echo.name == "echo"
 
 
-def test_a_class_procedure_carries_its_hooks() -> None:
+def test_a_class_tasklet_carries_its_hooks() -> None:
     assert count_up.initial_state is not None
     assert count_up.apply_change is not None
     assert count_up.on_timer is None
@@ -71,7 +71,7 @@ def test_declaring_performs_no_io(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(socket, "socket", watched)
 
-    @flezha.procedure
+    @flezha.tasklet
     def later(value: str) -> str:
         return value
 
@@ -89,12 +89,12 @@ def test_the_decl_carries_the_python_language_and_codec_bytes() -> None:
     assert decl["change_format_id"] == graph.FORMAT_ID_MSGPACK == 5
 
 
-def test_two_unnamed_mentions_of_one_procedure_are_one_node() -> None:
-    @flezha.procedure
+def test_two_unnamed_mentions_of_one_tasklet_are_one_node() -> None:
+    @flezha.tasklet
     def split(value: str) -> str:
         return value
 
-    @flezha.procedure
+    @flezha.tasklet
     def join(value: str) -> str:
         return value
 
@@ -105,10 +105,10 @@ def test_two_unnamed_mentions_of_one_procedure_are_one_node() -> None:
         entry.into(split).named("b").into(join, "join_b").sink()
 
     declare(diamond)
-    assert [node.name for node in diamond.spec.procedures] == ["split", "join_a", "join_b"]
+    assert [node.name for node in diamond.spec.tasklets] == ["split", "join_a", "join_b"]
     # And one edge: the second bare mention re-declares the first rather than
     # wiring `split` a second time off the same channel.
-    assert [e.procedure for e in diamond.spec.channels[0].consumers] == [0]
+    assert [e.tasklet for e in diamond.spec.channels[0].consumers] == [0]
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +124,7 @@ def test_two_unnamed_mentions_of_one_procedure_are_one_node() -> None:
 def test_an_unannotated_parameter_is_refused_naming_it() -> None:
     with pytest.raises(DeclarationError) as caught:
 
-        @flezha.procedure
+        @flezha.tasklet
         def handle(order):  # type: ignore[no-untyped-def]
             return order
 
@@ -133,11 +133,11 @@ def test_an_unannotated_parameter_is_refused_naming_it() -> None:
 
 
 def test_a_node_identity_collision_is_refused() -> None:
-    @flezha.procedure(name="shared")
+    @flezha.tasklet(name="shared")
     def first(value: str) -> str:
         return value
 
-    @flezha.procedure(name="shared")
+    @flezha.tasklet(name="shared")
     def second(value: str) -> str:
         return value
 
@@ -160,7 +160,7 @@ def test_a_node_identity_collision_is_refused() -> None:
 # core derives the acknowledgement granularity from any of them, so no order of
 # calls can clear another's.
 def test_the_checkpoint_options_compose_in_any_order_and_none_clears_another() -> None:
-    @flezha.procedure
+    @flezha.tasklet
     def one(value: str) -> str:
         return value
 
@@ -195,22 +195,22 @@ def test_a_refusal_reaches_the_author_under_the_cores_own_names() -> None:
     assert str(caught.value).startswith(
         "edge_already_wired: topology rejected [EdgeAlreadyWired]:\n  - "
     )
-    assert "already feeds procedure `echo`" in str(caught.value)
+    assert "already feeds tasklet `echo`" in str(caught.value)
 
 
-# The record carries ``change_is_nochange`` per procedure: a handler that folds
+# The record carries ``change_is_nochange`` per tasklet: a handler that folds
 # no change has the empty Change type, and a logical clock over it never
 # advances. The refusal is the core's ``UnservableClock``; what is asserted here
 # is that this builder writes the fact it reads.
-def test_a_procedure_that_folds_no_change_declares_it() -> None:
+def test_a_tasklet_that_folds_no_change_declares_it() -> None:
     @flezha.stream_operative("nochange")
     def nochange(c: flezha.Channels) -> None:
         c.input("in").into(echo).sink()
 
     declare(nochange)
-    folds_nothing = graph.to_host_class_decl(nochange.spec)["procedures"][0]
+    folds_nothing = graph.to_host_class_decl(nochange.spec)["tasklets"][0]
     assert folds_nothing["change_is_nochange"] is True
-    folds = graph.to_host_class_decl(demo.spec)["procedures"][1]
+    folds = graph.to_host_class_decl(demo.spec)["tasklets"][1]
     assert folds["name"] == "count_up"
     assert folds["change_is_nochange"] is False
 
@@ -218,16 +218,16 @@ def test_a_procedure_that_folds_no_change_declares_it() -> None:
 def test_an_event_time_clock_without_an_extractor_is_refused() -> None:
     with pytest.raises(DeclarationError, match="no event_time extractor"):
 
-        @flezha.procedure(clock="event_time")
+        @flezha.tasklet(clock="event_time")
         def timed(value: str) -> str:
             return value
 
 
 def test_an_extractor_without_an_event_time_clock_is_refused() -> None:
-    """A procedure-local defect is refused when the decorator builds it.
+    """A tasklet-local defect is refused when the decorator builds it.
 
     Earlier than the `register_factory` call site and with the traceback on the
-    handler — which is why every procedure-local refusal lives on `Procedure`
+    handler — which is why every tasklet-local refusal lives on `Tasklet`
     and `graph.validate` holds only the defects that need the graph.
     """
 
@@ -239,7 +239,7 @@ def test_an_extractor_without_an_event_time_clock_is_refused() -> None:
             return value["at"]
 
     with pytest.raises(DeclarationError, match="only consulted by an event_time clock"):
-        flezha.procedure(Timed)
+        flezha.tasklet(Timed)
 
 
 def test_apply_change_without_initial_state_is_refused() -> None:
@@ -251,7 +251,7 @@ def test_apply_change_without_initial_state_is_refused() -> None:
             return None
 
     with pytest.raises(DeclarationError, match="nothing to fold into"):
-        flezha.procedure(Folding)
+        flezha.tasklet(Folding)
 
 
 def test_an_unrepresentable_state_field_is_refused_naming_it() -> None:
@@ -268,39 +268,39 @@ def test_an_unrepresentable_state_field_is_refused_naming_it() -> None:
             return WithSocket()
 
     with pytest.raises(UnrepresentableValueError, match="conn"):
-        flezha.procedure(Holder)
+        flezha.tasklet(Holder)
 
 
-def test_a_workflow_that_declares_no_procedure_is_refused() -> None:
+def test_a_workflow_that_declares_no_tasklet_is_refused() -> None:
     @flezha.workflow_operative("empty")
     def empty(c: flezha.Channels) -> None:
         return None
 
-    with pytest.raises(DeclarationError, match="at least one procedure"):
+    with pytest.raises(DeclarationError, match="at least one tasklet"):
         declare(empty)
 
 
 def test_a_valid_graph_passes() -> None:
     declare(demo)
-    assert [node.name for node in demo.spec.procedures] == ["echo", "count_up"]
+    assert [node.name for node in demo.spec.tasklets] == ["echo", "count_up"]
 
 
-# -- one output channel per producing procedure -------------------------------
+# -- one output channel per producing tasklet -------------------------------
 #
-# The model Rust and Java carry: a procedure node owns ONE output channel,
+# The model Rust and Java carry: a tasklet node owns ONE output channel,
 # created on first wiring and reused after. A held edge wired twice appends a
 # second consumer to it — it does not declare a second channel claiming the same
 # producer, which the core resolves by first match (`host/register.rs`
-# `procedure_wiring`) and so silently truncates.
+# `tasklet_wiring`) and so silently truncates.
 
 
-# -- one output channel per producing procedure -------------------------------
+# -- one output channel per producing tasklet -------------------------------
 #
-# The model Rust and Java carry: a procedure node owns ONE output channel,
+# The model Rust and Java carry: a tasklet node owns ONE output channel,
 # created on first wiring and reused after. A held edge wired twice appends a
 # second consumer to it — it does not declare a second channel claiming the same
 # producer, which the core resolves by first match (`host/register.rs`
-# `procedure_wiring`) and so silently truncates.
+# `tasklet_wiring`) and so silently truncates.
 
 
 def test_a_held_edge_wired_twice_is_one_channel_with_two_consumers() -> None:
@@ -312,7 +312,7 @@ def test_a_held_edge_wired_twice_is_one_channel_with_two_consumers() -> None:
 
     assert _derived(fan_out) == [
         ("in", "entry", None, [0]),
-        ("echo", "inter_proc", 0, [1, 2]),
+        ("echo", "inter_task", 0, [1, 2]),
     ]
 
 
@@ -339,11 +339,11 @@ def test_sink_returns_the_edge_so_a_consumer_wires_behind_it() -> None:
     def hybrid(c: flezha.Channels) -> None:
         c.input("in").into(echo).sink("hybrid_indicator").into(count_up)
 
-    # A sink alongside a consumer stays inter-procedure: the value reaches both,
+    # A sink alongside a consumer stays inter-tasklet: the value reaches both,
     # and the channel is journalled as the edge it still is.
     assert _derived(hybrid) == [
         ("in", "entry", None, [0]),
-        ("hybrid_indicator", "inter_proc", 0, [1]),
+        ("hybrid_indicator", "inter_task", 0, [1]),
     ]
 
 
@@ -410,7 +410,7 @@ def test_a_transform_before_one_into_reaches_that_consumer_only() -> None:
 
     declare(per_edge_transform)
     channel = per_edge_transform.spec.channels[1]
-    assert [(e.procedure, len(e.transforms)) for e in channel.consumers] == [(1, 1), (2, 0)]
+    assert [(e.tasklet, len(e.transforms)) for e in channel.consumers] == [(1, 1), (2, 0)]
 
 
 # The refusal both references carry by name — Rust's
@@ -428,7 +428,7 @@ def test_a_bare_re_declared_edge_is_a_no_op_not_a_second_edge() -> None:
 
     declare(bare)
     channel = bare.spec.channels[0]
-    assert [(e.procedure, len(e.transforms)) for e in channel.consumers] == [(0, 0)]
+    assert [(e.tasklet, len(e.transforms)) for e in channel.consumers] == [(0, 0)]
 
 
 # The reference declares exactly this — `tier_commit_block_workflow` opens with
@@ -495,7 +495,7 @@ def test_a_merge_naming_one_source_twice_is_refused_naming_the_channel() -> None
     assert "merge subscribes channel `in` twice" in str(refusal)
 
 
-def test_a_merge_source_already_wired_into_the_procedure_is_refused() -> None:
+def test_a_merge_source_already_wired_into_the_tasklet_is_refused() -> None:
     @flezha.stream_operative("merge_rewired")
     def rewired(c: flezha.Channels) -> None:
         entry = c.input("in")
@@ -507,7 +507,7 @@ def test_a_merge_source_already_wired_into_the_procedure_is_refused() -> None:
     assert caught.value.refusals == ["EdgeAlreadyWired"]
 
 
-@flezha.procedure
+@flezha.tasklet
 def routed_document(value: Any) -> None:
     return None
 
@@ -524,12 +524,12 @@ def test_the_router_is_one_route_latest_node_and_a_named_router_is_another() -> 
         ).into(routed_document)
 
     declare(routers)
-    assert [node.name for node in routers.spec.procedures] == [
+    assert [node.name for node in routers.spec.tasklets] == [
         "route_latest",
         "routed_document",
         "flags",
     ]
-    assert routers.spec.procedures[0].proc.entity_mode == "single"
+    assert routers.spec.tasklets[0].task.cell_mode == "single"
 
 
 def test_two_unnamed_routers_are_one_node_so_a_shared_traffic_edge_is_refused() -> None:
@@ -542,7 +542,7 @@ def test_two_unnamed_routers_are_one_node_so_a_shared_traffic_edge_is_refused() 
     with pytest.raises(DeclarationError) as caught:
         declare(routers)
     assert caught.value.refusals == ["EdgeAlreadyWired"]
-    assert [node.name for node in routers.spec.procedures] == ["route_latest"]
+    assert [node.name for node in routers.spec.tasklets] == ["route_latest"]
 
 
 def test_flat_map_fans_a_value_out_and_an_empty_fan_is_a_drop() -> None:
@@ -672,13 +672,13 @@ def test_a_stream_short_form_is_its_hand_written_twin() -> None:
     def upcase(value: str) -> str:
         return value.upper()
 
-    @flezha.procedure(name="upcase")
-    def upcase_procedure(value: str) -> str:
+    @flezha.tasklet(name="upcase")
+    def upcase_tasklet(value: str) -> str:
         return value.upper()
 
     @flezha.stream_operative("upcase")
     def twin(c: flezha.Channels) -> None:
-        c.input("input", codec="text").into(upcase_procedure).sink("out")
+        c.input("input", codec="text").into(upcase_tasklet).sink("out")
 
     assert upcase.kind == "stream"
     assert graph.to_host_class_decl(upcase.spec) == graph.to_host_class_decl(twin.spec)
@@ -690,13 +690,13 @@ def test_a_workflow_short_form_is_its_hand_written_twin() -> None:
     def place(order: str) -> str:
         return order
 
-    @flezha.procedure(name="place")
-    def place_procedure(order: str) -> str:
+    @flezha.tasklet(name="place")
+    def place_tasklet(order: str) -> str:
         return order
 
     @flezha.workflow_operative("place")
     def twin(c: flezha.Channels) -> None:
-        c.input("order", codec="text").into(place_procedure).sink("placed")
+        c.input("order", codec="text").into(place_tasklet).sink("placed")
 
     assert place.kind == "workflow"
     record = graph.to_host_class_decl(place.spec)
@@ -704,10 +704,10 @@ def test_a_workflow_short_form_is_its_hand_written_twin() -> None:
     assert record["workflow"]["loop_mode"] == "once"
 
 
-def test_a_short_form_with_no_sink_declares_its_entry_and_its_procedure_only() -> None:
+def test_a_short_form_with_no_sink_declares_its_entry_and_its_tasklet_only() -> None:
     state_only = fixtures.SugarStateOnly
     assert _derived(state_only) == [("ticks", "entry", None, [0])]
-    assert [node.name for node in state_only.spec.procedures] == ["sugar_state_only"]
+    assert [node.name for node in state_only.spec.tasklets] == ["sugar_state_only"]
     assert _decodes_text(state_only)
 
 
@@ -715,29 +715,29 @@ def test_a_channels_body_annotated_or_not_is_still_the_full_form() -> None:
     def bare(c) -> None:
         c.input("input").into(echo).sink("out")
 
-    @flezha.stream_operative(id="static_entity")
-    def static_entity(c: flezha.Channels) -> None:
+    @flezha.stream_operative(id="static_cell")
+    def static_cell(c: flezha.Channels) -> None:
         bare(c)
 
-    for full in (static_entity, flezha.stream_operative(id="bare")(bare)):
-        assert full.procedure is None
-        assert [node.name for node in full.spec.procedures] == ["echo"]
+    for full in (static_cell, flezha.stream_operative(id="bare")(bare)):
+        assert full.tasklet is None
+        assert [node.name for node in full.spec.tasklets] == ["echo"]
 
 
-def test_a_function_taking_a_context_is_a_procedure_body() -> None:
+def test_a_function_taking_a_context_is_a_tasklet_body() -> None:
     @flezha.stream_operative(id="stamp", sink="out")
     def stamp(value: str, ctx: flezha.Ctx[None]) -> str:
         return value
 
-    assert [node.name for node in stamp.spec.procedures] == ["stamp"]
+    assert [node.name for node in stamp.spec.tasklets] == ["stamp"]
 
 
-def test_the_generated_procedure_composes_in_another_topology() -> None:
+def test_the_generated_tasklet_composes_in_another_topology() -> None:
     @flezha.stream_operative(id="upcase", sink="out")
     def upcase(value: str) -> str:
         return value.upper()
 
-    generated = upcase.procedure
+    generated = upcase.tasklet
     assert generated is not None
     assert generated("abc") == "ABC"
 
@@ -746,11 +746,11 @@ def test_the_generated_procedure_composes_in_another_topology() -> None:
         c.input("in").into(generated).into(echo).sink("out")
 
     declare(wider)
-    assert [node.name for node in wider.spec.procedures] == ["upcase", "echo"]
+    assert [node.name for node in wider.spec.tasklets] == ["upcase", "echo"]
 
 
-@pytest.mark.parametrize("topology", ["channels", "procedures"])
-def test_a_procedure_body_beside_a_topology_body_is_refused(topology: str) -> None:
+@pytest.mark.parametrize("topology", ["channels", "tasklets"])
+def test_a_tasklet_body_beside_a_topology_body_is_refused(topology: str) -> None:
     class Both:
         def run(self, value: str) -> str:
             return value
@@ -795,11 +795,11 @@ def test_an_absent_id_is_refused_rather_than_derived() -> None:
 
 
 @pytest.mark.parametrize("keyword", ["kind", "sink", "input", "codec"])
-def test_an_operative_keyword_on_a_procedure_is_refused(keyword: str) -> None:
+def test_an_operative_keyword_on_a_tasklet_is_refused(keyword: str) -> None:
     declarations: dict[str, Any] = {keyword: "text"}
     with pytest.raises(DeclarationError) as caught:
 
-        @flezha.procedure(name="upcase", **declarations)
+        @flezha.tasklet(name="upcase", **declarations)
         def upcase(value: str) -> str:
             return value
 
@@ -807,26 +807,26 @@ def test_an_operative_keyword_on_a_procedure_is_refused(keyword: str) -> None:
     assert "flezha.stream_operative" in str(caught.value)
 
 
-def test_a_short_form_carries_its_procedures_own_settings() -> None:
+def test_a_short_form_carries_its_tasklets_own_settings() -> None:
     class Keyed:
         def run(self, value: str) -> str:
             return value
 
-        def entities_for(self, value: str) -> list[str]:
+        def cells_for(self, value: str) -> list[str]:
             return ["a"]
 
     short = flezha.stream_operative(
-        id="keyed", sink="out", entity_keys=["a", "b"], mailbox_capacity=8
+        id="keyed", sink="out", cell_keys=["a", "b"], mailbox_capacity=8
     )(Keyed)
-    keyed = flezha.procedure(name="keyed", entity_keys=["a", "b"], mailbox_capacity=8)(Keyed)
+    keyed = flezha.tasklet(name="keyed", cell_keys=["a", "b"], mailbox_capacity=8)(Keyed)
 
     @flezha.stream_operative("keyed")
     def twin(c: flezha.Channels) -> None:
         c.input("input").into(keyed).sink("out")
 
-    assert short.procedure is not None
-    assert short.procedure.entity_keys == ["a", "b"]
-    assert short.procedure.mailbox_capacity == 8
+    assert short.tasklet is not None
+    assert short.tasklet.cell_keys == ["a", "b"]
+    assert short.tasklet.mailbox_capacity == 8
     assert graph.to_host_class_decl(short.spec) == graph.to_host_class_decl(twin.spec)
     declare(short)
 
@@ -862,8 +862,8 @@ def test_a_class_setting_on_a_short_form_is_refused(
         declare_operative(id="place", sink="placed", **setting)(place)
 
 
-def test_a_class_procedure_body_is_its_run_method() -> None:
-    @flezha.procedure
+def test_a_class_tasklet_body_is_its_run_method() -> None:
+    @flezha.tasklet
     class Upcase:
         def run(self, value: str) -> str:
             return value.upper()
@@ -874,7 +874,7 @@ def test_a_class_procedure_body_is_its_run_method() -> None:
 def test_a_class_with_a_process_body_and_no_run_is_refused_naming_run() -> None:
     with pytest.raises(DeclarationError, match="`run`"):
 
-        @flezha.procedure
+        @flezha.tasklet
         class Upcase:
             def process(self, value: str) -> str:
                 return value.upper()

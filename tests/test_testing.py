@@ -1,4 +1,4 @@
-"""The procedure test harness, at parity with the Rust and Java ones."""
+"""The tasklet test harness, at parity with the Rust and Java ones."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pytest
 import flezha
 from conftest import Bumped, Counter, compensating, count_up, echo
 from flezha.builder import apply_transforms
-from flezha.testing import ProcedureTestHarness, ReplayMismatch, replay_equals
+from flezha.testing import ReplayMismatch, TaskletTestHarness, replay_equals
 
 
 def test_a_handler_is_testable_with_no_runtime_and_no_controller() -> None:
@@ -20,7 +20,7 @@ def test_a_handler_is_testable_with_no_runtime_and_no_controller() -> None:
 
 
 def test_the_harness_reports_state_changes_and_emits() -> None:
-    harness: ProcedureTestHarness[Counter] = ProcedureTestHarness(count_up)
+    harness: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
     outcome = harness.feed("abcd")
     assert harness.state == Counter(count=4, seen=["4"])
     assert outcome.changes == [Bumped(by=4)]
@@ -28,13 +28,13 @@ def test_the_harness_reports_state_changes_and_emits() -> None:
 
 
 def test_apply_inputs_runs_them_in_order() -> None:
-    harness: ProcedureTestHarness[Counter] = ProcedureTestHarness(count_up)
+    harness: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
     harness.apply_inputs(["a", "bb", "ccc"])
     assert harness.state == Counter(count=6, seen=["1", "2", "3"])
 
 
 def test_construction_from_an_initial_state() -> None:
-    harness: ProcedureTestHarness[Counter] = ProcedureTestHarness(
+    harness: TaskletTestHarness[Counter] = TaskletTestHarness(
         count_up, initial_state=Counter(count=10, seen=["seeded"])
     )
     harness.feed("a")
@@ -42,11 +42,11 @@ def test_construction_from_an_initial_state() -> None:
 
 
 def test_construction_from_a_restore_payload() -> None:
-    source: ProcedureTestHarness[Counter] = ProcedureTestHarness(count_up)
+    source: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
     source.apply_inputs(["a", "bb"])
     snapshot = source.snapshot()
 
-    restored: ProcedureTestHarness[Counter] = ProcedureTestHarness(count_up)
+    restored: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
     assert restored.restore(snapshot=snapshot) == source.state
 
 
@@ -70,8 +70,8 @@ def test_the_replay_gate_reports_both_states_on_a_mismatch() -> None:
             drift["n"] += 1
             state["total"] += change["by"] * drift["n"]
 
-    proc = flezha.procedure(Impure)
-    harness: ProcedureTestHarness[dict[str, int]] = ProcedureTestHarness(proc)
+    task = flezha.tasklet(Impure)
+    harness: TaskletTestHarness[dict[str, int]] = TaskletTestHarness(task)
     harness.apply_inputs(["a", "b"])
     with pytest.raises(ReplayMismatch) as caught:
         harness.replay_equals()
@@ -93,8 +93,8 @@ def test_the_replay_gate_catches_a_mutation_that_recorded_no_change() -> None:
         def apply_change(self, state: dict[str, int], change: dict[str, int]) -> None:
             state["total"] += change["by"]
 
-    proc = flezha.procedure(Sneaky)
-    harness: ProcedureTestHarness[dict[str, int]] = ProcedureTestHarness(proc)
+    task = flezha.tasklet(Sneaky)
+    harness: TaskletTestHarness[dict[str, int]] = TaskletTestHarness(task)
     harness.feed("a")
     with pytest.raises(ReplayMismatch):
         harness.replay_equals()
@@ -110,8 +110,8 @@ def test_timers_are_recorded_and_fired() -> None:
         def on_timer(self, timer: dict[str, object], ctx: flezha.Ctx[None]) -> None:
             fired.append(int(timer["scheduled_at"]))  # type: ignore[arg-type]
 
-    proc = flezha.procedure(Timed)
-    harness: ProcedureTestHarness[None] = ProcedureTestHarness(proc)
+    task = flezha.tasklet(Timed)
+    harness: TaskletTestHarness[None] = TaskletTestHarness(task)
     outcome = harness.feed("x", now=500)
     assert outcome.timers == [{"kind": "processing_time", "scheduled_at": 1500, "register": True}]
     harness.fire_timer("processing_time", 1500)
@@ -128,8 +128,8 @@ def test_event_time_is_advanced_through_the_registered_timers() -> None:
         def on_timer(self, timer: dict[str, object], ctx: flezha.Ctx[None]) -> None:
             fired.append(int(timer["scheduled_at"]))  # type: ignore[arg-type]
 
-    proc = flezha.procedure(EventTimed)
-    harness: ProcedureTestHarness[None] = ProcedureTestHarness(proc)
+    task = flezha.tasklet(EventTimed)
+    harness: TaskletTestHarness[None] = TaskletTestHarness(task)
     harness.feed({"at": 300})
     harness.feed({"at": 100})
     harness.feed({"at": 900})
@@ -139,38 +139,38 @@ def test_event_time_is_advanced_through_the_registered_timers() -> None:
 
 def test_a_compensation_is_driven_over_recorded_outputs() -> None:
     seen: list[Any] = []
-    harness: ProcedureTestHarness[None] = ProcedureTestHarness(compensating(seen))
+    harness: TaskletTestHarness[None] = TaskletTestHarness(compensating(seen))
     harness.compensate(["a", "b"])
     assert seen == ["a", "b"]
 
 
 def test_an_async_handler_needs_no_event_loop_in_the_test() -> None:
-    @flezha.procedure
+    @flezha.tasklet
     async def slow(value: str) -> str:
         await asyncio.sleep(0)
         return value.upper()
 
-    harness: ProcedureTestHarness[None] = ProcedureTestHarness(slow)
+    harness: TaskletTestHarness[None] = TaskletTestHarness(slow)
     assert harness.feed("hi").outputs == ["HI"]
 
 
 def test_the_context_clock_and_identity_are_stable_within_an_invocation() -> None:
     ids: list[str] = []
 
-    @flezha.procedure
+    @flezha.tasklet
     def reads(value: str, ctx: flezha.Ctx[None]) -> None:
         assert ctx.now() == ctx.now() == ctx.now()
         ids.append(ctx.stable_id())
         ids.append(ctx.stable_id())
 
-    harness: ProcedureTestHarness[None] = ProcedureTestHarness(reads, entity_key="e")
+    harness: TaskletTestHarness[None] = TaskletTestHarness(reads, cell_key="e")
     harness.feed("x", now=99)
     assert ids[0] != ids[1]
 
     replayed: list[str] = []
     ids_backup = list(ids)
     ids.clear()
-    again: ProcedureTestHarness[None] = ProcedureTestHarness(reads, entity_key="e")
+    again: TaskletTestHarness[None] = TaskletTestHarness(reads, cell_key="e")
     again.feed("x", now=99)
     replayed = list(ids)
     # The n-th call of a replayed invocation equals the n-th of the original.
@@ -178,7 +178,7 @@ def test_the_context_clock_and_identity_are_stable_within_an_invocation() -> Non
 
 
 def test_a_missing_hook_is_refused_by_name() -> None:
-    harness: ProcedureTestHarness[Counter] = ProcedureTestHarness(count_up)
+    harness: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
     with pytest.raises(flezha.FlezhaError, match="on_timer"):
         harness.fire_timer("processing_time", 1)
     with pytest.raises(flezha.FlezhaError, match="compensate"):
@@ -189,21 +189,21 @@ def test_the_harness_reports_a_string_and_a_dict_exactly_as_emitted() -> None:
     """The harness reads its sink back as MessagePack, so a string output is
     reported as the string rather than as the bytes a plugin would receive."""
 
-    @flezha.procedure(name="harness_emitter")
+    @flezha.tasklet(name="harness_emitter")
     def emitter(value: str, ctx: flezha.Ctx[None]) -> str:
         ctx.emit({"said": value})
         return f"echo: {value}"
 
-    assert ProcedureTestHarness(emitter).feed("hi").outputs == [{"said": "hi"}, "echo: hi"]
+    assert TaskletTestHarness(emitter).feed("hi").outputs == [{"said": "hi"}, "echo: hi"]
 
 
 def test_the_router_delivers_each_document_once_on_each_keys_own_traffic() -> None:
     c = flezha.Channels("routed")
     config, trades = c.input("config"), c.input("trades")
     c.route_latest(config, trades, lambda trade: trade["symbol"])
-    (router,) = c.procedures
+    (router,) = c.tasklets
     assert router.name == "route_latest"
-    harness: ProcedureTestHarness[dict[str, Any]] = ProcedureTestHarness(router.proc)
+    harness: TaskletTestHarness[dict[str, Any]] = TaskletTestHarness(router.task)
 
     def fed(entry: int, value: dict[str, Any]) -> list[Any]:
         """Feed one value through the router's own source edge, as it is delivered."""
@@ -231,7 +231,7 @@ def test_the_harness_answers_a_spawn_already_resolved() -> None:
     again: list[flezha.SpawnResult] = []
     unread: list[flezha.SpawnHandle] = []
 
-    @flezha.procedure
+    @flezha.tasklet
     def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
         results.append(ctx.spawn_workflow("worker", value).try_result())
         named = ctx.spawn_workflow("worker", value, id="w1")
@@ -239,7 +239,7 @@ def test_the_harness_answers_a_spawn_already_resolved() -> None:
         again.append(named.wait())
         unread.append(ctx.spawn_workflow("worker", value))
 
-    harness: ProcedureTestHarness[None] = ProcedureTestHarness(spawner)
+    harness: TaskletTestHarness[None] = TaskletTestHarness(spawner)
     harness.feed("a")
     harness.feed("a", replay=True)
     generated, named, replayed, replayed_named = results
