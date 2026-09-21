@@ -176,6 +176,16 @@ def failed(token: int, message: str, *, non_retryable: bool = False) -> dict[str
     }
 
 
+class UnreadableMessage(Exception):
+    """An entry channel's decoder, or the entry edge's transforms over what it
+    decoded, rejected a message. Only the entrance raises this: the verdict it
+    becomes tells the core the message is unreadable rather than that the
+    handler failed, so a workflow parks it and keeps waiting instead of ending."""
+
+    def __init__(self, cause: BaseException) -> None:
+        super().__init__(error_message(cause))
+
+
 def error_message(error: BaseException) -> str:
     """What a failure says on the wire.
 
@@ -398,10 +408,11 @@ async def _run_work(cell: Cell, activation: dict[str, Any], deps: DispatchDeps) 
             log().debug("%s failed an item", cell.name, exc_info=error)
             # Items after this one are re-handed by the core, so the batch stops
             # here rather than reporting effects the cell never saw.
+            verdict, message = _failure_of(error)
             effects.append(
                 {
-                    "verdict": "non_retryable" if is_non_retryable(error) else "retryable",
-                    "message": error_message(error),
+                    "verdict": verdict,
+                    "message": message,
                     "event_time": now,
                     "consumed_offset": item.get("consumed_offset"),
                 }
@@ -409,6 +420,13 @@ async def _run_work(cell: Cell, activation: dict[str, Any], deps: DispatchDeps) 
             break
 
     return {"token": activation["token"], "outcome": "work", "effects": effects}
+
+
+def _failure_of(error: BaseException) -> tuple[str, str]:
+    """An item's failure as its verdict and the message the wire carries."""
+    if isinstance(error, UnreadableMessage):
+        return "unreadable", str(error)
+    return ("non_retryable" if is_non_retryable(error) else "retryable"), error_message(error)
 
 
 def emit_returned(ctx: Ctx[Any], returned: Any) -> None:
@@ -452,10 +470,19 @@ async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any]) -> None:
         channel is None or channel.kind == "entry" or cell.registered.spec.structured_workflow
     )
     edge = _edge_into(channel, cell.node.index) if untransformed else None
+    # The entrance (the entry channel's decoder and the entry edge's
+    # transforms) is where a message the operative cannot read is told apart
+    # from a handler that fails on one it can.
+    try:
+        values = values_of(channel, edge, item.get("payload") or b"")
+    except Exception as error:
+        if channel is None or channel.kind != "entry":
+            raise
+        raise UnreadableMessage(error) from error
     # A filtered value is consumed and reaches no handler, and a fanned one
     # reaches it once per value. Either way the item produces one effect, so
     # its offset advances once and nothing is retried.
-    for value in values_of(channel, edge, item.get("payload") or b""):
+    for value in values:
         if edge is None or _routes_to(cell, edge, value):
             emit_returned(ctx, await resolve(task(value, ctx)))
 

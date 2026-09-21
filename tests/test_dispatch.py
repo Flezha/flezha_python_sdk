@@ -512,7 +512,8 @@ def test_plain_text_into_an_entry_naming_no_codec_never_reaches_the_handler(
     fake_core: FakeCore,
 ) -> None:
     """An entry naming no codec reads JSON, so plain text fails its decode: the
-    item rides the retry ladder and the handler is never handed it."""
+    verdict says the message is unreadable (the core parks it under the entry
+    channel, and a workflow keeps waiting), and the handler is never handed it."""
     seen: list[Any] = []
 
     @flezha.tasklet
@@ -521,9 +522,57 @@ def test_plain_text_into_an_entry_naming_no_codec_never_reaches_the_handler(
 
     activation = wire_work(60, "solo", (0, b'{"a": 1}'), (0, b"hello"))
     effects = answered(activation, solo_deps(record, fake_core))["effects"]
-    assert [effect["verdict"] for effect in effects] == ["ok", "retryable"]
+    assert [effect["verdict"] for effect in effects] == ["ok", "unreadable"]
     assert effects[1]["message"].startswith("JSONDecodeError")
     assert seen == [{"a": 1}]
+
+
+def test_an_entry_edge_transform_that_raises_makes_the_message_unreadable(
+    fake_core: FakeCore,
+) -> None:
+    """The entry edge's transforms run at the entrance too, so a mapping that
+    rejects a message parks it as an unreadable one rather than failing the
+    handler that never saw it."""
+    seen: list[Any] = []
+
+    @flezha.tasklet
+    def record(value: Any) -> None:
+        seen.append(value)
+
+    def strict(value: Any) -> Any:
+        if "k" not in value:
+            raise KeyError("k")
+        return value["k"]
+
+    @flezha.stream_operative("strict_entry")
+    def strict_entry(c: flezha.Channels) -> None:
+        c.input("in").map(strict).into(record).sink()
+
+    deps = deps_for(strict_entry, fake_core)
+    effects = answered(
+        wire_work(63, "strict_entry", (0, b'{"k": "fine"}'), (0, b'{"other": 1}')), deps
+    )["effects"]
+    assert [effect["verdict"] for effect in effects] == ["ok", "unreadable"]
+    assert effects[1]["message"].startswith("KeyError")
+    assert seen == ["fine"]
+
+
+def test_an_unreadable_message_is_told_apart_from_a_handler_failure(
+    fake_core: FakeCore,
+) -> None:
+    """Only the entrance answers `unreadable`: a readable message the handler
+    raises on is the handler's failure, retryable as before."""
+
+    @flezha.tasklet
+    def refuse(value: Any) -> None:
+        raise ValueError("cannot place this")
+
+    deps = solo_deps(refuse, fake_core)
+    (unreadable,) = answered(wire_work(61, "solo", (0, b"not json")), deps)["effects"]
+    assert unreadable["verdict"] == "unreadable"
+    assert unreadable["message"].startswith("JSONDecodeError")
+    (failed,) = answered(wire_work(62, "solo", (0, b'{"a": 1}')), deps)["effects"]
+    assert (failed["verdict"], failed["message"]) == ("retryable", "ValueError: cannot place this")
 
 
 # -- merge and flat_map ----------------------------------------------------------
@@ -712,9 +761,27 @@ def test_a_spawn_without_an_id_asks_for_one_and_a_spawn_with_an_id_carries_it(
         (s["token"], s["factory_id"], s["id"], s["payload"], s["if_running"], s["replay"])
         for s in fake_core.spawns
     ] == [
-        (91, "worker", "", codec.encode("p"), "", False),
-        (91, "worker", "w1", codec.encode("p"), "", False),
+        (91, "worker", "", b"p", "", False),
+        (91, "worker", "w1", b"p", "", False),
     ]
+
+
+def test_a_spawn_payload_is_what_a_text_or_json_entry_reads(fake_core: FakeCore) -> None:
+    """The payload takes the no-codec sink rule `complete` applies: a string is
+    its UTF-8, bytes are themselves, anything else its JSON, so the spawned
+    workflow's `text` or `json` entry decodes it as a send's payload."""
+
+    @flezha.tasklet
+    def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
+        ctx.spawn_workflow("place", "o-1").wait()
+        ctx.spawn_workflow("place", b"\xff\x00raw").wait()
+        ctx.spawn_workflow("place", {"symbol": "AAPL", "quantity": 10}).wait()
+
+    answered(work_activation(92, "p", factory="solo"), solo_deps(spawner, fake_core))
+    payloads = [s["payload"] for s in fake_core.spawns]
+    assert payloads[0] == b"o-1"
+    assert payloads[1] == b"\xff\x00raw"
+    assert json.loads(payloads[2]) == {"symbol": "AAPL", "quantity": 10}
 
 
 @pytest.mark.parametrize(

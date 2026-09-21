@@ -541,6 +541,15 @@ def dynamic_cell_operative(c: flezha.Channels) -> None:
 # is observable nowhere but in the tasklet that read it.
 
 
+def _report(label: str, handle: Any) -> None:
+    """A spawn handle's answer on stdout, as `spawn_result <label> <id> <outcome>`."""
+    try:
+        result = handle.wait()
+        print(f"spawn_result {label} {result.id} {result.outcome}", flush=True)
+    except flezha.SpawnError as error:
+        print(f"spawn_result {label} error {error}", flush=True)
+
+
 @flezha.tasklet(name="spawn_requester")
 def spawn_requester(value: str, ctx: flezha.Ctx[None]) -> None:
     factory = stateless_loop_workflow.factory_id
@@ -549,16 +558,30 @@ def spawn_requester(value: str, ctx: flezha.Ctx[None]) -> None:
         ("named", ctx.spawn_workflow(factory, value, id=value)),
     ]
     for label, handle in handles:
-        try:
-            result = handle.wait()
-            print(f"spawn_result {label} {result.id} {result.outcome}", flush=True)
-        except flezha.SpawnError as error:
-            print(f"spawn_result {label} error {error}", flush=True)
+        _report(label, handle)
 
 
 @flezha.stream_operative("spawn_requester")
 def spawn_requester_operative(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(spawn_requester).sink("out")
+
+
+# -- spawn_once_requester ----------------------------------------------------
+#
+# On each input it spawns `typed_once_workflow` once, with no id, carrying the
+# input inside a JSON object its `order` entry decodes, and prints the result
+# as `spawn_result once <id> <outcome>`: the payload a spawn carries is the
+# spawned instance's first message, encoded by the no-codec sink rule.
+
+
+@flezha.tasklet(name="spawn_once_requester")
+def spawn_once_requester(value: str, ctx: flezha.Ctx[None]) -> None:
+    _report("once", ctx.spawn_workflow("typed_once_workflow", {"text": value}))
+
+
+@flezha.stream_operative("spawn_once_requester")
+def spawn_once_requester_operative(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(spawn_once_requester).sink("out")
 
 
 #: Every operative this app registers, in declaration order.
@@ -599,4 +622,5 @@ ALL: list[flezha.Operative] = [
     partition_relay_operative,
     dynamic_cell_operative,
     spawn_requester_operative,
+    spawn_once_requester_operative,
 ]

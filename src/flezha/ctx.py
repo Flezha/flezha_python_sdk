@@ -280,7 +280,13 @@ class Ctx(Generic[S]):
         if_running: IfRunning | None = None,
     ) -> SpawnHandle:
         """Start a workflow instance of ``factory_id`` with ``payload`` as its
-        first input, and answer a :class:`SpawnHandle` at once.
+        first message, and answer a :class:`SpawnHandle` at once.
+
+        ``payload`` is encoded as a sink naming no codec encodes a value, the
+        rule :meth:`complete` applies: bytes as they are, a string as UTF-8 and
+        anything else as JSON. It enters the instance's first entry channel and
+        is decoded by that channel's codec, so a ``text`` entry reads a string
+        and a ``json`` entry reads a dict.
 
         Without ``id`` the controller generates one and always starts a new
         instance: it can never deliver into a running one, a reissue after a
@@ -307,7 +313,7 @@ class Ctx(Generic[S]):
                 self._token,
                 factory_id,
                 id or "",
-                _codec.encode(payload),
+                _codec.plain_payload(payload, self._node.name),
                 if_running or "",
                 self.replay,
             ),

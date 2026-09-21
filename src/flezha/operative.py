@@ -297,8 +297,8 @@ def workflow_operative(
 ) -> Callable[[Any], Operative]:
     """Declare a workflow operative: a chain of tasklets, run once or looping.
 
-    Over a tasklet body this is the short form, a ``once`` workflow whose
-    entry channel receives its start values; see :func:`stream_operative`.
+    Over a tasklet body this is the short form, a ``once`` workflow that runs
+    its tasklet on its first message; see :func:`stream_operative`.
     """
     return _operative(
         workflow_operative,

@@ -207,7 +207,7 @@ class SessionTurn:
     """One message of a session: open it, answer it, or end it."""
 
     def run(self, message: Any, ctx: flezha.Ctx[Session]) -> None:
-        # The first message is the start values; the session's goal is in them.
+        # The first message opens the session; the session's goal is in it.
         if ctx.state.goal is None:
             goal = (message or {}).get("goal", "help the user")
             ctx.change(SessionEvent(goal=goal))

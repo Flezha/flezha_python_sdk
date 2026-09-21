@@ -159,7 +159,7 @@ def undoing(record: str) -> Callable[[list[Any], flezha.Ctx[Any]], None]:
 
 # -- echo_workflow -----------------------------------------------------------
 #
-# One tasklet, run once: emits its start values back, so the pass ends and
+# One tasklet, run once: emits its first message back, so the pass ends and
 # the controller deregisters the instance.
 
 
@@ -173,6 +173,28 @@ echo = stateless_step("echo", _echo)
 @flezha.workflow_operative("echo_workflow")
 def echo_workflow(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(echo).sink("out")
+
+
+# -- typed_once_workflow -----------------------------------------------------
+#
+# A `once` workflow whose entry decodes JSON: its one pass runs over the
+# message it was spawned or sent with, prints what it read, emits it to the
+# `placed` sink and completes with it.
+
+
+def _once_placed(value: dict[str, Any], ctx: flezha.Ctx[None]) -> None:
+    text = str(value["text"])
+    print(f"once_ran {text}", flush=True)
+    ctx.emit(f"placed:{text}")
+    ctx.complete(text)
+
+
+once_placed = flezha.tasklet(_once_placed, name="once_placed")
+
+
+@flezha.workflow_operative("typed_once_workflow")
+def typed_once_workflow(c: flezha.Channels) -> None:
+    c.input("order", codec="json").into(once_placed).sink("placed")
 
 
 # -- commit_block_workflow / sync_durable_workflow ---------------------------
@@ -552,6 +574,27 @@ def chat_rewind_workflow(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(chat_turn).named("mid").into(chat_reply_undoable).sink("out")
 
 
+# The chat loop with the block moved AFTER the root's commit: TURN commits its
+# turn, REPLY blocks on the turn `reply-crash` while the release env is unset,
+# so a SIGKILL lands between a root's `task_committed` and the pass's
+# `iter_committed`.
+REPLY_CRASH_TURN = "reply-crash"
+
+
+async def _blocking_reply(value: str, ctx: flezha.Ctx[None]) -> None:
+    if value == REPLY_CRASH_TURN:
+        await block_until_released()
+    ctx.emit(f"reply:{value}")
+
+
+blocking_reply = stateless_step("blocking_reply", _blocking_reply)
+
+
+@flezha.workflow_operative("reply_block_loop_workflow", **LOOP_KNOBS)
+def reply_block_loop_workflow(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(chat_turn).named("mid").into(blocking_reply).sink("out")
+
+
 # -- the bench chains --------------------------------------------------------
 #
 # What `mix bench.workflow --scenario chain` drives: K durable pass-through
@@ -625,6 +668,7 @@ def bench_loop_workflow(c: flezha.Channels) -> None:
 #: Every workflow operative this app registers, in the reference's order.
 ALL: list[flezha.Operative] = [
     echo_workflow,
+    typed_once_workflow,
     commit_block_workflow,
     sync_durable_workflow,
     optout_commit_block,
@@ -635,6 +679,7 @@ ALL: list[flezha.Operative] = [
     chat_loop_workflow,
     stateless_loop_workflow,
     chat_rewind_workflow,
+    reply_block_loop_workflow,
     retry_workflow,
     branch_workflow,
     diamond_workflow,
