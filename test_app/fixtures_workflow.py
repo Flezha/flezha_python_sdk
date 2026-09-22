@@ -681,6 +681,31 @@ def workflow_timer_refused(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(workflow_timer)
 
 
+# -- static_cell_workflow ----------------------------------------------------
+#
+# A per-input loop whose one tasklet declares three static cells and routes
+# every message to two of them; each cell that runs emits `<cell key>:<message>`,
+# so one message yields exactly two outputs (workflow.rs).
+
+
+class StaticCellStep:
+    def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
+        ctx.emit(f"{ctx.cell_key}:{value}")
+
+    def cells_for(self, value: str) -> list[str]:
+        return ["a", "b"]
+
+
+static_cell_step = flezha.tasklet(
+    StaticCellStep, name="static_cell_step", cell_keys=["a", "b", "c"]
+)
+
+
+@flezha.workflow_operative("static_cell_workflow", **LOOP_KNOBS)
+def static_cell_workflow(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(static_cell_step).sink("out")
+
+
 #: Every workflow operative this app registers, in the reference's order.
 ALL: list[flezha.Operative] = [
     echo_workflow,
@@ -705,4 +730,5 @@ ALL: list[flezha.Operative] = [
     bench_chain_optout_4,
     bench_loop_workflow,
     workflow_timer_refused,
+    static_cell_workflow,
 ]

@@ -4,7 +4,7 @@ The Flezha Python SDK — a poll host over `flz_core`, the runner kernel the
 Rust, Java, Node and Ruby SDKs also drive.
 
 The kernel owns transport, ordering, per-cell exclusivity, durability,
-retries, timers, credit, routing and the workflow driver. This package brings
+retries, timers, credit, routing and workflow runs. This package brings
 the authoring surface, the codec for user types, the threading host and
 idiomatic errors — and no kernel code.
 
