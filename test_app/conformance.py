@@ -203,12 +203,12 @@ class Interpreter:
     def _class_flag(self, builder: flezha.Channels, rest: str) -> None:
         """``class.<flag>[(<value>)]`` — the facts the class declares.
 
-        ``persistent``, ``sync_durability`` and ``workflow`` are operative-level
-        declarations, read as the row's operative was minted rather than called
-        on the builder.
+        ``persistent``, ``sync_durability``, ``sleep_when_idle`` and ``workflow``
+        are operative-level declarations, read as the row's operative was minted
+        rather than called on the builder.
         """
         flag, value = split_call(rest)
-        if flag in ("persistent", "sync_durability", "workflow"):
+        if flag in ("persistent", "sync_durability", "sleep_when_idle", "workflow"):
             return
         if flag == "effectively_once":
             builder.effectively_once()
@@ -282,8 +282,8 @@ def operative_for(row: dict[str, str]) -> flezha.Operative:
     """A row's operative. The cited twins are this app's own; the rest are built.
 
     Fresh per row: an operative memoises its own spec, and `persistent`,
-    `sync_durability` and the class kind are declarations rather than builder
-    calls. A `class.workflow` row is a real workflow declaration carrying the
+    `sync_durability`, `sleep_when_idle` and the class kind are declarations
+    rather than builder calls. A `class.workflow` row is a real workflow declaration carrying the
     row's builder flags, so the core judges what that kind may carry.
     """
     if row["topology"] in CITED:
@@ -300,6 +300,8 @@ def operative_for(row: dict[str, str]) -> flezha.Operative:
         row["topology"],
         persistent="class.persistent" in row["steps"],
         sync_durability="class.sync_durability" in row["steps"],
+        # Unwritten, a row keeps the kind's default rather than declaring it off.
+        sleep_when_idle=True if "class.sleep_when_idle" in row["steps"] else None,
     )(channels)
 
 

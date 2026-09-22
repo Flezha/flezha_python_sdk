@@ -9,7 +9,7 @@ import os
 from typing import Any
 
 import flezha
-from fixture_support import _as_int, _env_int
+from fixture_support import _as_int, _env_int, prefix
 from flezha import codec as flezha_codec
 
 # -- bench_keyed_nopersist ---------------------------------------------------
@@ -113,6 +113,35 @@ def persistence_off_operative(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(counter_entry, "persistence_off_entry_tasklet").named(
         "ticks"
     ).into(counter, "persistence_off_counter_tasklet")
+
+
+# -- sleeping_counter --------------------------------------------------------
+#
+# A stream that sleeps when idle: `key:delta` inputs fold into one running
+# total per key, and every input emits `key=total` on the `totals` sink. The
+# sleep e2e reads the total after a wake to prove the Cell came back with the
+# state it slept with.
+
+
+class SleepingCounter:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
+        key, _, delta = value.partition(":")
+        ctx.change({"delta": _as_int(delta)})
+        return f"{key}={ctx.state['value']}"
+
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+        return {"value": 0}
+
+    def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
+        state["value"] += change["delta"]
+
+
+sleeping_counter = flezha.tasklet(SleepingCounter, name="sleeping_counter_tasklet")
+
+
+@flezha.stream_operative("sleeping_counter", sleep_when_idle=True)
+def sleeping_counter_operative(c: flezha.Channels) -> None:
+    c.input("input", codec="text").key_by(prefix).into(sleeping_counter).sink("totals")
 
 
 @flezha.tasklet(name="tick_entry_tasklet")

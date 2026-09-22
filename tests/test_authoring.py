@@ -467,6 +467,34 @@ def test_sync_durability_on_a_stream_is_refused_by_name() -> None:
 
 
 @pytest.mark.parametrize(
+    ("decorator", "persistent", "sleeps"),
+    [
+        (flezha.workflow_operative, True, True),
+        (flezha.workflow_operative, False, False),
+        (flezha.stream_operative, True, False),
+    ],
+)
+def test_sleeping_defaults_to_persistence_on_a_workflow_only(
+    decorator: Callable[..., Any], persistent: bool, sleeps: bool
+) -> None:
+    @decorator("sleep_default", persistent=persistent)
+    def operative(c: flezha.Channels) -> None:
+        c.input("in").into(echo)
+
+    assert graph.to_host_class_decl(operative.spec)["sleep_when_idle"] is sleeps
+
+
+@pytest.mark.parametrize("decorator", [flezha.stream_operative, flezha.workflow_operative])
+def test_sleeping_without_persistence_is_refused_by_name(decorator: Callable[..., Any]) -> None:
+    @decorator("sleep_no_persist", persistent=False, sleep_when_idle=True)
+    def operative(c: flezha.Channels) -> None:
+        c.input("in").into(echo)
+
+    with pytest.raises(DeclarationError, match="SleepWithoutPersistence"):
+        declare(operative)
+
+
+@pytest.mark.parametrize(
     ("keyword", "value"), [("loop_mode", "forever"), ("rollback_mode", "best_effort")]
 )
 def test_a_mode_outside_its_declared_values_is_refused_at_decoration(

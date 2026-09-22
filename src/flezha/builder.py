@@ -172,6 +172,7 @@ class ClassSpec:
     persistent: bool
     tasklets: list[TaskNode]
     channels: list[ChannelSpec]
+    sleep_when_idle: bool = False
     effectively_once: bool = False
     checkpoint_ack: bool = False
     """The author's explicit ``checkpoint_ack()``; the core derives the granularity."""

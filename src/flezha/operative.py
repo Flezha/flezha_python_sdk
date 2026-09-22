@@ -104,12 +104,18 @@ class Operative:
         builder = Channels(self.factory_id)
         self.declaration(builder)
         options = self._options
+        sleep_when_idle = options["sleep_when_idle"]
         return ClassSpec(
             factory_id=self.factory_id,
             kind=self.kind,
             persistent=options["persistent"],
             tasklets=builder.tasklets,
             channels=builder.channels,
+            sleep_when_idle=(
+                self.kind == "workflow" and options["persistent"]
+                if sleep_when_idle is None
+                else sleep_when_idle
+            ),
             effectively_once=builder.effectively_once_flag,
             checkpoint_ack=builder.checkpoint_ack_flag,
             checkpoint_every=builder.checkpoint_every_value,
@@ -253,6 +259,7 @@ def stream_operative(
     id: str | None = None,
     *,
     persistent: bool = True,
+    sleep_when_idle: bool | None = None,
     sync_durability: bool = False,
     sink: str | None = None,
     input: str | None = None,
@@ -262,7 +269,9 @@ def stream_operative(
     """Declare a stream operative: fed by the controller through entry channels.
 
     ``id`` is the factory id. ``persistent`` is whether change bytes are flushed
-    to the per-cell WAL. ``sync_durability`` is a workflow's setting, reaching
+    to the per-cell WAL. ``sleep_when_idle`` is whether an idle instance is
+    written out and dropped from memory until its next input, off unless
+    written. ``sync_durability`` is a workflow's setting, reaching
     the core from here so that it is refused by name (``SyncDurabilityOnStream``)
     rather than dropped.
 
@@ -276,7 +285,11 @@ def stream_operative(
         stream_operative,
         id,
         "stream",
-        {"persistent": persistent, "sync_durability": sync_durability},
+        {
+            "persistent": persistent,
+            "sleep_when_idle": sleep_when_idle,
+            "sync_durability": sync_durability,
+        },
         {"sink": sink, "input": input, "codec": codec},
         settings,
     )
@@ -286,6 +299,7 @@ def workflow_operative(
     id: str | None = None,
     *,
     persistent: bool = True,
+    sleep_when_idle: bool | None = None,
     loop_mode: LoopMode = "once",
     rollback_mode: RollbackMode = "all_or_nothing",
     max_duration_ms: int | None = None,
@@ -300,7 +314,8 @@ def workflow_operative(
 
     Retry is the edges', as on a stream: ``retry_max`` and ``retry_backoff_ms``
     on the channel feeding a tasklet. ``loop_mode`` and ``rollback_mode`` outside
-    their declared values are refused here.
+    their declared values are refused here. ``sleep_when_idle`` defaults to
+    ``persistent``: a workflow that keeps its state sleeps while it waits.
 
     Over a tasklet body this is the short form: a ``once`` workflow that runs
     its tasklet on its first message, or the ``loop_mode`` written, the one
@@ -312,6 +327,7 @@ def workflow_operative(
         "workflow",
         {
             "persistent": persistent,
+            "sleep_when_idle": sleep_when_idle,
             "loop_mode": loop_mode,
             "rollback_mode": rollback_mode,
             "max_duration_ms": max_duration_ms,

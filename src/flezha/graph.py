@@ -146,6 +146,7 @@ def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
         {
             "factory_id": spec.factory_id,
             "persistent": spec.persistent,
+            "sleep_when_idle": spec.sleep_when_idle,
             "sdk_lang": SDK_LANG_PYTHON,
             "sdk_version": __version__,
             "change_format_id": FORMAT_ID_MSGPACK,
