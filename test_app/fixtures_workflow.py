@@ -79,6 +79,7 @@ def durable_step(
     emit: Callable[[str, flezha.Ctx[Any]], None] | None = None,
     compensate: Callable[..., Any] | None = None,
     gate: Callable[[str], bool] | None = None,
+    dynamic_cells: bool = False,
 ) -> flezha.Tasklet[str, str]:
     """The reference's ``durable_step!`` macro: a ``str -> str`` step committing
     one idempotent Change keyed by its own name, so a re-run after a resume
@@ -130,7 +131,7 @@ def durable_step(
         # A crash-resumed compensation reconstructs completed stages with EMPTY
         # outputs, so a hook that records an undo does so unconditionally.
         Step.compensate = staticmethod(compensate)
-    return flezha.tasklet(Step, name=name)
+    return flezha.tasklet(Step, name=name, dynamic_cells=dynamic_cells)
 
 
 def stateless_step(name: str, handle: Callable[..., Any]) -> flezha.Tasklet[str, str]:
@@ -279,6 +280,48 @@ saga_c = failing_step("saga_c")
 @flezha.workflow_operative("saga_block_workflow")
 def saga_block_workflow(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(saga_a).named("s1").into(saga_b).named("s2").into(saga_c)
+
+
+# -- keyed_block_workflow / keyed_saga_workflow -----------------------------
+#
+# The entry's comma-separated key list is split into one value per key, and a
+# `key_by` on that value mints one Cell per key of a durable compensable
+# tasklet that declares no keys; each Cell commits one idempotent change. The
+# third tasklet blocks until the release variable, or fails, so the keyed stage
+# is rolled back once per key.
+
+
+def _split_keys(value: str, ctx: flezha.Ctx[None]) -> None:
+    for key in value.split(","):
+        ctx.emit(key)
+
+
+key_split = stateless_step("key_split", _split_keys)
+keyed_commit = durable_step(
+    "keyed_commit", compensate=lambda outputs, ctx: None, dynamic_cells=True
+)
+keyed_fail = failing_step("keyed_fail")
+
+
+def keyed_commits(c: flezha.Channels) -> Any:
+    return (
+        c.input("in", codec="text")
+        .into(key_split)
+        .named("keys")
+        .key_by(lambda key: key)
+        .into(keyed_commit)
+        .named("committed")
+    )
+
+
+@flezha.workflow_operative("keyed_block_workflow")
+def keyed_block_workflow(c: flezha.Channels) -> None:
+    keyed_commits(c).into(block_b)
+
+
+@flezha.workflow_operative("keyed_saga_workflow")
+def keyed_saga_workflow(c: flezha.Channels) -> None:
+    keyed_commits(c).into(keyed_fail)
 
 
 # -- outbox_block_workflow ---------------------------------------------------
@@ -543,8 +586,10 @@ class ChatReplyUndoable:
         said = ctx.state["said"]
         if not said:
             return
+        # Read before the change: it pops `said` as it is recorded.
+        turn = said[-1]
         ctx.change({"retracted": True})
-        ctx.emit(f"retract:{said[-1]}")
+        ctx.emit(f"retract:{turn}")
 
 
 chat_reply_undoable = flezha.tasklet(ChatReplyUndoable, name="chat_reply_undoable")
@@ -715,6 +760,8 @@ ALL: list[flezha.Operative] = [
     optout_commit_block,
     tier_commit_block_workflow,
     saga_block_workflow,
+    keyed_block_workflow,
+    keyed_saga_workflow,
     outbox_block_workflow,
     undo_outbox_workflow,
     chat_loop_workflow,
