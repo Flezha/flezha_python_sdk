@@ -190,6 +190,16 @@ def sugar_workflow(order: str) -> str:
     return order
 
 
+@flezha.workflow_operative(
+    id="sugar_workflow_per_input",
+    sink="sugar_workflow_per_input_out",
+    codec="text",
+    loop_mode="per_input",
+)
+def sugar_workflow_per_input(value: str) -> str:
+    return value
+
+
 @flezha.stream_operative(id="sugar_state_only", input="ticks", codec="text")
 class SugarStateOnly(SeenLog):
     """No sink: what it was sent is proven by its state alone."""
@@ -596,6 +606,7 @@ ALL: list[flezha.Operative] = [
     SugarStoreInput,
     sugar_named_input,
     sugar_workflow,
+    sugar_workflow_per_input,
     SugarStateOnly,
     hybrid_channel_operative,
     merged_input_operative,

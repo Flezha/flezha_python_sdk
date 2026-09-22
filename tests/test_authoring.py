@@ -431,22 +431,50 @@ def test_a_bare_re_declared_edge_is_a_no_op_not_a_second_edge() -> None:
     assert [(e.tasklet, len(e.transforms)) for e in channel.consumers] == [(0, 0)]
 
 
-# The reference declares exactly this — `tier_commit_block_workflow` opens with
-# `c.effectively_once()` on a workflow class in Rust and Java — so the flag is
-# read where the workflow spec is assembled rather than defaulted to False. It
-# stays off the wire: the core refuses `effectively_once` on a workflow class,
-# and Java's `HostClassDeclaration.forWorkflow` never writes it either.
+# What an author writes reaches the core whatever the kind, and a setting of
+# the other kind is refused there by its own name rather than dropped here.
 
 
-def test_a_workflow_class_carries_its_effectively_once_declaration() -> None:
-    @flezha.workflow_operative("tier_workflow")
-    def tier_workflow(c: flezha.Channels) -> None:
-        c.effectively_once()
-        c.input("in").into(echo).keyed().sink("out")
+@pytest.mark.parametrize(
+    ("write", "refusal"),
+    [
+        (lambda c: c.effectively_once(), "EffectivelyOnceOnWorkflow"),
+        (lambda c: c.checkpoint_every(500), "CheckpointOnWorkflow"),
+        (lambda c: c.correction_window(60_000), "CorrectionWindowOnWorkflow"),
+    ],
+)
+def test_a_stream_setting_on_a_workflow_is_refused_by_name(
+    write: Callable[[flezha.Channels], object], refusal: str
+) -> None:
+    @flezha.workflow_operative("stream_setting_workflow")
+    def workflow(c: flezha.Channels) -> None:
+        write(c)
+        c.input("in").into(echo)
 
-    declare(tier_workflow)
-    assert tier_workflow.spec.effectively_once is True
-    assert "effectively_once" not in graph.to_host_class_decl(tier_workflow.spec)
+    with pytest.raises(DeclarationError) as refused:
+        declare(workflow)
+    assert refused.value.refusals == [refusal]
+
+
+def test_sync_durability_on_a_stream_is_refused_by_name() -> None:
+    @flezha.stream_operative("sync_stream", sync_durability=True)
+    def stream(c: flezha.Channels) -> None:
+        c.input("in").into(echo).sink("out")
+
+    with pytest.raises(DeclarationError) as refused:
+        declare(stream)
+    assert refused.value.refusals == ["SyncDurabilityOnStream"]
+
+
+@pytest.mark.parametrize(
+    ("keyword", "value"), [("loop_mode", "forever"), ("rollback_mode", "best_effort")]
+)
+def test_a_mode_outside_its_declared_values_is_refused_at_decoration(
+    keyword: str, value: str
+) -> None:
+    written: dict[str, Any] = {keyword: value}
+    with pytest.raises(DeclarationError, match=f"`{keyword}='{value}'`"):
+        flezha.workflow_operative(id="w", **written)
 
 
 # ---------------------------------------------------------------------------
@@ -685,8 +713,13 @@ def test_a_stream_short_form_is_its_hand_written_twin() -> None:
     assert _decodes_text(upcase)
 
 
-def test_a_workflow_short_form_is_its_hand_written_twin() -> None:
-    @flezha.workflow_operative(id="place", sink="placed", input="order", codec="text")
+@pytest.mark.parametrize(
+    ("written", "loop_mode"), [({}, "once"), ({"loop_mode": "per_input"}, "per_input")]
+)
+def test_a_workflow_short_form_is_its_hand_written_twin(
+    written: dict[str, Any], loop_mode: str
+) -> None:
+    @flezha.workflow_operative(id="place", sink="placed", input="order", codec="text", **written)
     def place(order: str) -> str:
         return order
 
@@ -694,14 +727,15 @@ def test_a_workflow_short_form_is_its_hand_written_twin() -> None:
     def place_tasklet(order: str) -> str:
         return order
 
-    @flezha.workflow_operative("place")
+    @flezha.workflow_operative("place", **written)
     def twin(c: flezha.Channels) -> None:
         c.input("order", codec="text").into(place_tasklet).sink("placed")
 
     assert place.kind == "workflow"
     record = graph.to_host_class_decl(place.spec)
     assert record == graph.to_host_class_decl(twin.spec)
-    assert record["workflow"]["loop_mode"] == "once"
+    assert record["workflow"]["loop_mode"] == loop_mode
+    declare(place)
 
 
 def test_a_short_form_with_no_sink_declares_its_entry_and_its_tasklet_only() -> None:
@@ -749,13 +783,14 @@ def test_the_generated_tasklet_composes_in_another_topology() -> None:
     assert [node.name for node in wider.spec.tasklets] == ["upcase", "echo"]
 
 
-@pytest.mark.parametrize("topology", ["channels", "tasklets"])
-def test_a_tasklet_body_beside_a_topology_body_is_refused(topology: str) -> None:
+def test_a_tasklet_body_beside_a_topology_body_is_refused() -> None:
     class Both:
         def run(self, value: str) -> str:
             return value
 
-    setattr(Both, topology, lambda self, c: None)
+        def channels(self, c: flezha.Channels) -> None:
+            return None
+
     with pytest.raises(DeclarationError) as caught:
         flezha.stream_operative(id="both", sink="out")(Both)
 
@@ -840,16 +875,30 @@ def test_a_short_form_keyword_on_a_channels_body_is_refused(keyword: dict[str, A
             c.input("input").into(echo).sink("out")
 
 
-def test_a_keyword_neither_form_takes_is_a_type_error() -> None:
-    with pytest.raises(TypeError, match="name"):
-        flezha.stream_operative(id="upcase", name="upcase")  # type: ignore[call-arg]
+@pytest.mark.parametrize(
+    ("declare_operative", "keyword"),
+    [
+        (flezha.stream_operative, "name"),
+        (flezha.workflow_operative, "retry_attempts"),
+        (flezha.workflow_operative, "retry_backoff_ms"),
+        (flezha.workflow_operative, "barrier_retry_attempts"),
+    ],
+)
+def test_a_keyword_neither_form_takes_is_a_type_error(
+    declare_operative: Callable[..., Any], keyword: str
+) -> None:
+    written: dict[str, Any] = {keyword: 5}
+    with pytest.raises(TypeError, match=keyword):
+        declare_operative(id="upcase", **written)
 
 
 @pytest.mark.parametrize(
     ("declare_operative", "setting"),
     [
         (flezha.stream_operative, {"persistent": False}),
-        (flezha.workflow_operative, {"loop_mode": "per_input"}),
+        (flezha.stream_operative, {"sync_durability": True}),
+        (flezha.workflow_operative, {"rollback_mode": "keep_progress"}),
+        (flezha.workflow_operative, {"max_duration_ms": 60_000}),
     ],
 )
 def test_a_class_setting_on_a_short_form_is_refused(

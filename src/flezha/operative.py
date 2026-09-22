@@ -27,14 +27,26 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
-from typing import Any, Unpack
+from typing import Any, Literal, Unpack, get_args, get_origin
 
 from . import codec as _codec
 from .builder import Channels, ClassSpec
 from .errors import DeclarationError
 from .tasklet import Tasklet, TaskletSettings, output_type, positional_parameters
 
-__all__ = ["Operative", "stream_operative", "workflow_operative"]
+__all__ = ["LoopMode", "Operative", "RollbackMode", "stream_operative", "workflow_operative"]
+
+LoopMode = Literal["once", "per_input", "chained"]
+"""How a workflow iterates: one pass, one per message, or each pass seeding the next."""
+
+RollbackMode = Literal["all_or_nothing", "keep_progress"]
+"""What a failure undoes: every completed tasklet, or the in-flight iteration only."""
+
+#: The workflow facts a workflow class declares beside its channels.
+_WORKFLOW_KEYS = ("loop_mode", "rollback_mode", "max_duration_ms", "wake_after_ms")
+
+#: The one class setting a short form keeps: a loop is still one tasklet.
+_SHORT_FORM_SETTINGS = ("loop_mode",)
 
 
 class Operative:
@@ -87,19 +99,15 @@ class Operative:
         return self._spec
 
     def _build_spec(self) -> ClassSpec:
-        return self._stream_spec() if self.kind == "stream" else self._workflow_spec()
-
-    def _channels(self) -> Channels:
+        """Every flag the builder recorded, for either kind: the core judges which
+        a kind may carry and refuses the rest by name."""
         builder = Channels(self.factory_id)
         self.declaration(builder)
-        return builder
-
-    def _stream_spec(self) -> ClassSpec:
-        builder = self._channels()
+        options = self._options
         return ClassSpec(
             factory_id=self.factory_id,
-            kind="stream",
-            persistent=self._options["persistent"],
+            kind=self.kind,
+            persistent=options["persistent"],
             tasklets=builder.tasklets,
             channels=builder.channels,
             effectively_once=builder.effectively_once_flag,
@@ -110,29 +118,10 @@ class Operative:
             correction_window_ms=builder.correction_window_ms_value,
             beyond_window_policy=builder.beyond_window_policy_value,
             compact_after_bytes=builder.compact_after_bytes_value,
-            sync_durability=builder.sync_durability_flag,
-        )
-
-    def _workflow_spec(self) -> ClassSpec:
-        builder = self._channels()
-        options = self._options
-        return ClassSpec(
-            factory_id=self.factory_id,
-            kind="workflow",
-            persistent=options["persistent"],
-            tasklets=builder.tasklets,
-            channels=builder.channels,
-            effectively_once=builder.effectively_once_flag,
-            sync_durability=bool(options["sync_durability"]) or builder.sync_durability_flag,
-            workflow={
-                "loop_mode": options["loop_mode"],
-                "rollback_mode": options["rollback_mode"],
-                "retry_attempts": options["retry_attempts"],
-                "retry_backoff_ms": options["retry_backoff_ms"],
-                "barrier_retry_attempts": options["barrier_retry_attempts"],
-                "max_duration_ms": options["max_duration_ms"],
-                "wake_after_ms": options["wake_after_ms"],
-            },
+            sync_durability=options["sync_durability"],
+            workflow=(
+                {key: options[key] for key in _WORKFLOW_KEYS} if self.kind == "workflow" else None
+            ),
         )
 
 
@@ -161,8 +150,21 @@ def _operative(
     unknown = sorted(settings.keys() - TaskletSettings.__optional_keys__)
     if unknown:
         raise TypeError(f"{decorator.__name__}() got an unexpected keyword argument {unknown[0]!r}")
-    defaults = inspect.signature(decorator).parameters
-    class_settings = [key for key, value in options.items() if value != defaults[key].default]
+    parameters = inspect.signature(decorator, eval_str=True).parameters
+    for key, value in options.items():
+        # A keyword annotated with a `Literal` takes only the values it spells.
+        annotation = parameters[key].annotation
+        if get_origin(annotation) is Literal and value not in get_args(annotation):
+            raise DeclarationError(
+                factory_id or "<operative>",
+                None,
+                f"`{key}={value!r}` is not one of `{'`, `'.join(get_args(annotation))}`",
+            )
+    class_settings = [
+        key
+        for key, value in options.items()
+        if value != parameters[key].default and key not in _SHORT_FORM_SETTINGS
+    ]
 
     def decorate(declaration: Any) -> Operative:
         name = getattr(declaration, "__name__", "<declaration>")
@@ -209,23 +211,22 @@ def _short_form(
     tasklet named after the factory id and declared with ``settings``, and
     the sink when one is written."""
     name = body.__name__
-    topology = [key for key in ("channels", "tasklets") if hasattr(body, key)]
-    if inspect.isclass(body) and hasattr(body, "run") and topology:
+    if inspect.isclass(body) and hasattr(body, "run") and hasattr(body, "channels"):
         raise DeclarationError(
             factory_id,
             name,
-            f"ShortFormWithTopology: `run` declares this operative's one tasklet, whose "
-            f"topology is generated, and `{topology[0]}` declares a topology of its own; keep "
-            f"one of the two bodies",
+            "ShortFormWithTopology: `run` declares this operative's one tasklet, whose "
+            "topology is generated, and `channels` declares a topology of its own; keep "
+            "one of the two bodies",
             refusals=["ShortFormWithTopology"],
         )
     if class_settings:
         raise DeclarationError(
             factory_id,
             name,
-            f"writes `{'`, `'.join(class_settings)}`; a short form keeps every class setting at "
-            f"its default, so a class setting is declared in the full form, with a "
-            f"`flezha.Channels` body",
+            f"writes `{'`, `'.join(class_settings)}`; a short form keeps every class setting "
+            f"but the loop mode at its default, so a class setting is declared in the full "
+            f"form, with a `flezha.Channels` body",
         )
     generated = Tasklet(body, name=factory_id, **settings)
     returned = output_type(generated)
@@ -252,6 +253,7 @@ def stream_operative(
     id: str | None = None,
     *,
     persistent: bool = True,
+    sync_durability: bool = False,
     sink: str | None = None,
     input: str | None = None,
     codec: _codec.ChannelCodec | None = None,
@@ -260,7 +262,9 @@ def stream_operative(
     """Declare a stream operative: fed by the controller through entry channels.
 
     ``id`` is the factory id. ``persistent`` is whether change bytes are flushed
-    to the per-cell WAL.
+    to the per-cell WAL. ``sync_durability`` is a workflow's setting, reaching
+    the core from here so that it is refused by name (``SyncDurabilityOnStream``)
+    rather than dropped.
 
     Over a tasklet body this is the short form: an entry channel named by
     ``input`` (``"input"`` when none is written) and decoded by ``codec``, the
@@ -272,7 +276,7 @@ def stream_operative(
         stream_operative,
         id,
         "stream",
-        {"persistent": persistent},
+        {"persistent": persistent, "sync_durability": sync_durability},
         {"sink": sink, "input": input, "codec": codec},
         settings,
     )
@@ -282,11 +286,8 @@ def workflow_operative(
     id: str | None = None,
     *,
     persistent: bool = True,
-    loop_mode: str = "once",
-    rollback_mode: str = "all_or_nothing",
-    retry_attempts: int | None = None,
-    retry_backoff_ms: int | None = None,
-    barrier_retry_attempts: int | None = None,
+    loop_mode: LoopMode = "once",
+    rollback_mode: RollbackMode = "all_or_nothing",
     max_duration_ms: int | None = None,
     wake_after_ms: int | None = None,
     sync_durability: bool = False,
@@ -297,8 +298,13 @@ def workflow_operative(
 ) -> Callable[[Any], Operative]:
     """Declare a workflow operative: a chain of tasklets, run once or looping.
 
-    Over a tasklet body this is the short form, a ``once`` workflow that runs
-    its tasklet on its first message; see :func:`stream_operative`.
+    Retry is the edges', as on a stream: ``retry_max`` and ``retry_backoff_ms``
+    on the channel feeding a tasklet. ``loop_mode`` and ``rollback_mode`` outside
+    their declared values are refused here.
+
+    Over a tasklet body this is the short form: a ``once`` workflow that runs
+    its tasklet on its first message, or the ``loop_mode`` written, the one
+    class setting a short form keeps; see :func:`stream_operative`.
     """
     return _operative(
         workflow_operative,
@@ -308,9 +314,6 @@ def workflow_operative(
             "persistent": persistent,
             "loop_mode": loop_mode,
             "rollback_mode": rollback_mode,
-            "retry_attempts": retry_attempts,
-            "retry_backoff_ms": retry_backoff_ms,
-            "barrier_retry_attempts": barrier_retry_attempts,
             "max_duration_ms": max_duration_ms,
             "wake_after_ms": wake_after_ms,
             "sync_durability": sync_durability,

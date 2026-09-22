@@ -38,8 +38,8 @@ FIXTURE = "test/fixtures/reference_topologies.txt"
 
 # The authoring surfaces this builder carries — the same list the app's
 # `conformance.json` declares. A row needing anything else is skipped BY NAME,
-# which is what makes the skip checkable. The class flag a typed builder cannot
-# spell is a plain builder call here.
+# which is what makes the skip checkable. The class flag a typed stream builder
+# cannot spell is a decorator keyword here, on either kind.
 SURFACES = (
     "merge",
     "branch",
@@ -203,18 +203,17 @@ class Interpreter:
     def _class_flag(self, builder: flezha.Channels, rest: str) -> None:
         """``class.<flag>[(<value>)]`` — the facts the class declares.
 
-        ``persistent`` and ``workflow`` are operative-level declarations, read
-        as the row's operative was minted rather than called on the builder.
+        ``persistent``, ``sync_durability`` and ``workflow`` are operative-level
+        declarations, read as the row's operative was minted rather than called
+        on the builder.
         """
         flag, value = split_call(rest)
-        if flag in ("persistent", "workflow"):
+        if flag in ("persistent", "sync_durability", "workflow"):
             return
         if flag == "effectively_once":
             builder.effectively_once()
         elif flag == "checkpoint_ack":
             builder.checkpoint_ack()
-        elif flag == "sync_durability":
-            builder.sync_durability()
         elif flag == "checkpoint_every":
             builder.checkpoint_every(int(value))
         elif flag == "correction_window":
@@ -282,8 +281,10 @@ def rows() -> list[dict[str, str]]:
 def operative_for(row: dict[str, str]) -> flezha.Operative:
     """A row's operative. The cited twins are this app's own; the rest are built.
 
-    Fresh per row: an operative memoises its own spec, and `persistent` and the
-    class kind are declarations rather than builder calls.
+    Fresh per row: an operative memoises its own spec, and `persistent`,
+    `sync_durability` and the class kind are declarations rather than builder
+    calls. A `class.workflow` row is a real workflow declaration carrying the
+    row's builder flags, so the core judges what that kind may carry.
     """
     if row["topology"] in CITED:
         return CITED[row["topology"]]
@@ -295,7 +296,11 @@ def operative_for(row: dict[str, str]) -> flezha.Operative:
         interpreter.declare(c)
 
     channels.__name__ = row["topology"]
-    return declare(row["topology"], persistent="class.persistent" in row["steps"])(channels)
+    return declare(
+        row["topology"],
+        persistent="class.persistent" in row["steps"],
+        sync_durability="class.sync_durability" in row["steps"],
+    )(channels)
 
 
 def channels_of(derived: dict[str, Any]) -> list[dict[str, Any]]:

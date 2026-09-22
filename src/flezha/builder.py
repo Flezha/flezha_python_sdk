@@ -212,7 +212,6 @@ class Channels:
         self.correction_window_ms_value: int | None = None
         self.beyond_window_policy_value = "process_as_arrival"
         self.compact_after_bytes_value: int | None = None
-        self.sync_durability_flag = False
         self.merge_groups = 0
 
     # -- class-level declarations ----------------------------------------
@@ -256,10 +255,6 @@ class Channels:
 
     def compact_after_bytes(self, size: int) -> Channels:
         self.compact_after_bytes_value = size
-        return self
-
-    def sync_durability(self) -> Channels:
-        self.sync_durability_flag = True
         return self
 
     # -- the graph --------------------------------------------------------

@@ -17,6 +17,7 @@ __all__ = [
     "SpawnError",
     "SpawnAlreadyRunningError",
     "SpawnFactoryUnknownError",
+    "SpawnFactoryNotWorkflowError",
     "SpawnRefusedError",
     "SpawnTimeoutError",
     "SpawnUnavailableError",
@@ -89,7 +90,7 @@ class EmitError(FlezhaError):
     """An emit the declaration cannot carry.
 
     A channel the tasklet does not produce on, a reserved metadata key, a
-    keyed channel with no key.
+    keyed channel with no key, a timer inside a workflow.
     """
 
 
@@ -148,6 +149,12 @@ class SpawnFactoryUnknownError(SpawnError):
     """No connected runner registers the requested factory."""
 
     reason = "factory_unknown"
+
+
+class SpawnFactoryNotWorkflowError(SpawnError):
+    """The requested factory is registered, as a stream: only a workflow spawns."""
+
+    reason = "factory_not_workflow"
 
 
 class SpawnRefusedError(SpawnError):

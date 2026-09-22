@@ -236,21 +236,22 @@ class Ctx(Generic[S]):
         """Register a processing-time timer ``milliseconds`` from ``now``.
 
         Anchored on ``now`` and never on an ambient read: that is what makes a
-        replayed invocation register the timestamp the live one did.
+        replayed invocation register the timestamp the live one did. Inside a
+        workflow each timer call raises naming ``TimersUnavailable``.
         """
         at = self._now + int(milliseconds)
-        self.timers.append({"kind": "processing_time", "scheduled_at": at, "register": True})
+        self._timer({"kind": "processing_time", "scheduled_at": at, "register": True})
         return at
 
     def timer_at_event_time(self, at: int) -> int:
         """Register an event-time timer at an absolute time."""
         at = int(at)
-        self.timers.append({"kind": "event_time", "scheduled_at": at, "register": True})
+        self._timer({"kind": "event_time", "scheduled_at": at, "register": True})
         return at
 
     def cancel_timer(self, kind: str, at: int) -> None:
         """Cancel a registered timer by the value its registration answered."""
-        self.timers.append({"kind": kind, "scheduled_at": int(at), "register": False})
+        self._timer({"kind": kind, "scheduled_at": int(at), "register": False})
 
     def checkpoint(self) -> None:
         """Close the open checkpoint interval (checkpoint ack-granularity classes)."""
@@ -335,6 +336,14 @@ class Ctx(Generic[S]):
         }
 
     # -- internals -----------------------------------------------------------
+
+    def _timer(self, operation: dict[str, Any]) -> None:
+        if self._spec.kind == "workflow":
+            raise EmitError(
+                f"TimersUnavailable: {self._node.name}: timers are not available inside a "
+                f"workflow; only a stream operative's tasklets may register or cancel them"
+            )
+        self.timers.append(operation)
 
     def _release(
         self,

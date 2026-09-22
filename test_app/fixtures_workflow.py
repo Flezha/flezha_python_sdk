@@ -243,11 +243,10 @@ def optout_commit_block(c: flezha.Channels) -> None:
 
 # -- tier_commit_block_workflow ----------------------------------------------
 #
-# The effectively-once fixture. Task A commits durable state AND emits
-# `committed:<input>` under a stable key on a keyed hybrid channel, captured
-# into the atomic effect record; task B blocks. A SIGKILL lands with A's effect
-# record durable and B unfinished, and the resume re-runs A — the change is
-# idempotent and the re-emit deterministic.
+# The keyed hybrid twin. Task A commits durable state AND emits
+# `committed:<input>` under a stable key on a keyed hybrid channel; task B
+# blocks. A SIGKILL lands with A's stage committed and B unfinished, and the
+# resume re-runs B alone.
 
 tier_commit_a = durable_step(
     "tier_commit_a",
@@ -257,7 +256,6 @@ tier_commit_a = durable_step(
 
 @flezha.workflow_operative("tier_commit_block_workflow")
 def tier_commit_block_workflow(c: flezha.Channels) -> None:
-    c.effectively_once()
     c.input("in", codec="text").into(tier_commit_a).keyed().sink("mid").into(block_b)
 
 
@@ -370,9 +368,7 @@ async def _branch_leaf(value: str, ctx: flezha.Ctx[None]) -> None:
 branch_d = stateless_step("branch_d", _branch_leaf)
 
 
-# Fail fast: the compensation scenario is about the rollback order, not the
-# ladder that precedes it.
-@flezha.workflow_operative("branch_workflow", retry_attempts=0)
+@flezha.workflow_operative("branch_workflow")
 def branch_workflow(c: flezha.Channels) -> None:
     # One channel, two consumers: THE fan-out. Both branches read exactly what
     # BranchA released on it (held edge, wired twice).
@@ -381,9 +377,10 @@ def branch_workflow(c: flezha.Channels) -> None:
         .into(branch_a)
         .sink("mid", encode=lambda value: f"a:{value}".encode())
     )
-    mid.into(branch_b).sink("bmid", encode=lambda value: f"b:{value}".encode()).into(branch_d).sink(
-        "d_out"
-    )
+    bmid = mid.into(branch_b).sink("bmid", encode=lambda value: f"b:{value}".encode())
+    # Fail fast into the one tasklet that fails: the compensation scenario is
+    # about the rollback order, not the ladder that precedes it.
+    bmid.retry_max(1).into(branch_d).sink("d_out")
     mid.into(branch_c).sink("c_out")
 
 
@@ -665,6 +662,25 @@ def bench_loop_workflow(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(bench_turn).named("mid").into(chat_reply).sink("out")
 
 
+# -- workflow_timer_refused --------------------------------------------------
+#
+# A tasklet that registers a timer inside a workflow. Timers do not fire there
+# yet, so the ctx refuses naming `TimersUnavailable` and the instance ends in
+# error rather than losing the timer.
+
+
+def _arm_timer(value: str, ctx: flezha.Ctx[None]) -> None:
+    ctx.timer_after(60_000)
+
+
+workflow_timer = stateless_step("workflow_timer_refused", _arm_timer)
+
+
+@flezha.workflow_operative("workflow_timer_refused")
+def workflow_timer_refused(c: flezha.Channels) -> None:
+    c.input("input", codec="text").into(workflow_timer)
+
+
 #: Every workflow operative this app registers, in the reference's order.
 ALL: list[flezha.Operative] = [
     echo_workflow,
@@ -688,4 +704,5 @@ ALL: list[flezha.Operative] = [
     bench_chain_16,
     bench_chain_optout_4,
     bench_loop_workflow,
+    workflow_timer_refused,
 ]

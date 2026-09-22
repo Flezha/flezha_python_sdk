@@ -49,7 +49,6 @@ class Admin:
         factory_id: str,
         *,
         id: str | None = None,
-        kind: str | None = None,
         init_values: Any = None,
         opts: Any = None,
     ) -> StartResult:
@@ -63,8 +62,6 @@ class Admin:
         fields: dict[str, Any] = {"factory_id": factory_id}
         if id is not None:
             fields["id"] = id
-        if kind is not None:
-            fields["kind"] = kind
         if init_values is not None:
             fields["init_values"] = init_values
         if opts is not None:

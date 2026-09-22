@@ -354,6 +354,49 @@ def test_a_failed_item_carries_no_completion(fake_core: FakeCore) -> None:
     assert "complete" not in effect
 
 
+# -- timers inside a workflow ------------------------------------------------
+#
+# Refused by name until they fire there, so a timer is never folded away.
+
+
+@flezha.tasklet(name="timer_setter")
+def _timer_setter(call: str, ctx: flezha.Ctx[None]) -> None:
+    if call == "after":
+        ctx.timer_after(60_000)
+    elif call == "event_time":
+        ctx.timer_at_event_time(60_000)
+    else:
+        ctx.cancel_timer("processing_time", 60_000)
+
+
+@flezha.workflow_operative("timer_workflow")
+def _timer_workflow(c: flezha.Channels) -> None:
+    c.input("in").into(_timer_setter)
+
+
+@flezha.stream_operative("timer_stream")
+def _timer_stream(c: flezha.Channels) -> None:
+    c.input("in").into(_timer_setter)
+
+
+@pytest.mark.parametrize("call", ["after", "event_time", "cancel"])
+def test_a_timer_call_inside_a_workflow_is_refused_naming_timers_unavailable(
+    fake_core: FakeCore, call: str
+) -> None:
+    deps = deps_for(_timer_workflow, fake_core)
+    (effect,) = answered(work_activation(22, call, factory="timer_workflow"), deps)["effects"]
+    assert effect["verdict"] == "retryable"
+    assert "TimersUnavailable" in effect["message"]
+    assert "timers" not in effect
+
+
+def test_a_stream_tasklet_still_registers_its_timer(fake_core: FakeCore) -> None:
+    deps = deps_for(_timer_stream, fake_core)
+    (effect,) = answered(work_activation(23, "after", factory="timer_stream"), deps)["effects"]
+    assert effect["verdict"] == "ok"
+    assert [timer["register"] for timer in effect["timers"]] == [True]
+
+
 def test_a_compensation_runs_over_the_recorded_outputs(fake_core: FakeCore) -> None:
     seen: list[Any] = []
     deps = solo_deps(compensating(seen), fake_core)
@@ -789,6 +832,7 @@ def test_a_spawn_payload_is_what_a_text_or_json_entry_reads(fake_core: FakeCore)
     [
         ("already_running", flezha.SpawnAlreadyRunningError),
         ("factory_unknown", flezha.SpawnFactoryUnknownError),
+        ("factory_not_workflow", flezha.SpawnFactoryNotWorkflowError),
         ("refused", flezha.SpawnRefusedError),
         ("timeout", flezha.SpawnTimeoutError),
         ("unavailable", flezha.SpawnUnavailableError),

@@ -17,7 +17,7 @@ import contract
 import flezha
 from conftest import declare, echo
 from flezha import graph
-from flezha.builder import ClassSpec, Link
+from flezha.builder import Link
 
 _FIXTURE = contract.member("test/fixtures/host_class_decl_keys.txt")
 
@@ -119,10 +119,7 @@ def static_key(c: flezha.Channels) -> None:
 @flezha.workflow_operative(
     "every_workflow_key",
     loop_mode="chained",
-    rollback_mode="best_effort",
-    retry_attempts=3,
-    retry_backoff_ms=250,
-    barrier_retry_attempts=2,
+    rollback_mode="keep_progress",
     max_duration_ms=600_000,
     wake_after_ms=30_000,
     sync_durability=True,
@@ -219,15 +216,13 @@ def test_flat_map_records_the_link_map_records() -> None:
     )
 
 
-# --- the keys a workflow class may not put on the wire ----------------------
+# --- what the author wrote reaches the core, whatever the kind -------------
 #
-# ``flz_core::host::register::refuse_workflow_facts`` refuses
-# ``effectively_once`` and ``correction_window_ms`` on a workflow class
-# outright, and ``refuse_tier_facts`` refuses the checkpoint family without the
-# checkpoint acknowledgement the first refusal leaves unreachable there. One
-# builder serves both kinds, so the gate lives in it.
+# ``flz_core::host::register::refuse_workflow_facts`` names each stream-only
+# key a workflow class may not carry. This builder puts every one on the wire
+# for either kind, so the refusal is the core's, by name, and never a drop.
 
-_REFUSED_ON_WORKFLOW = (
+_STREAM_ONLY = (
     "effectively_once",
     "checkpoint_ack",
     "checkpoint_every",
@@ -238,26 +233,17 @@ _REFUSED_ON_WORKFLOW = (
 )
 
 
-def _tier_spec(kind: str) -> ClassSpec:
-    """The stream fixture's spec re-kinded: every refused key populated at once."""
-    return dataclasses.replace(
+def test_every_stream_setting_reaches_the_wire_on_a_workflow() -> None:
+    """The stream fixture's spec re-kinded: every stream-only key populated at once."""
+    workflow = dataclasses.replace(
         every_key.spec,
-        factory_id=f"tier_{kind}",
-        kind=kind,
-        workflow=every_workflow_key.spec.workflow if kind == "workflow" else None,
+        factory_id="tier_workflow",
+        kind="workflow",
+        workflow=every_workflow_key.spec.workflow,
     )
-
-
-def test_a_workflow_class_declares_none_of_the_keys_the_core_refuses() -> None:
-    decl = graph.to_host_class_decl(_tier_spec("workflow"))
-    emitted = [key for key in _REFUSED_ON_WORKFLOW if key in decl]
-    assert not emitted, f"keys the core refuses on a workflow class: {emitted}"
-
-
-def test_a_stream_class_still_declares_every_one_of_them() -> None:
-    decl = graph.to_host_class_decl(_tier_spec("stream"))
-    missing = [key for key in _REFUSED_ON_WORKFLOW if key not in decl]
-    assert not missing, f"stream keys the gate dropped: {missing}"
+    decl = graph.to_host_class_decl(workflow)
+    dropped = [key for key in _STREAM_ONLY if key not in decl]
+    assert not dropped, f"keys dropped before the core could judge them: {dropped}"
 
 
 # --- the cross-language topology golden -------------------------------------
@@ -346,7 +332,6 @@ block_b = flezha.tasklet(BlockB, name="block_b")
 
 @flezha.workflow_operative("commit_block_chain")
 def commit_block_chain(c: flezha.Channels) -> None:
-    c.effectively_once()
     c.input("in").into(tier_commit_a).keyed().sink("mid", encode=_bytes).into(block_b)
 
 
