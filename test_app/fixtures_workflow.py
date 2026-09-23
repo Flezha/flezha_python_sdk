@@ -24,6 +24,7 @@ from collections.abc import Callable
 from typing import Any
 
 import flezha
+from fixture_support import prefix
 
 # -- the release gate --------------------------------------------------------
 
@@ -611,6 +612,33 @@ def stateless_loop_workflow(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(chat_reply).sink("out")
 
 
+# keyed_loop_workflow is a durable per-input loop keyed on its entry edge by
+# the text before the first `:`, so one Cell counts one symbol's messages and
+# emits `<symbol>:<count>`: the shape a partition group of workflow members
+# takes.
+class KeyedLoopCount:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+        return {"value": 0}
+
+    def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
+        state["value"] += change["delta"]
+
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+        symbol = prefix(value)
+        ctx.change({"delta": 1})
+        ctx.emit(f"{symbol}:{ctx.state['value']}")
+
+
+keyed_loop_count = flezha.tasklet(KeyedLoopCount, name="keyed_loop_count", dynamic_cells=True)
+
+
+@flezha.workflow_operative("keyed_loop_workflow", **LOOP_KNOBS)
+def keyed_loop_workflow(c: flezha.Channels) -> None:
+    c.input("trades", codec="text").key_by(prefix).into(keyed_loop_count).sink(
+        "keyed_loop_workflow_out"
+    )
+
+
 @flezha.workflow_operative("chat_rewind_workflow", **LOOP_KNOBS)
 def chat_rewind_workflow(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(chat_turn).named("mid").into(chat_reply_undoable).sink("out")
@@ -842,6 +870,7 @@ ALL: list[flezha.Operative] = [
     undo_outbox_workflow,
     chat_loop_workflow,
     stateless_loop_workflow,
+    keyed_loop_workflow,
     chat_rewind_workflow,
     reply_block_loop_workflow,
     retry_workflow,
