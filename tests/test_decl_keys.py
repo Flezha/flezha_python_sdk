@@ -121,7 +121,6 @@ def static_key(c: flezha.Channels) -> None:
     loop_mode="chained",
     rollback_mode="keep_progress",
     max_duration_ms=600_000,
-    wake_after_ms=30_000,
     sync_durability=True,
 )
 def every_workflow_key(c: flezha.Channels) -> None:

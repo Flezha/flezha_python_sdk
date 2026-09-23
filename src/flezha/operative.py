@@ -43,7 +43,7 @@ RollbackMode = Literal["all_or_nothing", "keep_progress"]
 """What a failure undoes: every completed tasklet, or the in-flight iteration only."""
 
 #: The workflow facts a workflow class declares beside its channels.
-_WORKFLOW_KEYS = ("loop_mode", "rollback_mode", "max_duration_ms", "wake_after_ms")
+_WORKFLOW_KEYS = ("loop_mode", "rollback_mode", "max_duration_ms")
 
 #: The one class setting a short form keeps: a loop is still one tasklet.
 _SHORT_FORM_SETTINGS = ("loop_mode",)
@@ -303,7 +303,6 @@ def workflow_operative(
     loop_mode: LoopMode = "once",
     rollback_mode: RollbackMode = "all_or_nothing",
     max_duration_ms: int | None = None,
-    wake_after_ms: int | None = None,
     sync_durability: bool = False,
     sink: str | None = None,
     input: str | None = None,
@@ -331,7 +330,6 @@ def workflow_operative(
             "loop_mode": loop_mode,
             "rollback_mode": rollback_mode,
             "max_duration_ms": max_duration_ms,
-            "wake_after_ms": wake_after_ms,
             "sync_durability": sync_durability,
         },
         {"sink": sink, "input": input, "codec": codec},

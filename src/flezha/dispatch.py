@@ -316,6 +316,7 @@ async def invoke(
         state=cell.state,
         bridge=deps.bridge,
         token=activation["token"],
+        compensating=activation.get("kind") == "compensate_run",
     )
     try:
         with determinism.invocation():

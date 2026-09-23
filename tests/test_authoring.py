@@ -910,6 +910,7 @@ def test_a_short_form_keyword_on_a_channels_body_is_refused(keyword: dict[str, A
         (flezha.workflow_operative, "retry_attempts"),
         (flezha.workflow_operative, "retry_backoff_ms"),
         (flezha.workflow_operative, "barrier_retry_attempts"),
+        (flezha.workflow_operative, "wake_after_ms"),
     ],
 )
 def test_a_keyword_neither_form_takes_is_a_type_error(

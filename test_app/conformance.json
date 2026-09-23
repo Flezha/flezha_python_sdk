@@ -113,7 +113,8 @@
       "bench_chain_16",
       "bench_chain_optout_4",
       "bench_loop_workflow",
-      "workflow_timer_refused",
+      "timer_loop_workflow",
+      "event_timer_workflow",
       "static_cell_workflow"
     ],
     "dynamic_cell": [

@@ -126,6 +126,7 @@ class Ctx(Generic[S]):
         "_identity",
         "_ordinal",
         "_emit_ordinal",
+        "_compensating",
         "changes",
         "outputs",
         "timers",
@@ -150,6 +151,7 @@ class Ctx(Generic[S]):
         state: S,
         bridge: Core | Any,
         token: int,
+        compensating: bool = False,
     ) -> None:
         self._spec = spec
         self._node = node
@@ -166,6 +168,7 @@ class Ctx(Generic[S]):
         # and a handler that does one and not the other must not shift the
         # sequence the sink deduplicates on.
         self._emit_ordinal = 0
+        self._compensating = compensating
         self.cell_key = cell_key
         self.replay = replay
         #: The cell's state. Mutated only through :meth:`change`: a field
@@ -237,7 +240,7 @@ class Ctx(Generic[S]):
 
         Anchored on ``now`` and never on an ambient read: that is what makes a
         replayed invocation register the timestamp the live one did. Inside a
-        workflow each timer call raises naming ``TimersUnavailable``.
+        ``compensate`` hook each timer call raises naming ``TimersUnavailable``.
         """
         at = self._now + int(milliseconds)
         self._timer({"kind": "processing_time", "scheduled_at": at, "register": True})
@@ -338,10 +341,11 @@ class Ctx(Generic[S]):
     # -- internals -----------------------------------------------------------
 
     def _timer(self, operation: dict[str, Any]) -> None:
-        if self._spec.kind == "workflow":
+        # A rollback is no place to arm a deadline.
+        if self._compensating:
             raise EmitError(
-                f"TimersUnavailable: {self._node.name}: timers are not available inside a "
-                f"workflow; only a stream operative's tasklets may register or cancel them"
+                f"TimersUnavailable: {self._node.name}: timers are not available inside "
+                f"compensate; only a tasklet's run / on_timer may register or cancel them"
             )
         self.timers.append(operation)
 

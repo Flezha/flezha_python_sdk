@@ -670,7 +670,9 @@ bench_chain_optout_4 = bench_chain("bench_chain_optout_4", 4, False)
 #
 # The long-lived loop the `turns` scenario drives: the chat loop's shape with a
 # BOUNDED per-turn state, so a million-turn soak snapshots the same few bytes at
-# every iteration, and a wake deadline for the timer-wake measurements.
+# every iteration. With `FLEZHA_BENCH_WAKE_AFTER_MS` set each turn arms a timer
+# that far out, whose firing sends the bench's wake marker, `wake:<fired_at>`,
+# for the timer-wake measurements.
 
 WAKE_AFTER_ENV = "FLEZHA_BENCH_WAKE_AFTER_MS"
 
@@ -685,15 +687,16 @@ class BenchTurn:
 
     def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
         ctx.change({"turn": value})
+        after = os.environ.get(WAKE_AFTER_ENV, "")
+        if after.isdigit():
+            ctx.timer_after(int(after))
         ctx.emit(value)
+
+    def on_timer(self, timer: dict[str, Any], ctx: flezha.Ctx[dict[str, Any]]) -> None:
+        ctx.emit(f"wake:{timer['scheduled_at']}")
 
 
 bench_turn = flezha.tasklet(BenchTurn, name="bench_turn")
-
-
-def _wake_after_ms() -> int | None:
-    declared = os.environ.get(WAKE_AFTER_ENV, "")
-    return int(declared) if declared.isdigit() and int(declared) > 0 else None
 
 
 # A day, not the chat loop's ten minutes: a soak outlives 600 s.
@@ -701,29 +704,102 @@ def _wake_after_ms() -> int | None:
     "bench_loop_workflow",
     loop_mode="per_input",
     max_duration_ms=24 * 3_600_000,
-    wake_after_ms=_wake_after_ms(),
 )
 def bench_loop_workflow(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(bench_turn).named("mid").into(chat_reply).sink("out")
 
 
-# -- workflow_timer_refused --------------------------------------------------
+# -- timer_loop_workflow -----------------------------------------------------
 #
-# A tasklet that registers a timer inside a workflow. Timers do not fire there
-# yet, so the ctx refuses naming `TimersUnavailable` and the instance ends in
-# error rather than losing the timer.
+# `in -> tick -> relay -> out`, a per-input loop whose `tick` arms a
+# processing-time timer of the delay `after:<ms>` names and emits `armed:<at>`;
+# its firing emits `fired:<at>` and opens a pass of its own. `slow:<ms>` holds
+# `tick` that long, for a firing due mid-pass (workflow.rs). On a runner booted
+# with `FLEZHA_WORKFLOW_E2E_HOLD` the firing parks at the gate: `timer` inside
+# `on_timer`, before `tick` commits; `relay` in `relay`, after.
 
 
-def _arm_timer(value: str, ctx: flezha.Ctx[None]) -> None:
-    ctx.timer_after(60_000)
+def _millis(value: str, prefix: str) -> int:
+    rest = value[len(prefix) :]
+    return int(rest) if rest.isdigit() else 0
 
 
-workflow_timer = stateless_step("workflow_timer_refused", _arm_timer)
+class TimerTick:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+        return {"items": []}
+
+    def apply_change(self, state: dict[str, Any], recorded: dict[str, Any]) -> None:
+        insert_sorted(state["items"], recorded["insert"])
+
+    async def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+        if value.startswith("after:"):
+            at = ctx.timer_after(_millis(value, "after:"))
+            ctx.change({"insert": f"armed:{at}"})
+            ctx.emit(f"armed:{at}")
+            return
+        if value.startswith("slow:"):
+            await asyncio.sleep(_millis(value, "slow:") / 1000)
+        ctx.emit(value)
+
+    async def on_timer(self, timer: dict[str, Any], ctx: flezha.Ctx[dict[str, Any]]) -> None:
+        await _hold_at("timer")
+        ctx.emit(f"fired:{timer['scheduled_at']}")
 
 
-@flezha.workflow_operative("workflow_timer_refused")
-def workflow_timer_refused(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(workflow_timer)
+async def _hold_at(point: str) -> None:
+    """Park at ``point`` when this runner was booted to hold there, until the release."""
+    if os.environ.get("FLEZHA_WORKFLOW_E2E_HOLD") == point:
+        await block_until_released()
+
+
+async def _relay(value: str, ctx: flezha.Ctx[None]) -> None:
+    if value.startswith("fired:"):
+        await _hold_at("relay")
+    ctx.emit(f"relay:{value}")
+
+
+timer_tick = flezha.tasklet(TimerTick, name="tick")
+timer_relay = stateless_step("relay", _relay)
+
+
+@flezha.workflow_operative("timer_loop_workflow", **LOOP_KNOBS)
+def timer_loop_workflow(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(timer_tick).named("ticked").into(timer_relay).sink("out")
+
+
+# -- event_timer_workflow ----------------------------------------------------
+#
+# An entry-fed tasklet whose clock is the message's leading event time; each
+# message arms an event-time timer 100 later and emits `seen:<t>`, and the
+# firing emits `fired:<at>` (workflow.rs).
+
+
+class EventTick:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+        return {"items": []}
+
+    def apply_change(self, state: dict[str, Any], recorded: dict[str, Any]) -> None:
+        insert_sorted(state["items"], recorded["insert"])
+
+    def event_time(self, value: str) -> int:
+        leading = value.split(":", 1)[0]
+        return int(leading) if leading.isdigit() else 0
+
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+        at = ctx.timer_at_event_time(ctx.now() + 100)
+        ctx.change({"insert": f"armed:{at}"})
+        ctx.emit(f"seen:{ctx.now()}")
+
+    def on_timer(self, timer: dict[str, Any], ctx: flezha.Ctx[dict[str, Any]]) -> None:
+        ctx.emit(f"fired:{timer['scheduled_at']}")
+
+
+event_tick = flezha.tasklet(EventTick, name="event_tick", clock="event_time")
+
+
+@flezha.workflow_operative("event_timer_workflow", **LOOP_KNOBS)
+def event_timer_workflow(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(event_tick).sink("out")
 
 
 # -- static_cell_workflow ----------------------------------------------------
@@ -776,6 +852,7 @@ ALL: list[flezha.Operative] = [
     bench_chain_16,
     bench_chain_optout_4,
     bench_loop_workflow,
-    workflow_timer_refused,
     static_cell_workflow,
+    timer_loop_workflow,
+    event_timer_workflow,
 ]

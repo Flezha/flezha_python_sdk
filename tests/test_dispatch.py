@@ -356,7 +356,8 @@ def test_a_failed_item_carries_no_completion(fake_core: FakeCore) -> None:
 
 # -- timers inside a workflow ------------------------------------------------
 #
-# Refused by name until they fire there, so a timer is never folded away.
+# A workflow tasklet arms and cancels timers exactly as a stream one does; only
+# a compensate hook refuses them.
 
 
 @flezha.tasklet(name="timer_setter")
@@ -379,15 +380,45 @@ def _timer_stream(c: flezha.Channels) -> None:
     c.input("in").into(_timer_setter)
 
 
-@pytest.mark.parametrize("call", ["after", "event_time", "cancel"])
-def test_a_timer_call_inside_a_workflow_is_refused_naming_timers_unavailable(
-    fake_core: FakeCore, call: str
+@pytest.mark.parametrize(
+    ("call", "operation"),
+    [
+        ("after", {"kind": "processing_time", "scheduled_at": 60_000, "register": True}),
+        ("event_time", {"kind": "event_time", "scheduled_at": 60_000, "register": True}),
+        ("cancel", {"kind": "processing_time", "scheduled_at": 60_000, "register": False}),
+    ],
+)
+def test_a_timer_call_inside_a_workflow_reaches_the_item_effect(
+    fake_core: FakeCore, call: str, operation: dict[str, Any]
 ) -> None:
     deps = deps_for(_timer_workflow, fake_core)
     (effect,) = answered(work_activation(22, call, factory="timer_workflow"), deps)["effects"]
-    assert effect["verdict"] == "retryable"
-    assert "TimersUnavailable" in effect["message"]
-    assert "timers" not in effect
+    assert effect["verdict"] == "ok"
+    assert effect["timers"] == [operation]
+
+
+class _ArmsOnUndo:
+    def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
+        ctx.emit(value)
+
+    def compensate(self, outputs: list[Any], ctx: flezha.Ctx[None]) -> None:
+        ctx.timer_after(1_000)
+
+
+def test_a_timer_call_inside_a_compensate_hook_is_refused(fake_core: FakeCore) -> None:
+    deps = solo_deps(flezha.tasklet(_ArmsOnUndo, name="arms_on_undo"), fake_core)
+    activation = {
+        "token": 24,
+        "operative": "op",
+        "tasklet": 0,
+        "change_seq": 0,
+        "factory": "solo",
+        "kind": "compensate_run",
+        "outputs": [],
+    }
+    result = answered(activation, deps)
+    assert result["outcome"] == "failed"
+    assert "TimersUnavailable: arms_on_undo" in result["error"]
 
 
 def test_a_stream_tasklet_still_registers_its_timer(fake_core: FakeCore) -> None:
