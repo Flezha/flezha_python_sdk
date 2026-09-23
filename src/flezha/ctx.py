@@ -38,9 +38,10 @@ RESERVED_PREFIX = "flz."
 
 #: The identity stamps a non-tier keyed plugin emit carries.
 #:
-#: Under the effectively-once tier the controller derives them at flush time
-#: from the effect record, so none ride on the frame; off the tier the frame is
-#: written straight to the wire and the stamps have nowhere else to come from.
+#: Under the effectively-once tier, and for a durable workflow, the controller
+#: derives them at flush time from the effect record, so none ride on the frame;
+#: otherwise the frame is written straight to the wire and the stamps have
+#: nowhere else to come from.
 #: Byte-shape and condition both mirror the Java host, because a sink
 #: deduplicates on them and two SDKs disagreeing about the shape is a sink that
 #: silently stops deduplicating.
@@ -454,13 +455,14 @@ class Ctx(Generic[S]):
         }
 
     def _identity_stamps(self, channel: ChannelSpec, key: str | None) -> list[tuple[str, str]]:
-        """The output identity a keyed plugin frame carries, off the tier.
+        """The output identity a keyed plugin frame carries when the class
+        records no effects.
 
         Applied after user metadata, which is what makes them unspoofable: the
         reserved namespace is refused on the way in, and these are written on
         the way out.
         """
-        if not channel.keyed or self._spec.effectively_once:
+        if not channel.keyed or self._spec.records_effects:
             return []
         return [
             (CELL_STAMP, f"{self._operative}/{self._node.name}/{self.cell_key or ''}"),

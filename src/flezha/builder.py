@@ -197,6 +197,13 @@ class ClassSpec:
         """
         return self.kind == "workflow"
 
+    @property
+    def records_effects(self) -> bool:
+        """Whether each invocation's output rides one effect record the
+        controller stamps at flush: under the effectively-once tier, and for a
+        durable workflow, whose stage commit names the record."""
+        return self.effectively_once or (self.kind == "workflow" and self.persistent)
+
 
 class Channels:
     """The fluent builder an operative's declaration function receives."""

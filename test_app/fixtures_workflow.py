@@ -327,30 +327,33 @@ def keyed_saga_workflow(c: flezha.Channels) -> None:
 
 # -- outbox_block_workflow ---------------------------------------------------
 #
-# The transactional outbox. Task A commits durable state AND emits plugin-bound
-# output on a hybrid channel — STAGED, so it reaches the sink only after the
-# controller has journaled and fsynced A's committed entry with the output
-# inside it and flushed the outbox. Task B blocks, so a SIGKILL lands with A
-# committed and flushed and B unfinished.
+# A workflow output's identity. Task A commits durable state AND emits once,
+# keyed `k` with one metadata pair, on a keyed hybrid channel; the output rides
+# A's Cell record and reaches the sink once A's stage commits. Task B blocks, so
+# a SIGKILL lands with A committed and B unfinished.
+
+outbox_a = durable_step(
+    "commit_a",
+    emit=lambda value, ctx: ctx.emit(value, key="k", metadata={"trace": "t1"}),
+)
 
 
 @flezha.workflow_operative("outbox_block_workflow")
 def outbox_block_workflow(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(commit_a).sink(
+    c.input("in", codec="text").into(outbox_a).keyed().sink(
         "mid", encode=lambda value: f"a-out:{value}".encode()
     ).into(block_b)
 
 
 # -- undo_outbox_workflow ----------------------------------------------------
 #
-# The compensation half of the transactional outbox. Task UA commits, emits its
-# forward output on a hybrid plugin channel, and compensates by EMITTING an undo
-# record — plugin-bound, so it is staged and rides a compensated journal entry
-# rather than the wire. Task C fails immediately, so the chain always rolls
-# back; the hook BLOCKS, so on the first runner the undo is
-# emitted-but-never-journaled when the SIGKILL lands, proving staged undo output
-# cannot leak. The respawn re-runs the outstanding hook, whose done marker never
-# landed, and the undo is delivered exactly once.
+# A compensation's undo output. Task UA commits, emits its forward output on a
+# hybrid plugin channel, and compensates by EMITTING an undo record, which rides
+# UA's Cell's own record and is released once the `compensated` entry naming it
+# is durable. Task C fails immediately, so the chain always rolls back; the hook
+# BLOCKS, so on the first runner the SIGKILL lands before the undo was written.
+# The respawn re-runs the outstanding hook, whose done marker never landed, and
+# the undo is delivered exactly once.
 
 
 async def _undo_after_release(outputs: list[Any], ctx: flezha.Ctx[Any]) -> None:
@@ -367,6 +370,30 @@ def undo_outbox_workflow(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(undo_outbox_a).sink(
         "mid", encode=lambda value: f"out:{value}".encode()
     ).into(undo_outbox_c)
+
+
+# -- failed_stage_workflow ---------------------------------------------------
+#
+# A failed stage delivers nothing. The entry's two values reach one
+# `failed_stage` Cell in order: the first emits on a plugin channel, so the
+# Cell's record carries an output; the second fails, so the stage never commits
+# and no marker ever names that record.
+
+
+def _fail_on_b(value: str, ctx: flezha.Ctx[None]) -> None:
+    if value == "b":
+        raise RuntimeError("failed_stage fails on b")
+    ctx.emit(value)
+
+
+failed_stage = stateless_step("failed_stage", _fail_on_b)
+
+
+@flezha.workflow_operative("failed_stage_workflow")
+def failed_stage_workflow(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(key_split).into(failed_stage).sink(
+        "mid", encode=lambda value: f"lost:{value}".encode()
+    )
 
 
 # -- branch_workflow ---------------------------------------------------------
@@ -868,6 +895,7 @@ ALL: list[flezha.Operative] = [
     keyed_saga_workflow,
     outbox_block_workflow,
     undo_outbox_workflow,
+    failed_stage_workflow,
     chat_loop_workflow,
     stateless_loop_workflow,
     keyed_loop_workflow,
