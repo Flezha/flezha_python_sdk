@@ -1,6 +1,6 @@
 # Echo: the smallest complete deployment
 
-A controller, one runner offering an `echo` operative, and a message that goes
+A controller, one runner offering an `echo` operator, and a message that goes
 in and comes back. The runner is the standalone Python hello world in
 [`examples/echo`](../echo), and this folder
 is the deployment around it.
@@ -17,12 +17,12 @@ docker compose up -d --wait
 ```
 
 That builds the runner image and waits for the controller to report ready.
-Then start an operative from the declaration the runner offers, and send it
+Then start an operator from the declaration the runner offers, and send it
 something:
 
 ```sh
-docker compose exec controller /flezha/bin/flz operative start echo --id my_echo
-docker compose exec controller /flezha/bin/flz operative send my_echo --text 'hello world' --await 2000
+docker compose exec controller /flezha/bin/flz operator start echo --id my_echo
+docker compose exec controller /flezha/bin/flz operator send my_echo --text 'hello world' --await 2000
 ```
 
 ```
@@ -37,7 +37,7 @@ tasklet emitted.
 To watch instead of asking, in one terminal:
 
 ```sh
-docker compose exec controller /flezha/bin/flz operative listen my_echo
+docker compose exec controller /flezha/bin/flz operator listen my_echo
 ```
 
 and send from another. When you are done:
@@ -55,7 +55,7 @@ and the first run becomes immediate.
 
 Against a controller you are already running, follow the README in
 [`examples/echo`](../echo): the same
-`flz operative start` and `flz operative send` as above then apply.
+`flz operator start` and `flz operator send` as above then apply.
 
 **Do not background it with its standard input closed.** The SDK treats end of
 file on standard input as a shutdown request, which is how a supervising
@@ -67,8 +67,8 @@ That is also why the compose file sets `stdin_open: true`.
 | File | Part | What it does |
 |---|---|---|
 | `echo_tasklet.py` | the tasklet | the processing stage: prefixes each message |
-| `echo_operative.py` | the operative | the graph: `in` feeds the tasklet, output lands on `out` |
-| `runner.py` | the runner | this process: offers the operative and waits |
+| `echo_operator.py` | the operator | the graph: `in` feeds the tasklet, output lands on `out` |
+| `runner.py` | the runner | this process: offers the operator and waits |
 
-The tasklet never says where its output goes; the operative decides that.
+The tasklet never says where its output goes; the operator decides that.
 That split is what lets the graph be rewired without touching the tasklet.

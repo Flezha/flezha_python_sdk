@@ -118,14 +118,14 @@ def _checkpoint_class(factory_id: str, declare: Any) -> dict[str, Any]:
     from conftest import echo
     from flezha import graph
 
-    @flezha.stream_operative(factory_id)
-    def operative(c: flezha.Channels) -> None:
+    @flezha.unbounded_operator(factory_id)
+    def operator(c: flezha.Channels) -> None:
         c.effectively_once()
         declare(c)
         c.input("input").into(echo, f"{factory_id}_tasklet").keyed().sink("sink")
 
-    assert submit(operative)["ack_granularity"] == "checkpoint"
-    return graph.to_host_class_decl(operative.spec)
+    assert submit(operator)["ack_granularity"] == "checkpoint"
+    return graph.to_host_class_decl(operator.spec)
 
 
 def test_holding_outputs_at_the_checkpoint_acknowledges_at_the_checkpoint() -> None:
@@ -219,19 +219,19 @@ def test_a_spawn_with_no_control_plane_answers_unavailable_until_its_invocation_
 
     @flezha.tasklet(name="spawner")
     def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
-        handle = ctx.spawn_workflow("worker", value, id="w1")
+        handle = ctx.spawn_bounded("worker", value, id="w1")
         for read in (handle.try_result, handle.wait):
             try:
                 read()
             except flezha.SpawnUnavailableError as error:
                 reads.append((error.reason, error.id, str(error)))
-        unread.append(ctx.spawn_workflow("worker", value))
+        unread.append(ctx.spawn_bounded("worker", value))
 
-    @flezha.stream_operative("spawn_without_control_plane")
-    def operative(c: flezha.Channels) -> None:
+    @flezha.unbounded_operator("spawn_without_control_plane")
+    def operator(c: flezha.Channels) -> None:
         c.input("in", codec="text").into(spawner).sink("out")
 
-    with flezha.LocalOperative.start(operative) as run:
+    with flezha.LocalOperator.start(operator) as run:
         run.feed("in", "p")
         run.run_until_idle(10_000)
         with pytest.raises(CoreError, match="released"):

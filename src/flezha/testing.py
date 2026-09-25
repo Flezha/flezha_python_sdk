@@ -65,12 +65,12 @@ class TaskletTestHarness(Generic[S]):
         task: Tasklet[Any, Any],
         *,
         cell_key: str | None = None,
-        operative: str = "harness",
+        operator: str = "harness",
         initial_state: S | None = None,
     ) -> None:
         self._task = task
         self._cell_key = cell_key
-        self._operative = operative
+        self._operator = operator
         # The real channel builder, not a hand-written spec: one entry channel
         # into the tasklet and one plugin sink so `ctx.emit` has somewhere to
         # go — a tasklet under test emits to be observed, not to be routed.
@@ -80,7 +80,7 @@ class TaskletTestHarness(Generic[S]):
         channels.input("in").into(task).sink(codec="msgpack")
         self._spec = ClassSpec(
             factory_id="<harness>",
-            kind="stream",
+            kind="unbounded",
             persistent=True,
             tasklets=channels.tasklets,
             channels=channels.channels,
@@ -216,7 +216,7 @@ class TaskletTestHarness(Generic[S]):
     def _run(self, now: int, replay: bool, body: Any) -> Outcome:
         activation = {
             "token": 0,
-            "operative": self._operative,
+            "operator": self._operator,
             "cell_key": self._cell_key,
             "change_seq": self._change_seq,
         }

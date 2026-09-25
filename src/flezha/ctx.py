@@ -38,7 +38,7 @@ RESERVED_PREFIX = "flz."
 
 #: The identity stamps a non-tier keyed plugin emit carries.
 #:
-#: Under the effectively-once tier, and for a durable workflow, the controller
+#: Under the effectively-once tier, and for a durable bounded operator, the controller
 #: derives them at flush time from the effect record, so none ride on the frame;
 #: otherwise the frame is written straight to the wire and the stamps have
 #: nowhere else to come from.
@@ -71,7 +71,7 @@ class SpawnResult:
 
 
 class SpawnHandle:
-    """The answer to one ``ctx.spawn_workflow``, read inside the invocation that
+    """The answer to one ``ctx.spawn_bounded``, read inside the invocation that
     made it.
 
     ``wait()`` blocks for the answer; ``try_result()`` never waits and answers
@@ -119,7 +119,7 @@ class Ctx(Generic[S]):
         "_spec",
         "_node",
         "_outgoing",
-        "_operative",
+        "_operator",
         "_change_seq",
         "_now",
         "_bridge",
@@ -144,7 +144,7 @@ class Ctx(Generic[S]):
         spec: ClassSpec,
         node: TaskNode,
         outgoing: list[ChannelSpec],
-        operative: str,
+        operator: str,
         cell_key: str | None,
         change_seq: int,
         now: int,
@@ -157,7 +157,7 @@ class Ctx(Generic[S]):
         self._spec = spec
         self._node = node
         self._outgoing = outgoing
-        self._operative = operative
+        self._operator = operator
         self._change_seq = change_seq
         self._now = now
         self._bridge = bridge
@@ -193,7 +193,7 @@ class Ctx(Generic[S]):
         if self._identity is None:
             # Lazily, because most invocations never ask and the identity is
             # the one part of the derivation that costs an allocation.
-            self._identity = cell_identity(self._operative, self._node.name, self.cell_key)
+            self._identity = cell_identity(self._operator, self._node.name, self.cell_key)
         answer = stable_id(self._identity, self._change_seq, self._ordinal)
         self._ordinal += 1
         return answer
@@ -262,21 +262,21 @@ class Ctx(Generic[S]):
         self.checkpointed = True
 
     def complete(self, result: Any = None) -> None:
-        """End the workflow instance this tasklet runs in, with ``result``.
+        """End the bounded instance this tasklet runs in, with ``result``.
 
         The rest of the iteration still runs and commits; the instance then
         ends with status ``ok`` instead of waiting for its next input. In a
-        ``once`` workflow it sets the result the pass ends with. ``result`` is
+        ``once`` bounded it sets the result the pass ends with. ``result`` is
         encoded as a sink naming no codec encodes a value: bytes as they are, a
         string as UTF-8 and anything else as JSON; ``None`` carries no result. A
         later call in the same invocation replaces an earlier one.
 
-        A stream never completes: a stream tasklet calling this fails its
-        input, without a retry, with an error naming ``CompleteOutsideWorkflow``.
+        A stream never completes: an unbounded tasklet calling this fails its
+        input, without a retry, with an error naming ``CompleteOutsideBounded``.
         """
         self.completion = b"" if result is None else _codec.plain_payload(result, self._node.name)
 
-    def spawn_workflow(
+    def spawn_bounded(
         self,
         factory_id: str,
         payload: Any,
@@ -284,7 +284,7 @@ class Ctx(Generic[S]):
         id: str | None = None,
         if_running: IfRunning | None = None,
     ) -> SpawnHandle:
-        """Start a workflow instance of ``factory_id`` with ``payload`` as its
+        """Start a bounded instance of ``factory_id`` with ``payload`` as its
         first message, and answer a :class:`SpawnHandle` at once.
 
         ``payload`` is encoded as a sink naming no codec encodes a value, the
@@ -358,18 +358,18 @@ class Ctx(Generic[S]):
         metadata: Mapping[str, Any] | Iterable[tuple[str, Any]] | None,
     ) -> None:
         # A channel with no consumer releases nothing on the edge path: on a
-        # workflow that is the plugin-bound terminal, and seeding the next
+        # bounded operator that is the plugin-bound terminal, and seeding the next
         # stage from it would hand the driver a terminal output.
-        if self._spec.structured_workflow:
+        if self._spec.structured_bounded:
             if channel.consumers:
-                self.outputs.append(self._workflow_output(channel, channel.consumers[0], value))
+                self.outputs.append(self._bounded_output(channel, channel.consumers[0], value))
         else:
             for edge in channel.consumers:
                 self.outputs.extend(self._edge_outputs(channel, edge, value, key, metadata))
         if channel.sink is not None:
             self.outputs.append(self._plugin_output(channel, value, key, metadata))
 
-    def _workflow_output(
+    def _bounded_output(
         self, channel: ChannelSpec, edge: ConsumerEdge, value: Any
     ) -> dict[str, Any]:
         return {
@@ -465,7 +465,7 @@ class Ctx(Generic[S]):
         if not channel.keyed or self._spec.records_effects:
             return []
         return [
-            (CELL_STAMP, f"{self._operative}/{self._node.name}/{self.cell_key or ''}"),
+            (CELL_STAMP, f"{self._operator}/{self._node.name}/{self.cell_key or ''}"),
             (SEQ_STAMP, f"{self._change_seq}.{self._emit_ordinal}"),
             (KEY_STAMP, key or ""),
         ]

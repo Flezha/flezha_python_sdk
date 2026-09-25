@@ -141,7 +141,7 @@ class Registry:
     def remove(self, factory_id: str) -> RegisteredClass:
         with self._lock:
             if factory_id not in self._classes:
-                raise FlezhaError(f"no operative type `{factory_id}` is declared on this runner")
+                raise FlezhaError(f"no operator type `{factory_id}` is declared on this runner")
             return self._classes.pop(factory_id)
 
     def get(self, factory_id: str) -> RegisteredClass | None:
@@ -180,7 +180,7 @@ class UnreadableMessage(Exception):
     """An entry channel's decoder, or the entry edge's transforms over what it
     decoded, rejected a message. Only the entrance raises this: the verdict it
     becomes tells the core the message is unreadable rather than that the
-    handler failed, so a workflow parks it and keeps waiting instead of ending."""
+    handler failed, so a bounded parks it and keeps waiting instead of ending."""
 
     def __init__(self, cause: BaseException) -> None:
         super().__init__(error_message(cause))
@@ -190,7 +190,7 @@ def error_message(error: BaseException) -> str:
     """What a failure says on the wire.
 
     ``class: message``, in family with what the other SDKs send — this string is
-    stored in a dead-letter entry and read by an operator, and a multi-line
+    stored in a dead-letter entry and read by a user, and a multi-line
     traceback there is noise the retry ladder multiplies. The traceback is
     logged host-side instead, where it is a diagnostic rather than a record.
     """
@@ -308,7 +308,7 @@ async def invoke(
         spec=cell.registered.spec,
         node=cell.node,
         outgoing=cell.registered.outgoing[cell.node.index],
-        operative=activation.get("operative", ""),
+        operator=activation.get("operator", ""),
         cell_key=cell.key,
         change_seq=activation.get("change_seq", 0),
         now=now,
@@ -464,15 +464,15 @@ async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any]) -> None:
     # This node's own edge off the channel: a transform chain declared before
     # one `into` belongs to that consumer and to no other. It is evaluated here
     # only for a payload that reached us untransformed — an entry payload,
-    # whose producer is the wire, or a workflow stage's released value. A
+    # whose producer is the wire, or a bounded stage's released value. A
     # stream producer evaluated it as its activation completed, and evaluating
     # it again would compose the chain with itself.
     untransformed = (
-        channel is None or channel.kind == "entry" or cell.registered.spec.structured_workflow
+        channel is None or channel.kind == "entry" or cell.registered.spec.structured_bounded
     )
     edge = _edge_into(channel, cell.node.index) if untransformed else None
     # The entrance (the entry channel's decoder and the entry edge's
-    # transforms) is where a message the operative cannot read is told apart
+    # transforms) is where a message the operator cannot read is told apart
     # from a handler that fails on one it can.
     try:
         values = values_of(channel, edge, item.get("payload") or b"")

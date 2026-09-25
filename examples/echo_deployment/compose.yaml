@@ -2,8 +2,8 @@
 # Flezha deployment.
 #
 #     docker compose up -d --wait
-#     docker compose exec controller flz operative start echo --id my_echo
-#     docker compose exec controller flz operative send my_echo --text 'hello world' --await 2000
+#     docker compose exec controller flz operator start echo --id my_echo
+#     docker compose exec controller flz operator send my_echo --text 'hello world' --await 2000
 
 # Pinned, so `docker compose down` in this directory can only ever reach what
 # this file declares. The project name otherwise comes from the directory.
@@ -11,7 +11,7 @@ name: flezha-echo-example
 
 services:
   controller:
-    # `flz operative listen` and `send --await` are newer than the published
+    # `flz operator listen` and `send --await` are newer than the published
     # 0.1.0 image, so the commands in README.md need an image built from a tree
     # that carries them. Everything else here works against 0.1.0 as it stands.
     image: flezha/flezha:0.1.0

@@ -26,11 +26,11 @@ from flezha import native
 CHECK_CORE = native.Core.create()
 
 
-def declare(operative: flezha.Operative) -> dict[str, Any]:
-    """Submit one operative's record, and answer what the core derived from it."""
+def declare(operator: flezha.Operator) -> dict[str, Any]:
+    """Submit one operator's record, and answer what the core derived from it."""
     from flezha import graph
 
-    return graph.validate(operative.spec, CHECK_CORE)
+    return graph.validate(operator.spec, CHECK_CORE)
 
 
 @flezha.state
@@ -73,7 +73,7 @@ def echo(value: str) -> str:
     return value
 
 
-@flezha.stream_operative("demo")
+@flezha.unbounded_operator("demo")
 def demo(c: flezha.Channels) -> None:
     c.input("input").into(echo).named("mid").into(count_up).sink("out")
 
@@ -252,7 +252,7 @@ def work_activation(
     """
     return {
         "token": token,
-        "operative": "op",
+        "operator": "op",
         "tasklet": tasklet,
         "change_seq": 0,
         "factory": factory,
@@ -272,8 +272,8 @@ def work_activation(
     }
 
 
-def deps_for(operative: flezha.Operative, core: FakeCore) -> Any:
-    """A validated, registered `DispatchDeps` over one operative.
+def deps_for(operator: flezha.Operator, core: FakeCore) -> Any:
+    """A validated, registered `DispatchDeps` over one operator.
 
     Twelve tests across two files spelled `Registry() + validate + add +
     DispatchDeps` out longhand; this is that, once, so a change to what a
@@ -282,8 +282,8 @@ def deps_for(operative: flezha.Operative, core: FakeCore) -> Any:
     from flezha.dispatch import DispatchDeps, Registry
 
     registry = Registry()
-    declare(operative)
-    registry.add(operative.spec)
+    declare(operator)
+    registry.add(operator.spec)
     return DispatchDeps(registry=registry, bridge=core)
 
 
@@ -305,13 +305,13 @@ def compensating(seen: list[Any]) -> Any:
 
 
 def solo_deps(task: flezha.Tasklet[Any, Any], core: FakeCore, factory: str = "solo") -> Any:
-    """The same, over a one-tasklet operative wrapped around `task`."""
+    """The same, over a one-tasklet operator wrapped around `task`."""
 
-    @flezha.stream_operative(factory)
-    def operative(c: flezha.Channels) -> None:
+    @flezha.unbounded_operator(factory)
+    def operator(c: flezha.Channels) -> None:
         c.input("in").into(task).sink()
 
-    return deps_for(operative, core)
+    return deps_for(operator, core)
 
 
 def pytest_configure(config: pytest.Config) -> None:

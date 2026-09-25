@@ -1,15 +1,15 @@
-"""The operative decorators: what an author declares and what a runner registers.
+"""The operator decorators: what an author declares and what a runner registers.
 
-An operative is its channel graph, so the decorated object is the function that
+An operator is its channel graph, so the decorated object is the function that
 builds one:
 
 .. code-block:: python
 
-    @flezha.stream_operative("echo")
+    @flezha.unbounded_operator("echo")
     def echo(c: flezha.Channels) -> None:
         c.input("input").into(echo_task).sink("out")
 
-A workflow operative is the same shape: a chain of tasklets over a graph. A
+A bounded operator is the same shape: a chain of tasklets over a graph. A
 channels body takes one parameter, annotated :class:`~flezha.builder.Channels` or
 not at all.
 
@@ -18,7 +18,7 @@ other shape, the same decorators declare the single-tasklet short form:
 
 .. code-block:: python
 
-    @flezha.stream_operative(id="echo", sink="out", codec="text")
+    @flezha.unbounded_operator(id="echo", sink="out", codec="text")
     def echo(value: str) -> str:
         return value
 """
@@ -34,23 +34,23 @@ from .builder import Channels, ClassSpec
 from .errors import DeclarationError
 from .tasklet import Tasklet, TaskletSettings, output_type, positional_parameters
 
-__all__ = ["LoopMode", "Operative", "RollbackMode", "stream_operative", "workflow_operative"]
+__all__ = ["LoopMode", "Operator", "RollbackMode", "unbounded_operator", "bounded_operator"]
 
 LoopMode = Literal["once", "per_input", "chained"]
-"""How a workflow iterates: one pass, one per message, or each pass seeding the next."""
+"""How a bounded iterates: one pass, one per message, or each pass seeding the next."""
 
 RollbackMode = Literal["all_or_nothing", "keep_progress"]
 """What a failure undoes: every completed tasklet, or the in-flight iteration only."""
 
-#: The workflow facts a workflow class declares beside its channels.
-_WORKFLOW_KEYS = ("loop_mode", "rollback_mode", "max_duration_ms")
+#: The bounded facts a bounded class declares beside its channels.
+_BOUNDED_KEYS = ("loop_mode", "rollback_mode", "max_duration_ms")
 
 #: The one class setting a short form keeps: a loop is still one tasklet.
 _SHORT_FORM_SETTINGS = ("loop_mode",)
 
 
-class Operative:
-    """One declared operative class, resolved to its spec.
+class Operator:
+    """One declared operator class, resolved to its spec.
 
     Registering performs no I/O: the decorator records the declaration and the
     spec is built on first use, so importing a declaring module opens no socket
@@ -80,7 +80,7 @@ class Operative:
         self.kind = kind
         self.declaration = declaration
         #: A short form's generated tasklet, named after the factory id and
-        #: wireable in another operative's body; ``None`` for a channels body.
+        #: wireable in another operator's body; ``None`` for a channels body.
         self.tasklet = tasklet
         self._options = options
         self._spec: ClassSpec | None = None
@@ -90,7 +90,7 @@ class Operative:
         self.doc = declaration.__doc__
 
     def __repr__(self) -> str:
-        return f"<flezha {self.kind} operative {self.factory_id}>"
+        return f"<flezha {self.kind} operator {self.factory_id}>"
 
     @property
     def spec(self) -> ClassSpec:
@@ -112,7 +112,7 @@ class Operative:
             tasklets=builder.tasklets,
             channels=builder.channels,
             sleep_when_idle=(
-                self.kind == "workflow" and options["persistent"]
+                self.kind == "bounded" and options["persistent"]
                 if sleep_when_idle is None
                 else sleep_when_idle
             ),
@@ -125,8 +125,8 @@ class Operative:
             beyond_window_policy=builder.beyond_window_policy_value,
             compact_after_bytes=builder.compact_after_bytes_value,
             sync_durability=options["sync_durability"],
-            workflow=(
-                {key: options[key] for key in _WORKFLOW_KEYS} if self.kind == "workflow" else None
+            bounded=(
+                {key: options[key] for key in _BOUNDED_KEYS} if self.kind == "bounded" else None
             ),
         )
 
@@ -145,14 +145,14 @@ def _declares_channels(declaration: Any) -> bool:
     return annotation is None or (isinstance(annotation, type) and issubclass(annotation, Channels))
 
 
-def _operative(
+def _operator(
     decorator: Callable[..., Any],
     factory_id: str | None,
     kind: str,
     options: dict[str, Any],
     short_form: dict[str, Any],
     settings: TaskletSettings,
-) -> Callable[[Any], Operative]:
+) -> Callable[[Any], Operator]:
     unknown = sorted(settings.keys() - TaskletSettings.__optional_keys__)
     if unknown:
         raise TypeError(f"{decorator.__name__}() got an unexpected keyword argument {unknown[0]!r}")
@@ -162,7 +162,7 @@ def _operative(
         annotation = parameters[key].annotation
         if get_origin(annotation) is Literal and value not in get_args(annotation):
             raise DeclarationError(
-                factory_id or "<operative>",
+                factory_id or "<operator>",
                 None,
                 f"`{key}={value!r}` is not one of `{'`, `'.join(get_args(annotation))}`",
             )
@@ -172,13 +172,13 @@ def _operative(
         if value != parameters[key].default and key not in _SHORT_FORM_SETTINGS
     ]
 
-    def decorate(declaration: Any) -> Operative:
+    def decorate(declaration: Any) -> Operator:
         name = getattr(declaration, "__name__", "<declaration>")
         if factory_id is None:
             raise DeclarationError(
-                "<operative>",
+                "<operator>",
                 name,
-                "declares no `id`; a factory id is an address an operator types, so it is "
+                "declares no `id`; a factory id is an address a user types, so it is "
                 "written rather than derived from the declaration's name",
             )
         if not _declares_channels(declaration):
@@ -196,7 +196,7 @@ def _operative(
                 f"whose one parameter is annotated `flezha.Channels`, or not at all, is a "
                 f"channels body",
             )
-        return Operative(factory_id, kind, declaration, options)
+        return Operator(factory_id, kind, declaration, options)
 
     return decorate
 
@@ -212,8 +212,8 @@ def _short_form(
     sink: str | None,
     input: str | None,
     codec: _codec.ChannelCodec | None,
-) -> Operative:
-    """One tasklet body as a whole operative: its entry channel, the
+) -> Operator:
+    """One tasklet body as a whole operator: its entry channel, the
     tasklet named after the factory id and declared with ``settings``, and
     the sink when one is written."""
     name = body.__name__
@@ -221,7 +221,7 @@ def _short_form(
         raise DeclarationError(
             factory_id,
             name,
-            "ShortFormWithTopology: `run` declares this operative's one tasklet, whose "
+            "ShortFormWithTopology: `run` declares this operator's one tasklet, whose "
             "topology is generated, and `channels` declares a topology of its own; keep "
             "one of the two bodies",
             refusals=["ShortFormWithTopology"],
@@ -252,10 +252,10 @@ def _short_form(
 
     channels.__name__ = name
     channels.__doc__ = generated.doc
-    return Operative(factory_id, kind, channels, options, generated)
+    return Operator(factory_id, kind, channels, options, generated)
 
 
-def stream_operative(
+def unbounded_operator(
     id: str | None = None,
     *,
     persistent: bool = True,
@@ -265,14 +265,14 @@ def stream_operative(
     input: str | None = None,
     codec: _codec.ChannelCodec | None = None,
     **settings: Unpack[TaskletSettings],
-) -> Callable[[Any], Operative]:
-    """Declare a stream operative: fed by the controller through entry channels.
+) -> Callable[[Any], Operator]:
+    """Declare an unbounded operator: fed by the controller through entry channels.
 
     ``id`` is the factory id. ``persistent`` is whether change bytes are flushed
     to the per-cell WAL. ``sleep_when_idle`` is whether an idle instance is
     written out and dropped from memory until its next input, off unless
-    written. ``sync_durability`` is a workflow's setting, reaching
-    the core from here so that it is refused by name (``SyncDurabilityOnStream``)
+    written. ``sync_durability`` is a bounded operator's setting, reaching
+    the core from here so that it is refused by name (``SyncDurabilityOnUnbounded``)
     rather than dropped.
 
     Over a tasklet body this is the short form: an entry channel named by
@@ -281,10 +281,10 @@ def stream_operative(
     tasklet's own declarations, as :func:`~flezha.tasklet.tasklet` takes
     them.
     """
-    return _operative(
-        stream_operative,
+    return _operator(
+        unbounded_operator,
         id,
-        "stream",
+        "unbounded",
         {
             "persistent": persistent,
             "sleep_when_idle": sleep_when_idle,
@@ -295,7 +295,7 @@ def stream_operative(
     )
 
 
-def workflow_operative(
+def bounded_operator(
     id: str | None = None,
     *,
     persistent: bool = True,
@@ -308,22 +308,22 @@ def workflow_operative(
     input: str | None = None,
     codec: _codec.ChannelCodec | None = None,
     **settings: Unpack[TaskletSettings],
-) -> Callable[[Any], Operative]:
-    """Declare a workflow operative: a chain of tasklets, run once or looping.
+) -> Callable[[Any], Operator]:
+    """Declare a bounded operator: a chain of tasklets, run once or looping.
 
-    Retry is the edges', as on a stream: ``retry_max`` and ``retry_backoff_ms``
+    Retry is the edges', as on an unbounded operator: ``retry_max`` and ``retry_backoff_ms``
     on the channel feeding a tasklet. ``loop_mode`` and ``rollback_mode`` outside
     their declared values are refused here. ``sleep_when_idle`` defaults to
-    ``persistent``: a workflow that keeps its state sleeps while it waits.
+    ``persistent``: a bounded operator that keeps its state sleeps while it waits.
 
-    Over a tasklet body this is the short form: a ``once`` workflow that runs
+    Over a tasklet body this is the short form: a ``once`` bounded that runs
     its tasklet on its first message, or the ``loop_mode`` written, the one
-    class setting a short form keeps; see :func:`stream_operative`.
+    class setting a short form keeps; see :func:`unbounded_operator`.
     """
-    return _operative(
-        workflow_operative,
+    return _operator(
+        bounded_operator,
         id,
-        "workflow",
+        "bounded",
         {
             "persistent": persistent,
             "sleep_when_idle": sleep_when_idle,

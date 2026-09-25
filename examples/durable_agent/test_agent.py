@@ -70,11 +70,11 @@ def test_a_session_keeps_its_goal_and_turns_and_records_nothing_on_done() -> Non
     assert (ending.outputs, ending.changes) == ([], [])
 
 
-@pytest.mark.parametrize("operative", [durable_agent, agent_session])
-def test_the_graph_registers(operative: flezha.Operative) -> None:
+@pytest.mark.parametrize("operator", [durable_agent, agent_session])
+def test_the_graph_registers(operator: flezha.Operator) -> None:
     core = native.Core.create()
     try:
-        graph.validate(operative.spec, core)
+        graph.validate(operator.spec, core)
     finally:
         core.free()
-    assert graph.to_host_class_decl(operative.spec)["factory_id"] == operative.factory_id
+    assert graph.to_host_class_decl(operator.spec)["factory_id"] == operator.factory_id

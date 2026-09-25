@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import conformance
 import fixtures
-import fixtures_workflow
+import fixtures_bounded
 import flezha
 
 
@@ -48,10 +48,10 @@ def main() -> None:
         # class the core refuses never reaches a controller.
         conformance.register_only(runner, refusal_fixture)
     else:
-        for operative in fixtures.ALL:
-            runner.register_factory(operative)
-        for operative in fixtures_workflow.ALL:
-            runner.register_factory(operative)
+        for operator in fixtures.ALL:
+            runner.register_factory(operator)
+        for operator in fixtures_bounded.ALL:
+            runner.register_factory(operator)
 
     # The configuration this run is under, before it starts: readiness is the
     # SDK's own startup line, which reports the wheel tier, the executor and the

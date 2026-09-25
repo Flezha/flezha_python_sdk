@@ -58,7 +58,7 @@ class TaskletSettings(TypedDict, total=False):
     """A tasklet's own declarations beyond its name.
 
     One list for every surface that declares a tasklet: ``flezha.tasklet``
-    and the short form of both operative decorators.
+    and the short form of both operator decorators.
     """
 
     clock: Clock
@@ -453,8 +453,8 @@ def _refuse_unannotated(task: Tasklet[Any, Any]) -> None:
 # The decorator
 # ---------------------------------------------------------------------------
 
-#: The keywords of an operative's short form, which a tasklet never takes.
-_OPERATIVE_KEYWORDS = ("kind", "sink", "input", "codec")
+#: The keywords of an operator's short form, which a tasklet never takes.
+_OPERATOR_KEYWORDS = ("kind", "sink", "input", "codec")
 
 
 @overload
@@ -483,18 +483,18 @@ def tasklet(target: Any = None, /, **declarations: Any) -> Any:
     socket and starts no thread: it builds one :class:`Tasklet` and returns
     it.
 
-    A tasklet is never an operative on its own: the single-tasklet short
-    form is declared with :func:`~flezha.operative.stream_operative` or
-    :func:`~flezha.operative.workflow_operative`.
+    A tasklet is never an operator on its own: the single-tasklet short
+    form is declared with :func:`~flezha.operator.unbounded_operator` or
+    :func:`~flezha.operator.bounded_operator`.
     """
-    written = [key for key in _OPERATIVE_KEYWORDS if key in declarations]
+    written = [key for key in _OPERATOR_KEYWORDS if key in declarations]
     if written:
         raise DeclarationError(
             "<tasklet>",
             declarations.get("name") or getattr(target, "__name__", None),
-            f"`{'`, `'.join(written)}` declare(s) an operative, not a tasklet; write the "
-            f"single-tasklet short form as `@flezha.stream_operative(id=...)` or "
-            f"`@flezha.workflow_operative(id=...)`",
+            f"`{'`, `'.join(written)}` declare(s) an operator, not a tasklet; write the "
+            f"single-tasklet short form as `@flezha.unbounded_operator(id=...)` or "
+            f"`@flezha.bounded_operator(id=...)`",
         )
     if target is None:
         return lambda inner: Tasklet(inner, **declarations)

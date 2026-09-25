@@ -57,7 +57,7 @@ def test_the_ceiling_defaults_to_ten_times_the_base_and_never_below_it(
 ) -> None:
     assert executor_module.ceiling_size(4) == 40
     monkeypatch.setenv("FLEZHA_WORKER_POOL_MAX", "2")
-    # A ceiling under the floor would retire the pool the operator asked for.
+    # A ceiling under the floor would retire the pool the user asked for.
     assert executor_module.ceiling_size(4) == 4
     monkeypatch.setenv("FLEZHA_WORKER_POOL_MAX", "64")
     assert executor_module.ceiling_size(4) == 64
@@ -83,7 +83,7 @@ def test_blocked_handlers_buy_threads_and_the_grown_ones_retire() -> None:
         release.wait(timeout=5)
         return value
 
-    @flezha.stream_operative("blocking")
+    @flezha.unbounded_operator("blocking")
     def blocking(c: flezha.Channels) -> None:
         c.input("in").into(blocks).sink()
 
@@ -115,7 +115,7 @@ def test_the_supervisor_stops_growing_at_the_ceiling() -> None:
         release.wait(timeout=5)
         return value
 
-    @flezha.stream_operative("capped")
+    @flezha.unbounded_operator("capped")
     def capped(c: flezha.Channels) -> None:
         c.input("in").into(blocks).sink()
 
@@ -244,7 +244,7 @@ def test_an_async_handler_is_driven_under_either_executor(kind: str) -> None:
         await asyncio.sleep(0.001)
         return value.upper()
 
-    @flezha.stream_operative("async_op")
+    @flezha.unbounded_operator("async_op")
     def async_op(c: flezha.Channels) -> None:
         c.input("in").into(slow).sink()
 
@@ -273,7 +273,7 @@ def test_a_drain_has_a_time_limit_and_says_what_it_abandoned(
         never.wait(timeout=30)
         return value
 
-    @flezha.stream_operative("wedge")
+    @flezha.unbounded_operator("wedge")
     def wedge(c: flezha.Channels) -> None:
         c.input("in").into(wedged).sink()
 
@@ -323,7 +323,7 @@ def _assert_releases_the_gil(blocking_call: Any) -> None:
 
     Both blocking entry points go through the veneer's single ``py.detach``
     seam — which the crate's own test asserts is used exactly once per blocking
-    export, so ``complete`` and the workflow receive are covered by the same
+    export, so ``complete`` and the bounded receive are covered by the same
     proof without needing a live controller to reach them.
     """
     core = native.Core.create()

@@ -17,7 +17,7 @@ __all__ = [
     "SpawnError",
     "SpawnAlreadyRunningError",
     "SpawnFactoryUnknownError",
-    "SpawnFactoryNotWorkflowError",
+    "SpawnFactoryNotBoundedError",
     "SpawnRefusedError",
     "SpawnTimeoutError",
     "SpawnUnavailableError",
@@ -90,7 +90,7 @@ class EmitError(FlezhaError):
     """An emit the declaration cannot carry.
 
     A channel the tasklet does not produce on, a reserved metadata key, a
-    keyed channel with no key, a timer inside a workflow.
+    keyed channel with no key, a timer inside a bounded operator.
     """
 
 
@@ -121,7 +121,7 @@ class SpawnError(FlezhaError):
     """Why a spawn reached no instance.
 
     Raised by a read of the :class:`~flezha.ctx.SpawnHandle`, never by
-    ``ctx.spawn_workflow`` itself, so a refusal faults the tasklet only when
+    ``ctx.spawn_bounded`` itself, so a refusal faults the tasklet only when
     it asks. Each kind is a subclass; ``reason`` is its word on the wire.
     """
 
@@ -151,10 +151,10 @@ class SpawnFactoryUnknownError(SpawnError):
     reason = "factory_unknown"
 
 
-class SpawnFactoryNotWorkflowError(SpawnError):
-    """The requested factory is registered, as a stream: only a workflow spawns."""
+class SpawnFactoryNotBoundedError(SpawnError):
+    """The requested factory is registered as unbounded: only a bounded operator spawns."""
 
-    reason = "factory_not_workflow"
+    reason = "factory_not_bounded"
 
 
 class SpawnRefusedError(SpawnError):

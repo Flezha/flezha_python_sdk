@@ -45,8 +45,8 @@ class TierStore(KeyedUpsert):
 tier_store = flezha.tasklet(TierStore, name="tier_store_tasklet")
 
 
-@flezha.stream_operative("bench_keyed_nopersist", persistent=False)
-def bench_keyed_nopersist_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("bench_keyed_nopersist", persistent=False)
+def bench_keyed_nopersist_operator(c: flezha.Channels) -> None:
     """Per-cell persistence off: the heap-only posture the bench isolates
     against the durable one."""
     c.input("input", codec="text").on_full("drop_nothing").into(tier_store).keyed().sink("sink")
@@ -73,8 +73,8 @@ class StoreInput:
 store_input = flezha.tasklet(StoreInput, name="store_input_tasklet")
 
 
-@flezha.stream_operative("store_input")
-def store_input_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("store_input")
+def store_input_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(store_input).sink("sink")
 
 
@@ -97,13 +97,13 @@ class Counter:
 counter = flezha.tasklet(Counter, name="counter_tasklet")
 
 
-@flezha.stream_operative("stateful_counter")
-def stateful_counter_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("stateful_counter")
+def stateful_counter_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(counter_entry).named("ticks").into(counter)
 
 
-@flezha.stream_operative("persistence_off_counter", persistent=False)
-def persistence_off_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("persistence_off_counter", persistent=False)
+def persistence_off_operator(c: flezha.Channels) -> None:
     """The same topology with per-Cell persistence off.
 
     Its own node names, as the reference declares them: a node identity is per
@@ -117,7 +117,7 @@ def persistence_off_operative(c: flezha.Channels) -> None:
 
 # -- sleeping_counter --------------------------------------------------------
 #
-# A stream that sleeps when idle: `key:delta` inputs fold into one running
+# An unbounded operator that sleeps when idle: `key:delta` inputs fold into one running
 # total per key, and every input emits `key=total` on the `totals` sink. The
 # sleep e2e reads the total after a wake to prove the Cell came back with the
 # state it slept with.
@@ -139,8 +139,8 @@ class SleepingCounter:
 sleeping_counter = flezha.tasklet(SleepingCounter, name="sleeping_counter_tasklet")
 
 
-@flezha.stream_operative("sleeping_counter", sleep_when_idle=True)
-def sleeping_counter_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("sleeping_counter", sleep_when_idle=True)
+def sleeping_counter_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").key_by(prefix).into(sleeping_counter).sink("totals")
 
 
@@ -177,8 +177,8 @@ class Tick:
 tick = flezha.tasklet(Tick, name="tick_tasklet")
 
 
-@flezha.stream_operative("coalescing_counter")
-def coalescing_counter_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("coalescing_counter")
+def coalescing_counter_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(tick_entry).named("ticks").into(tick)
 
 
@@ -203,13 +203,13 @@ class ResumeProbe:
 resume_probe = flezha.tasklet(ResumeProbe, name="resume_probe_tasklet")
 
 
-@flezha.stream_operative("resume_probe")
-def resume_probe_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("resume_probe")
+def resume_probe_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(resume_probe).sink("total")
 
 
-@flezha.stream_operative("bench_keyed")
-def bench_keyed_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("bench_keyed")
+def bench_keyed_operator(c: flezha.Channels) -> None:
     """`bench_keyed_nopersist`'s durable twin: the same keyed upsert with
     per-Cell persistence on, so the bench can isolate that cost."""
     c.input("input", codec="text").on_full("drop_nothing").into(
@@ -220,7 +220,7 @@ def bench_keyed_operative(c: flezha.Channels) -> None:
 # -- schema_evolution_v1 / schema_evolution_v2 -------------------------------
 #
 # The same class either side of a deploy that edits its own state type. Both
-# halves declare the SAME tasklet name, so an operative started under v1 and
+# halves declare the SAME tasklet name, so an operator started under v1 and
 # restarted under v2 restores from the very WAL v1 wrote — which is what a
 # deploy does, with the two binaries collapsed into one fixture file.
 #
@@ -279,25 +279,25 @@ evolving_cart_v2 = flezha.tasklet(
 )
 
 
-@flezha.stream_operative("schema_evolution_v1")
-def schema_evolution_v1_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("schema_evolution_v1")
+def schema_evolution_v1_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(evolving_cart_v1).sink("total")
 
 
-@flezha.stream_operative("schema_evolution_v2")
-def schema_evolution_v2_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("schema_evolution_v2")
+def schema_evolution_v2_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(evolving_cart_v2).sink("total")
 
 
 # -- tier_store / checkpoint_store / checkpoint_batched_store / bench_checkpoint
 
 
-@flezha.stream_operative("tier_store")
-def tier_store_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("tier_store")
+def tier_store_operator(c: flezha.Channels) -> None:
     """The effectively-once reference: a keyed upsert under the tier.
 
     A 300 ms backoff base keeps the min-watermark freeze observable in the DLQ
-    e2e. Declared DropNothing: a durable-input-log operative that shed at its
+    e2e. Declared DropNothing: a durable-input-log operator that shed at its
     mailbox would hold the min-watermark on the shed offset forever while the
     log behind it kept growing.
     """
@@ -320,14 +320,14 @@ class CheckpointStore(KeyedUpsert):
 checkpoint_store = flezha.tasklet(CheckpointStore, name="checkpoint_store_tasklet")
 
 
-@flezha.stream_operative("checkpoint_store")
-def checkpoint_store_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("checkpoint_store")
+def checkpoint_store_operator(c: flezha.Channels) -> None:
     c.effectively_once().checkpoint_ack()
     c.input("input", codec="text").into(checkpoint_store).keyed().sink("sink")
 
 
-@flezha.stream_operative("checkpoint_batched_store")
-def checkpoint_batched_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("checkpoint_batched_store")
+def checkpoint_batched_operator(c: flezha.Channels) -> None:
     """The same tasklet declared ``outputs_at_checkpoint``.
 
     The interval's outputs are held with its changes and ship inside its
@@ -351,8 +351,8 @@ class BenchCheckpoint(KeyedUpsert):
 bench_checkpoint = flezha.tasklet(BenchCheckpoint, name="bench_checkpoint_tasklet")
 
 
-@flezha.stream_operative("bench_checkpoint")
-def bench_checkpoint_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("bench_checkpoint")
+def bench_checkpoint_operator(c: flezha.Channels) -> None:
     c.effectively_once().checkpoint_every(_env_int("FLEZHA_BENCH_CHECKPOINT_EVERY", 500) or 500)
     if os.environ.get("FLEZHA_BENCH_CHECKPOINT_OUTPUTS") == "at_checkpoint":
         c.outputs_at_checkpoint(_env_int("FLEZHA_BENCH_CHECKPOINT_DELAY_MS", 50) or 50)

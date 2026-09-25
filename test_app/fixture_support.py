@@ -1,6 +1,6 @@
 """Helpers every fixture module shares: the key convention, the environment
 readers the tunable fixtures use, and the pass-through tasklet several
-operatives declare identically.
+operators declare identically.
 """
 
 from __future__ import annotations

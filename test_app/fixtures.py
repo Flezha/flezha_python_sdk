@@ -17,36 +17,36 @@ from typing import Any, ClassVar
 
 import flezha
 from fixture_support import _as_int, _env_int, passthrough, prefix
+from fixtures_bounded import stateless_loop_bounded
 from fixtures_state import (
-    bench_checkpoint_operative,
-    bench_keyed_nopersist_operative,
-    bench_keyed_operative,
-    checkpoint_batched_operative,
-    checkpoint_store_operative,
-    coalescing_counter_operative,
-    persistence_off_operative,
-    resume_probe_operative,
-    schema_evolution_v1_operative,
-    schema_evolution_v2_operative,
-    sleeping_counter_operative,
-    stateful_counter_operative,
-    store_input_operative,
-    tier_store_operative,
+    bench_checkpoint_operator,
+    bench_keyed_nopersist_operator,
+    bench_keyed_operator,
+    checkpoint_batched_operator,
+    checkpoint_store_operator,
+    coalescing_counter_operator,
+    persistence_off_operator,
+    resume_probe_operator,
+    schema_evolution_v1_operator,
+    schema_evolution_v2_operator,
+    sleeping_counter_operator,
+    stateful_counter_operator,
+    store_input_operator,
+    tier_store_operator,
 )
-from fixtures_workflow import stateless_loop_workflow
 
 # -- do_nothing / bench_echo -------------------------------------------------
 
 do_nothing = passthrough("do_nothing_tasklet")
 
 
-@flezha.stream_operative("do_nothing")
-def do_nothing_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("do_nothing")
+def do_nothing_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(do_nothing).sink("echo")
 
 
-@flezha.stream_operative("bench_echo")
-def bench_echo_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("bench_echo")
+def bench_echo_operator(c: flezha.Channels) -> None:
     """Echo with a declared DropNothing on its entry mailbox.
 
     ``do_nothing`` is the merge-blocking bench factory and must not change; this
@@ -74,12 +74,12 @@ class CompareFilter:
 compare_filter = flezha.tasklet(CompareFilter, name="compare_filter_tasklet")
 
 
-@flezha.stream_operative("compare_filter")
-def compare_filter_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("compare_filter")
+def compare_filter_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(compare_filter).sink("sink")
 
 
-# -- static_cell / sugar_static_cell / mixed_operative -------------------
+# -- static_cell / sugar_static_cell / mixed_operator -------------------
 
 STATIC_KEYS = ["a", "b", "c", "d"]
 
@@ -124,15 +124,15 @@ static_downstream = passthrough("static_downstream_tasklet")
 macro_static_downstream = passthrough("macro_static_downstream_tasklet")
 
 
-@flezha.stream_operative("static_cell")
-def static_cell_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("static_cell")
+def static_cell_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(static_entry).named("hop").into(static_downstream).sink(
         "kafka"
     )
 
 
-@flezha.stream_operative("sugar_static_cell")
-def sugar_static_cell_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("sugar_static_cell")
+def sugar_static_cell_operator(c: flezha.Channels) -> None:
     """The reference pipeline sugar leaves the hop unnamed and lets the sink
     name the producing channel."""
     c.input("input", codec="text").into(macro_static_entry).into(macro_static_downstream).sink(
@@ -146,8 +146,8 @@ mixed_macro_entry = passthrough("mixed_macro_entry_tasklet")
 mixed_hand_downstream = passthrough("mixed_hand_downstream")
 
 
-@flezha.stream_operative("mixed_operative")
-def mixed_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("mixed_operator")
+def mixed_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(mixed_macro_entry).named("hop").into(
         mixed_hand_downstream
     ).sink("kafka")
@@ -155,16 +155,16 @@ def mixed_operative(c: flezha.Channels) -> None:
 
 # -- the §5 short forms ------------------------------------------------------
 #
-# One operative declaration each, carrying a tasklet body instead of a
-# channels body. No hand-written operative or tasklet stands beside them.
+# One operator declaration each, carrying a tasklet body instead of a
+# channels body. No hand-written operator or tasklet stands beside them.
 
 
-@flezha.stream_operative(id="sugar_do_nothing", sink="sugar_do_nothing_echo", codec="text")
+@flezha.unbounded_operator(id="sugar_do_nothing", sink="sugar_do_nothing_echo", codec="text")
 def sugar_do_nothing(value: str) -> str:
     return value
 
 
-@flezha.stream_operative(id="sugar_store_input", sink="sugar_store_sink", codec="text")
+@flezha.unbounded_operator(id="sugar_store_input", sink="sugar_store_sink", codec="text")
 class SugarStoreInput:
     def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
         ctx.change({"push": value})
@@ -177,31 +177,31 @@ class SugarStoreInput:
         state["text_inputs"].append(change["push"])
 
 
-@flezha.stream_operative(
+@flezha.unbounded_operator(
     id="sugar_named_input", sink="sugar_named_input_sink", input="prices", codec="text"
 )
 def sugar_named_input(value: str) -> str:
     return value
 
 
-@flezha.workflow_operative(
-    id="sugar_workflow", sink="sugar_workflow_placed", input="order", codec="text"
+@flezha.bounded_operator(
+    id="sugar_bounded", sink="sugar_bounded_placed", input="order", codec="text"
 )
-def sugar_workflow(order: str) -> str:
+def sugar_bounded(order: str) -> str:
     return order
 
 
-@flezha.workflow_operative(
-    id="sugar_workflow_per_input",
-    sink="sugar_workflow_per_input_out",
+@flezha.bounded_operator(
+    id="sugar_bounded_per_input",
+    sink="sugar_bounded_per_input_out",
     codec="text",
     loop_mode="per_input",
 )
-def sugar_workflow_per_input(value: str) -> str:
+def sugar_bounded_per_input(value: str) -> str:
     return value
 
 
-@flezha.stream_operative(id="sugar_state_only", input="ticks", codec="text")
+@flezha.unbounded_operator(id="sugar_state_only", input="ticks", codec="text")
 class SugarStateOnly(SeenLog):
     """No sink: what it was sent is proven by its state alone."""
 
@@ -213,7 +213,7 @@ class SugarStateOnly(SeenLog):
 #
 # One emit reaching two destinations: an inter-tasklet consumer and a plugin
 # wire with its own serializer. The serializer refuses a sentinel value, so an
-# operator can observe end to end that a refusal is isolated to the emit rather
+# user can observe end to end that a refusal is isolated to the emit rather
 # than failing the item.
 
 HYBRID_SENTINEL = 0xDEADBEEF
@@ -247,8 +247,8 @@ def hybrid_encode(value: int) -> bytes:
     return struct.pack(">I", value)
 
 
-@flezha.stream_operative("hybrid_channel")
-def hybrid_channel_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("hybrid_channel")
+def hybrid_channel_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(hybrid_producer).branch(
         # The consumer edge first, so a refused plugin serialization leaves the
         # in-process fan-out already recorded — the reference's isolation.
@@ -276,8 +276,8 @@ def merge_label(value: dict[str, str]) -> str:
     return f"{value['source']}:{value['payload']}"
 
 
-@flezha.stream_operative("merged_input")
-def merged_input_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("merged_input")
+def merged_input_operator(c: flezha.Channels) -> None:
     ticks = c.input("ticks", codec="text")
     quotes = c.input("quotes", codec="text")
     c.merge().from_(ticks, tagged("ticks")).from_(quotes, tagged("quotes")).key_by(
@@ -294,8 +294,8 @@ def merged_input_operative(c: flezha.Channels) -> None:
 transform_label = passthrough("transform_label_tasklet", dynamic_cells=True)
 
 
-@flezha.stream_operative("transform_chain")
-def transform_chain_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("transform_chain")
+def transform_chain_operator(c: flezha.Channels) -> None:
     c.input("trades", codec="text").filter(lambda trade: trade != "drop").flat_map(
         lambda trade: trade.split(",")
     ).map(str.upper).key_by(prefix).into(transform_label).keyed().sink("transformed")
@@ -330,8 +330,8 @@ stress_c = flezha.tasklet(StressToP0, name="stress_c", cell_keys=STRESS_KEYS)
 stress_d = flezha.tasklet(StressToP0, name="stress_d", cell_keys=STRESS_KEYS)
 
 
-@flezha.stream_operative("cell_stress")
-def cell_stress_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("cell_stress")
+def cell_stress_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(stress_a).named("a_to_b").into(stress_b).named(
         "b_to_c"
     ).into(stress_c).named("c_to_d").into(stress_d).sink("echo")
@@ -370,8 +370,8 @@ class Candle:
 candle = flezha.tasklet(Candle, name="candle_tasklet", clock="event_time")
 
 
-@flezha.stream_operative("candle")
-def candle_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("candle")
+def candle_operator(c: flezha.Channels) -> None:
     c.effectively_once().correction_window(600_000)
     c.input("input", codec="text").into(candle).keyed().sink("sink")
 
@@ -390,8 +390,8 @@ def poison_probe(value: str) -> str:
     return f"ok:{value}"
 
 
-@flezha.stream_operative("poison_probe")
-def poison_probe_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("poison_probe")
+def poison_probe_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").retry_backoff_ms(25).into(poison_probe).sink("out")
 
 
@@ -420,8 +420,8 @@ def wedge_probe(value: str) -> str:
     return f"ok:{value}"
 
 
-@flezha.stream_operative("wedge_probe")
-def wedge_probe_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("wedge_probe")
+def wedge_probe_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(wedge_probe).sink("out")
 
 
@@ -458,8 +458,8 @@ class SessionTimeout:
 session_timeout = flezha.tasklet(SessionTimeout, name="session_timeout_tasklet")
 
 
-@flezha.stream_operative("session_timeout")
-def session_timeout_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("session_timeout")
+def session_timeout_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(session_timeout).sink("kafka")
 
 
@@ -478,17 +478,17 @@ class BoundedMailbox:
         state["processed"] += 1
 
 
-def _bounded_mailbox(policy: str) -> flezha.Operative:
-    """One operative per overflow policy, over the same bounded-mailbox tasklet."""
+def _bounded_mailbox(policy: str) -> flezha.Operator:
+    """One operator per overflow policy, over the same bounded-mailbox tasklet."""
     tasklet = flezha.tasklet(BoundedMailbox, name=f"{policy}_test_tasklet", mailbox_capacity=4)
 
-    @flezha.stream_operative(f"bounded_mailbox_{policy}")
-    def operative(c: flezha.Channels) -> None:
+    @flezha.unbounded_operator(f"bounded_mailbox_{policy}")
+    def operator(c: flezha.Channels) -> None:
         c.input(f"{policy}_input", codec="text").on_full(policy).into(tasklet).sink(
             f"{policy}_echo"
         )
 
-    return operative
+    return operator
 
 
 BOUNDED_MAILBOX = [
@@ -498,11 +498,11 @@ BOUNDED_MAILBOX = [
 
 # -- partition_relay ---------------------------------------------------------
 #
-# The partitioned-operatives upstream: keyed on the wiring so it can be
+# The partitioned-operators upstream: keyed on the wiring so it can be
 # partitioned at all, and emitting keyed so a partitioned forward target can
 # resolve the owning member. The plugin channel is named `input` because a
 # forwarded frame keeps its producing channel's name, and that is what selects
-# the receiving operative's entry channel — so the entry here is `in`.
+# the receiving operator's entry channel — so the entry here is `in`.
 
 
 class PartitionRelay(SeenLog):
@@ -514,8 +514,8 @@ class PartitionRelay(SeenLog):
 partition_relay = flezha.tasklet(PartitionRelay, name="partition_relay_tasklet", dynamic_cells=True)
 
 
-@flezha.stream_operative("partition_relay")
-def partition_relay_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("partition_relay")
+def partition_relay_operator(c: flezha.Channels) -> None:
     c.input("in", codec="text").key_by(prefix).into(partition_relay).keyed().sink("input")
 
 
@@ -536,8 +536,8 @@ dynamic_cell = flezha.tasklet(
 )
 
 
-@flezha.stream_operative("dynamic_cell")
-def dynamic_cell_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("dynamic_cell")
+def dynamic_cell_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").on_full("drop_nothing").filter(
         # Filtered before keying: a dropped value answers no key, so the core
         # never mints a cell for it.
@@ -547,7 +547,7 @@ def dynamic_cell_operative(c: flezha.Channels) -> None:
 
 # -- spawn_requester ---------------------------------------------------------
 #
-# On each input it spawns `stateless_loop_workflow` once with no id and once
+# On each input it spawns `stateless_loop_bounded` once with no id and once
 # under the input as its id, and prints both answers, because a handle's answer
 # is observable nowhere but in the tasklet that read it.
 
@@ -563,23 +563,23 @@ def _report(label: str, handle: Any) -> None:
 
 @flezha.tasklet(name="spawn_requester")
 def spawn_requester(value: str, ctx: flezha.Ctx[None]) -> None:
-    factory = stateless_loop_workflow.factory_id
+    factory = stateless_loop_bounded.factory_id
     handles = [
-        ("unnamed", ctx.spawn_workflow(factory, value)),
-        ("named", ctx.spawn_workflow(factory, value, id=value)),
+        ("unnamed", ctx.spawn_bounded(factory, value)),
+        ("named", ctx.spawn_bounded(factory, value, id=value)),
     ]
     for label, handle in handles:
         _report(label, handle)
 
 
-@flezha.stream_operative("spawn_requester")
-def spawn_requester_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("spawn_requester")
+def spawn_requester_operator(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(spawn_requester).sink("out")
 
 
 # -- spawn_once_requester ----------------------------------------------------
 #
-# On each input it spawns `typed_once_workflow` once, with no id, carrying the
+# On each input it spawns `typed_once_bounded` once, with no id, carrying the
 # input inside a JSON object its `order` entry decodes, and prints the result
 # as `spawn_result once <id> <outcome>`: the payload a spawn carries is the
 # spawned instance's first message, encoded by the no-codec sink rule.
@@ -587,53 +587,53 @@ def spawn_requester_operative(c: flezha.Channels) -> None:
 
 @flezha.tasklet(name="spawn_once_requester")
 def spawn_once_requester(value: str, ctx: flezha.Ctx[None]) -> None:
-    _report("once", ctx.spawn_workflow("typed_once_workflow", {"text": value}))
+    _report("once", ctx.spawn_bounded("typed_once_bounded", {"text": value}))
 
 
-@flezha.stream_operative("spawn_once_requester")
-def spawn_once_requester_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("spawn_once_requester")
+def spawn_once_requester_operator(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(spawn_once_requester).sink("out")
 
 
-#: Every operative this app registers, in declaration order.
-ALL: list[flezha.Operative] = [
-    do_nothing_operative,
-    bench_echo_operative,
-    compare_filter_operative,
-    static_cell_operative,
-    sugar_static_cell_operative,
-    mixed_operative,
+#: Every operator this app registers, in declaration order.
+ALL: list[flezha.Operator] = [
+    do_nothing_operator,
+    bench_echo_operator,
+    compare_filter_operator,
+    static_cell_operator,
+    sugar_static_cell_operator,
+    mixed_operator,
     sugar_do_nothing,
     SugarStoreInput,
     sugar_named_input,
-    sugar_workflow,
-    sugar_workflow_per_input,
+    sugar_bounded,
+    sugar_bounded_per_input,
     SugarStateOnly,
-    hybrid_channel_operative,
-    merged_input_operative,
-    transform_chain_operative,
-    cell_stress_operative,
-    bench_keyed_nopersist_operative,
-    store_input_operative,
-    stateful_counter_operative,
-    persistence_off_operative,
-    sleeping_counter_operative,
-    coalescing_counter_operative,
-    resume_probe_operative,
-    bench_keyed_operative,
-    schema_evolution_v1_operative,
-    schema_evolution_v2_operative,
-    tier_store_operative,
-    checkpoint_store_operative,
-    checkpoint_batched_operative,
-    bench_checkpoint_operative,
-    candle_operative,
-    poison_probe_operative,
-    wedge_probe_operative,
-    session_timeout_operative,
+    hybrid_channel_operator,
+    merged_input_operator,
+    transform_chain_operator,
+    cell_stress_operator,
+    bench_keyed_nopersist_operator,
+    store_input_operator,
+    stateful_counter_operator,
+    persistence_off_operator,
+    sleeping_counter_operator,
+    coalescing_counter_operator,
+    resume_probe_operator,
+    bench_keyed_operator,
+    schema_evolution_v1_operator,
+    schema_evolution_v2_operator,
+    tier_store_operator,
+    checkpoint_store_operator,
+    checkpoint_batched_operator,
+    bench_checkpoint_operator,
+    candle_operator,
+    poison_probe_operator,
+    wedge_probe_operator,
+    session_timeout_operator,
     *BOUNDED_MAILBOX,
-    partition_relay_operative,
-    dynamic_cell_operative,
-    spawn_requester_operative,
-    spawn_once_requester_operative,
+    partition_relay_operator,
+    dynamic_cell_operator,
+    spawn_requester_operator,
+    spawn_once_requester_operator,
 ]

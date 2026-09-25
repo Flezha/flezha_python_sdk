@@ -28,6 +28,6 @@ def render(invoice: Invoice) -> str:
     return f"{invoice.order_id}:{invoice.total}"
 
 
-@flezha.stream_operative("billing")
+@flezha.unbounded_operator("billing")
 def billing(c: flezha.Channels) -> None:
     c.input("orders").into(bill).named("invoices").into(render).sink()

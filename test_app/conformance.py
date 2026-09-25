@@ -4,7 +4,7 @@ driven through THIS SDK's builder.
 ``flz_core/src/host/check_tests.rs`` is the same table driven against the record
 directly, because the core has no builder. This one maps the same step
 vocabulary onto the Python graph builder, so what is measured here is what an
-author of a Python operative actually writes.
+author of a Python operator actually writes.
 
 Two entry points, both off ``runner.py``:
 
@@ -29,8 +29,8 @@ from pathlib import Path
 from typing import Any
 
 import flezha
-from fixtures import hybrid_channel_operative
-from fixtures_workflow import tier_commit_block_workflow
+from fixtures import hybrid_channel_operator
+from fixtures_bounded import tier_commit_block_bounded
 from flezha import graph
 from flezha.native import Core
 
@@ -43,7 +43,7 @@ FIXTURE = "test/fixtures/reference_topologies.txt"
 SURFACES = (
     "merge",
     "branch",
-    "workflow",
+    "bounded",
     "sync_durability",
     "shorthand",
     "shorthand_typed_output",
@@ -52,8 +52,8 @@ SURFACES = (
 # The two topologies the fixture cites rather than re-spells: this app's own
 # fixtures, the twins of its seven-column table.
 CITED = {
-    "hybrid_channel": hybrid_channel_operative,
-    "commit_block_chain": tier_commit_block_workflow,
+    "hybrid_channel": hybrid_channel_operator,
+    "commit_block_chain": tier_commit_block_bounded,
 }
 
 # -- the palette -------------------------------------------------------------
@@ -203,12 +203,12 @@ class Interpreter:
     def _class_flag(self, builder: flezha.Channels, rest: str) -> None:
         """``class.<flag>[(<value>)]`` — the facts the class declares.
 
-        ``persistent``, ``sync_durability``, ``sleep_when_idle`` and ``workflow``
-        are operative-level declarations, read as the row's operative was minted
+        ``persistent``, ``sync_durability``, ``sleep_when_idle`` and ``bounded``
+        are operator-level declarations, read as the row's operator was minted
         rather than called on the builder.
         """
         flag, value = split_call(rest)
-        if flag in ("persistent", "sync_durability", "sleep_when_idle", "workflow"):
+        if flag in ("persistent", "sync_durability", "sleep_when_idle", "bounded"):
             return
         if flag == "effectively_once":
             builder.effectively_once()
@@ -278,19 +278,19 @@ def rows() -> list[dict[str, str]]:
     return table
 
 
-def operative_for(row: dict[str, str]) -> flezha.Operative:
-    """A row's operative. The cited twins are this app's own; the rest are built.
+def operator_for(row: dict[str, str]) -> flezha.Operator:
+    """A row's operator. The cited twins are this app's own; the rest are built.
 
-    Fresh per row: an operative memoises its own spec, and `persistent`,
+    Fresh per row: an operator memoises its own spec, and `persistent`,
     `sync_durability`, `sleep_when_idle` and the class kind are declarations
-    rather than builder calls. A `class.workflow` row is a real workflow declaration carrying the
+    rather than builder calls. A `class.bounded` row is a real bounded declaration carrying the
     row's builder flags, so the core judges what that kind may carry.
     """
     if row["topology"] in CITED:
         return CITED[row["topology"]]
     interpreter = Interpreter(row["steps"])
-    workflow = "class.workflow" in row["steps"]
-    declare = flezha.workflow_operative if workflow else flezha.stream_operative
+    bounded = "class.bounded" in row["steps"]
+    declare = flezha.bounded_operator if bounded else flezha.unbounded_operator
 
     def channels(c: flezha.Channels) -> None:
         interpreter.declare(c)
@@ -361,7 +361,7 @@ class PlainWithTopology(Plain):
         c.input("input")
 
 
-def declare_shorthand(declaration: dict[str, Any], declare: Any) -> flezha.Operative:
+def declare_shorthand(declaration: dict[str, Any], declare: Any) -> flezha.Operator:
     """Declare one short form exactly as an author writes it.
 
     A `.noout` row's body is annotated `-> None`, which is what an SDK that
@@ -386,12 +386,12 @@ def declare_shorthand(declaration: dict[str, Any], declare: Any) -> flezha.Opera
 def drive_shorthand(declarations: list[dict[str, Any]]) -> None:
     """Declare and register the row's short forms; the refusal is what it raises.
 
-    The first step is a stream short form and any later one a workflow, so a
+    The first step is an unbounded short form and any later one a bounded one, so a
     collision crosses kinds.
     """
     runner = flezha.create_runner("conformance_shorthand")
     for index, declaration in enumerate(declarations):
-        declare = flezha.stream_operative if index == 0 else flezha.workflow_operative
+        declare = flezha.unbounded_operator if index == 0 else flezha.bounded_operator
         runner.register_factory(declare_shorthand(declaration, declare))
 
 
@@ -433,7 +433,7 @@ def judge(row: dict[str, str], core: Core) -> dict[str, Any]:
     if declarations:
         return judge_shorthand(row, declarations)
     try:
-        derived = graph.validate(operative_for(row).spec, core)
+        derived = graph.validate(operator_for(row).spec, core)
     except flezha.DeclarationError as refusal:
         return {
             "topology": row["topology"],
@@ -475,4 +475,4 @@ def register_only(runner: flezha.Runner, topology: str) -> None:
     if declarations:
         drive_shorthand(declarations)
         return
-    runner.register_factory(operative_for(row))
+    runner.register_factory(operator_for(row))

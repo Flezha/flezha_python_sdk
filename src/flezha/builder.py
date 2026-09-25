@@ -1,6 +1,6 @@
 """The channel-graph DSL, and the specs it produces.
 
-The graph is built by calling an operative's declaration function with a
+The graph is built by calling an operator's declaration function with a
 :class:`Channels`; every fluent call answers a new :class:`Edge`, so a shared
 prefix can be branched without the arms colliding.
 
@@ -183,30 +183,30 @@ class ClassSpec:
     beyond_window_policy: str = "process_as_arrival"
     compact_after_bytes: int | None = None
     sync_durability: bool = False
-    workflow: dict[str, Any] | None = None
+    bounded: dict[str, Any] | None = None
 
     @property
-    def structured_workflow(self) -> bool:
+    def structured_bounded(self) -> bool:
         """Whether this class's producers release their values untransformed.
 
-        A structured workflow's stage releases ONE value per emit and the driver
+        A structured bounded's stage releases ONE value per emit and the driver
         fans it out to every consumer itself, so each consumer edge — its
         transforms and its key — belongs to the consumer. The producer and the
         consumer read this one predicate, so they cannot disagree about which
         side applies the edge.
         """
-        return self.kind == "workflow"
+        return self.kind == "bounded"
 
     @property
     def records_effects(self) -> bool:
         """Whether each invocation's output rides one effect record the
         controller stamps at flush: under the effectively-once tier, and for a
-        durable workflow, whose stage commit names the record."""
-        return self.effectively_once or (self.kind == "workflow" and self.persistent)
+        durable bounded, whose stage commit names the record."""
+        return self.effectively_once or (self.kind == "bounded" and self.persistent)
 
 
 class Channels:
-    """The fluent builder an operative's declaration function receives."""
+    """The fluent builder an operator's declaration function receives."""
 
     def __init__(self, factory_id: str) -> None:
         self.factory_id = factory_id
@@ -304,7 +304,7 @@ class Channels:
         once, as a ``(key, document)`` pair; a document whose class-codec bytes
         equal the retained one is inert, and a key with no traffic receives
         nothing. The node is ``route_latest``, so a second router in one
-        operative is named with :meth:`route_latest_named`.
+        operator is named with :meth:`route_latest_named`.
         """
         return self._route_latest(documents, traffic, key, None)
 

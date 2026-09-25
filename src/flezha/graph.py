@@ -161,6 +161,6 @@ def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
             "sync_durability": spec.sync_durability,
             "channels": [_channel_json(channel) for channel in spec.channels],
             "tasklets": [_tasklet_json(spec, node) for node in spec.tasklets],
-            "workflow": _compact(spec.workflow) if spec.workflow else None,
+            "bounded": _compact(spec.bounded) if spec.bounded else None,
         }
     )

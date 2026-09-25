@@ -37,7 +37,7 @@ def dispatch(shipment: Shipment) -> str:
     return shipment.tracking
 
 
-@flezha.stream_operative("mismatched")
+@flezha.unbounded_operator("mismatched")
 def mismatched(c: flezha.Channels) -> None:
     # `bill` produces Invoice; `dispatch` accepts Shipment.
     c.input("orders").into(bill).named("invoices").into(dispatch).sink()

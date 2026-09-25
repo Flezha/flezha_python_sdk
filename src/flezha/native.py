@@ -148,10 +148,10 @@ class Core:
 
     # -- local mode: the declared graph here, with no controller -----------
 
-    def local_start(self, factory_id: str, operative_id: str) -> None:
+    def local_start(self, factory_id: str, operator_id: str) -> None:
         """Start the declared class as a local run. The alternative to
         :meth:`start`, never an addition."""
-        self._call("local_start", factory_id, operative_id)
+        self._call("local_start", factory_id, operator_id)
 
     def local_on_sink(self, channel: str) -> None:
         """Queue a declared sink for :meth:`local_next_output`."""

@@ -37,7 +37,7 @@ def cell_identity(instance_id: str, tasklet_name: str, cell_key: str | None) -> 
     tasklet = tasklet_name.encode()
     key = (cell_key or "").encode()
     if len(instance) > 255 or len(tasklet) > 255:
-        raise FlezhaError("operative class / tasklet id must be at most 255 bytes")
+        raise FlezhaError("operator class / tasklet id must be at most 255 bytes")
     if len(key) > 0xFFFF:
         raise FlezhaError("cell key must be at most 65535 bytes")
     return (

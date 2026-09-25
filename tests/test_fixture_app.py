@@ -25,7 +25,7 @@ def test_persistence_off_counter_declares_its_own_nodes() -> None:
     """The reference's names (`test/apps/rust_runner/src/state.rs`), which the
     node and ruby ports carry too, and no node identity shared with the
     persistent twin."""
-    decl = graph.to_host_class_decl(fixtures_state.persistence_off_operative.spec)
+    decl = graph.to_host_class_decl(fixtures_state.persistence_off_operator.spec)
 
     assert decl["factory_id"] == "persistence_off_counter"
     assert decl["persistent"] is False
@@ -34,5 +34,5 @@ def test_persistence_off_counter_declares_its_own_nodes() -> None:
         "persistence_off_counter_tasklet",
     ]
 
-    twin = graph.to_host_class_decl(fixtures_state.stateful_counter_operative.spec)
+    twin = graph.to_host_class_decl(fixtures_state.stateful_counter_operator.spec)
     assert set(_tasklet_names(twin)).isdisjoint(_tasklet_names(decl))

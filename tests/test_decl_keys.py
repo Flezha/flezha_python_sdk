@@ -102,7 +102,7 @@ class Statics:
 statics = flezha.tasklet(Statics, cell_keys=["a", "b"], name="statics")
 
 
-@flezha.stream_operative("every_key")
+@flezha.unbounded_operator("every_key")
 def every_key(c: flezha.Channels) -> None:
     c.effectively_once().checkpoint_every(10).outputs_at_checkpoint(500)
     c.correction_window(60_000).beyond_window_policy("drop").compact_after_bytes(1 << 20)
@@ -111,19 +111,19 @@ def every_key(c: flezha.Channels) -> None:
     ).keyed().sink()
 
 
-@flezha.stream_operative("static_key")
+@flezha.unbounded_operator("static_key")
 def static_key(c: flezha.Channels) -> None:
     c.input("in").into(statics).sink()
 
 
-@flezha.workflow_operative(
-    "every_workflow_key",
+@flezha.bounded_operator(
+    "every_bounded_key",
     loop_mode="chained",
     rollback_mode="keep_progress",
     max_duration_ms=600_000,
     sync_durability=True,
 )
-def every_workflow_key(c: flezha.Channels) -> None:
+def every_bounded_key(c: flezha.Channels) -> None:
     c.input("in").into(echo).sink()
 
 
@@ -133,16 +133,16 @@ def _emitted() -> dict[str, set[str]]:
         "class": set(),
         "channel": set(),
         "tasklet": set(),
-        "workflow": set(),
+        "bounded": set(),
     }
-    for operative in (every_key, static_key, every_workflow_key):
-        decl = graph.to_host_class_decl(operative.spec)
+    for operator in (every_key, static_key, every_bounded_key):
+        decl = graph.to_host_class_decl(operator.spec)
         emitted["class"] |= set(decl)
         for channel in decl.get("channels", []):
             emitted["channel"] |= set(channel)
         for tasklet in decl.get("tasklets", []):
             emitted["tasklet"] |= set(tasklet)
-        emitted["workflow"] |= set(decl.get("workflow") or {})
+        emitted["bounded"] |= set(decl.get("bounded") or {})
     return emitted
 
 
@@ -176,17 +176,17 @@ def test_the_fixture_names_the_python_builder_as_a_reader() -> None:
 
 
 @pytest.mark.parametrize(
-    "operative,factory",
+    "operator,factory",
     [
         (every_key, "every_key"),
         (static_key, "static_key"),
-        (every_workflow_key, "every_workflow_key"),
+        (every_bounded_key, "every_bounded_key"),
     ],
 )
 def test_each_declaration_carries_the_python_language_byte(
-    operative: flezha.Operative, factory: str
+    operator: flezha.Operator, factory: str
 ) -> None:
-    decl = graph.to_host_class_decl(operative.spec)
+    decl = graph.to_host_class_decl(operator.spec)
     assert decl["factory_id"] == factory
     assert decl["sdk_lang"] == 7
     assert decl["change_format_id"] == 5
@@ -195,7 +195,7 @@ def test_each_declaration_carries_the_python_language_byte(
 def test_a_merge_serialises_each_source_as_a_chain_the_merge_link_closes() -> None:
     """The mapping is a `transform` link and the key a `key` link, so the one
     link a merge adds is the terminator the core reads the group off."""
-    merged = app.module("fixtures").merged_input_operative
+    merged = app.module("fixtures").merged_input_operator
     chains = [channel["chains"] for channel in graph.to_host_class_decl(merged.spec)["channels"]]
     source = [{"link": "transform"}, {"link": "key"}, {"link": "merge", "tasklet": 0, "group": 0}]
     assert chains[0] == chains[1] == [source]
@@ -217,11 +217,11 @@ def test_flat_map_records_the_link_map_records() -> None:
 
 # --- what the author wrote reaches the core, whatever the kind -------------
 #
-# ``flz_core::host::register::refuse_workflow_facts`` names each stream-only
-# key a workflow class may not carry. This builder puts every one on the wire
+# ``flz_core::host::register::refuse_bounded_facts`` names each unbounded-only
+# key a bounded class may not carry. This builder puts every one on the wire
 # for either kind, so the refusal is the core's, by name, and never a drop.
 
-_STREAM_ONLY = (
+_UNBOUNDED_ONLY = (
     "effectively_once",
     "checkpoint_ack",
     "checkpoint_every",
@@ -232,16 +232,16 @@ _STREAM_ONLY = (
 )
 
 
-def test_every_stream_setting_reaches_the_wire_on_a_workflow() -> None:
-    """The stream fixture's spec re-kinded: every stream-only key populated at once."""
-    workflow = dataclasses.replace(
+def test_every_unbounded_setting_reaches_the_wire_on_a_bounded() -> None:
+    """The unbounded fixture's spec re-kinded: every stream-only key populated at once."""
+    bounded = dataclasses.replace(
         every_key.spec,
-        factory_id="tier_workflow",
-        kind="workflow",
-        workflow=every_workflow_key.spec.workflow,
+        factory_id="tier_bounded",
+        kind="bounded",
+        bounded=every_bounded_key.spec.bounded,
     )
-    decl = graph.to_host_class_decl(workflow)
-    dropped = [key for key in _STREAM_ONLY if key not in decl]
+    decl = graph.to_host_class_decl(bounded)
+    dropped = [key for key in _UNBOUNDED_ONLY if key not in decl]
     assert not dropped, f"keys dropped before the core could judge them: {dropped}"
 
 
@@ -264,14 +264,14 @@ def _golden(topology: str) -> list[str]:
     ]
 
 
-def _lines(topology: str, operative: flezha.Operative) -> list[str]:
+def _lines(topology: str, operator: flezha.Operator) -> list[str]:
     """The DERIVED declaration in the golden's columns, one line per channel.
 
     The consumers, the kind after the wiring rule, the ``named`` override and the
     sink are all the core's answer to the record this builder submitted.
     """
     rendered = []
-    for channel in declare(operative)["channels"]:
+    for channel in declare(operator)["channels"]:
         consumers = channel["consumers"]
         rendered.append(
             " | ".join(
@@ -308,7 +308,7 @@ hybrid_producer = flezha.tasklet(HybridProducer, name="hybrid_producer_tasklet")
 hybrid_consumer = flezha.tasklet(HybridConsumer, name="hybrid_consumer_tasklet")
 
 
-@flezha.stream_operative("hybrid_channel")
+@flezha.unbounded_operator("hybrid_channel")
 def hybrid_channel(c: flezha.Channels) -> None:
     c.input("input").into(hybrid_producer).sink("hybrid_indicator", encode=_bytes).into(
         hybrid_consumer
@@ -329,7 +329,7 @@ tier_commit_a = flezha.tasklet(TierCommitA, name="tier_commit_a")
 block_b = flezha.tasklet(BlockB, name="block_b")
 
 
-@flezha.workflow_operative("commit_block_chain")
+@flezha.bounded_operator("commit_block_chain")
 def commit_block_chain(c: flezha.Channels) -> None:
     c.input("in").into(tier_commit_a).keyed().sink("mid", encode=_bytes).into(block_b)
 
@@ -338,5 +338,5 @@ def test_the_hybrid_stream_topology_is_the_reference() -> None:
     assert _lines("hybrid_channel", hybrid_channel) == _golden("hybrid_channel")
 
 
-def test_the_structured_workflow_topology_is_the_reference() -> None:
+def test_the_structured_bounded_topology_is_the_reference() -> None:
     assert _lines("commit_block_chain", commit_block_chain) == _golden("commit_block_chain")

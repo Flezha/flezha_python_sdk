@@ -233,11 +233,11 @@ def test_the_harness_answers_a_spawn_already_resolved() -> None:
 
     @flezha.tasklet
     def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
-        results.append(ctx.spawn_workflow("worker", value).try_result())
-        named = ctx.spawn_workflow("worker", value, id="w1")
+        results.append(ctx.spawn_bounded("worker", value).try_result())
+        named = ctx.spawn_bounded("worker", value, id="w1")
         results.append(named.try_result())
         again.append(named.wait())
-        unread.append(ctx.spawn_workflow("worker", value))
+        unread.append(ctx.spawn_bounded("worker", value))
 
     harness: TaskletTestHarness[None] = TaskletTestHarness(spawner)
     harness.feed("a")

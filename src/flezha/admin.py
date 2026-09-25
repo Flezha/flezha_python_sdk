@@ -2,7 +2,7 @@
 
 No tasklet has to be running and the application holds no credential of its
 own: the controller judges every call as the identity the connection already
-established, so nothing an unattended process holds expires. An operator grants
+established, so nothing an unattended process holds expires. A user grants
 a namespace's applications the authority once and revokes it the same way, and
 a revocation takes effect on the next call::
 
@@ -22,14 +22,14 @@ from .native import Core
 
 __all__ = ["Admin", "StartResult", "StartOutcome"]
 
-#: What a start did: started the operative, or found a live instance already
+#: What a start did: started the operator, or found a live instance already
 #: holding the id it named and left it untouched.
 StartOutcome = Literal["started", "already_running"]
 
 
 @dataclass(frozen=True, slots=True)
 class StartResult:
-    """What a start answered: the id the operative runs under, the generated one
+    """What a start answered: the id the operator runs under, the generated one
     when the start named none, and what the start did."""
 
     id: str
@@ -44,7 +44,7 @@ class Admin:
     def __init__(self, core: Core) -> None:
         self._core = core
 
-    def start_operative(
+    def start_operator(
         self,
         factory_id: str,
         *,
@@ -52,11 +52,11 @@ class Admin:
         init_values: Any = None,
         opts: Any = None,
     ) -> StartResult:
-        """Start an operative, on the specification ``flz operative start`` takes.
+        """Start an operator, on the specification ``flz operator start`` takes.
 
         Without ``id`` the controller generates one, and the answer carries it.
         A start without an id that is retried after a lost answer starts a second
-        operative, and a second stream runs until it is stopped; passing an id
+        operator, and a second stream runs until it is stopped; passing an id
         prevents it, because a start of a live id answers ``already_running``.
         """
         fields: dict[str, Any] = {"factory_id": factory_id}
@@ -66,16 +66,16 @@ class Admin:
             fields["init_values"] = init_values
         if opts is not None:
             fields["opts"] = opts
-        answer = self.call("Operative.start", fields)
+        answer = self.call("Operator.start", fields)
         return StartResult(answer["id"], answer["outcome"])
 
-    def stop_operative(self, operative_id: str) -> Any:
-        """Stop an operative, or the whole partition group it names."""
-        return self.call("Operative.stop", operative_id)
+    def stop_operator(self, operator_id: str) -> Any:
+        """Stop an operator, or the whole partition group it names."""
+        return self.call("Operator.stop", operator_id)
 
-    def send(self, operative_id: str, message: str, channel: str = "") -> Any:
-        """Inject a message into an operative's input stream, blocking for the verdict."""
-        return self.call("Operative.send", operative_id, message, channel)
+    def send(self, operator_id: str, message: str, channel: str = "") -> Any:
+        """Inject a message into an operator's input stream, blocking for the verdict."""
+        return self.call("Operator.send", operator_id, message, channel)
 
     def enable_plugin(self, plugin_id: str, fields: dict[str, Any]) -> Any:
         """Enable a plugin, built from the fields ``flz plugin enable`` takes."""
@@ -85,17 +85,17 @@ class Admin:
         """Disable a plugin, or every partitioned instance of it."""
         return self.call("PluginManager.disable", plugin_id)
 
-    def list_operatives(self) -> Any:
-        """The operative ids running in this namespace."""
-        return self.call("Operative.list_operatives")
+    def list_operators(self) -> Any:
+        """The operator ids running in this namespace."""
+        return self.call("Operator.list_operators")
 
     def list_plugins(self) -> Any:
         """The plugins enabled on the controller node answering this call."""
         return self.call("PluginManager.list")
 
-    def cell_state(self, operative_id: str, cell_key: str) -> Any:
+    def cell_state(self, operator_id: str, cell_key: str) -> Any:
         """One cell's live state, and the change sequence it was read at."""
-        return self.call("Operative.cell_state", operative_id, cell_key)
+        return self.call("Operator.cell_state", operator_id, cell_key)
 
     def call(self, verb: str, *args: Any) -> Any:
         """Any published function, by name.

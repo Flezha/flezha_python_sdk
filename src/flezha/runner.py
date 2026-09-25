@@ -7,7 +7,7 @@ reaches the core.
 
 Startup order::
 
-    declare classes -> (fork, if the operator forks at all) -> start
+    declare classes -> (fork, if the user forks at all) -> start
 
 The core must NOT be started before a fork: it owns native threads that
 ``fork(2)`` does not carry, and :meth:`Core._call <flezha.native.Core._call>`
@@ -31,7 +31,7 @@ from .executor import Executor
 from .executor import build as build_executor
 from .logger import logger
 from .native import ACTIVATION_SCHEMA_VERSION, Core, build_tier, load_extension
-from .operative import Operative
+from .operator import Operator
 
 __all__ = ["Runner", "create_runner", "ACTIVATION_SCHEMA_VERSION"]
 
@@ -46,17 +46,17 @@ _STDIN_EOF_GRACE_MS = 5_000
 _started_slot = threading.Lock()
 
 
-def _operative_of(value: object) -> Operative:
-    """The operative a registration call was handed.
+def _operator_of(value: object) -> Operator:
+    """The operator a registration call was handed.
 
     A tasklet declares none, and saying so here is what keeps the refusal at
     the call the author wrote.
     """
-    if not isinstance(value, Operative):
+    if not isinstance(value, Operator):
         raise FlezhaError(
-            f"`{getattr(value, '__name__', value)}` declares no operative; register the "
-            f"operative that wires it, or declare a single tasklet as a whole operative with "
-            f"`@flezha.stream_operative(id=...)` or `@flezha.workflow_operative(id=...)`"
+            f"`{getattr(value, '__name__', value)}` declares no operator; register the "
+            f"operator that wires it, or declare a single tasklet as a whole operator with "
+            f"`@flezha.unbounded_operator(id=...)` or `@flezha.bounded_operator(id=...)`"
         )
     return value
 
@@ -66,7 +66,7 @@ class Runner:
 
     def __init__(self, namespace: str) -> None:
         self._namespace = namespace
-        self._operatives: list[Operative] = []
+        self._operators: list[Operator] = []
         self._registry = Registry()
         self._core: Core | None = None
         self._executor: Executor | None = None
@@ -83,23 +83,23 @@ class Runner:
     def namespace(self) -> str:
         return self._namespace
 
-    def operatives(self) -> list[str]:
+    def operators(self) -> list[str]:
         """The factory ids this runner currently declares."""
-        return self._registry.ids() if self._started else [o.factory_id for o in self._operatives]
+        return self._registry.ids() if self._started else [o.factory_id for o in self._operators]
 
-    def register_factory(self, operative: Operative) -> Runner:
-        """Register an operative type of either kind, short form or full.
+    def register_factory(self, operator: Operator) -> Runner:
+        """Register an operator type of either kind, short form or full.
 
         The kind is read from what is handed in, never named by the call.
         Legal both before and after :meth:`start`; a post-start declaration
         reaches the core immediately and the controller at the next bind.
         """
-        return self._define(_operative_of(operative))
+        return self._define(_operator_of(operator))
 
     def register_modules(self, *modules: str) -> Runner:
         """Import the named modules and register everything they declare.
 
-        Every :class:`~flezha.operative.Operative` the module holds, short form
+        Every :class:`~flezha.operator.Operator` the module holds, short form
         or full. No implicit package scanning and no filesystem discovery: the
         modules are named, and one that cannot be imported says so with the
         original error chained.
@@ -109,22 +109,22 @@ class Runner:
                 module = importlib.import_module(name)
             except ImportError as error:
                 raise FlezhaError(
-                    f"the module `{name}` names operative declarations but could not be "
+                    f"the module `{name}` names operator declarations but could not be "
                     f"imported: {error}"
                 ) from error
             for value in vars(module).values():
-                if isinstance(value, Operative):
+                if isinstance(value, Operator):
                     self._define(value)
         return self
 
-    def unregister_factory(self, operative: Operative) -> Runner:
+    def unregister_factory(self, operator: Operator) -> Runner:
         """Undeclare a type — the inverse of :meth:`register_factory`, taking what it took.
 
         Refuses one with live instances, and one never declared.
         """
-        factory_id = _operative_of(operative).factory_id
-        if not any(o.factory_id == factory_id for o in self._operatives):
-            raise FlezhaError(f"no operative type `{factory_id}` is declared on this runner")
+        factory_id = _operator_of(operator).factory_id
+        if not any(o.factory_id == factory_id for o in self._operators):
+            raise FlezhaError(f"no operator type `{factory_id}` is declared on this runner")
         if self._started:
             registered = self._registry.get(factory_id)
             if registered is not None and registered.has_cells():
@@ -143,7 +143,7 @@ class Runner:
                 "the declaration lapses when the context ends",
                 factory_id,
             )
-        self._operatives = [o for o in self._operatives if o.factory_id != factory_id]
+        self._operators = [o for o in self._operators if o.factory_id != factory_id]
         return self
 
     def executor(self, kind: str, **options: Any) -> Runner:
@@ -155,10 +155,10 @@ class Runner:
     def admin(self) -> Admin:
         """Administer this namespace from ordinary application code.
 
-        Start, stop and feed operatives, enable and disable plugins, read what
+        Start, stop and feed operators, enable and disable plugins, read what
         is running. The controller judges every call as the identity this
         connection proved, so no credential is held here and nothing expires.
-        An operator grants a namespace's applications the authority once, with
+        A user grants a namespace's applications the authority once, with
         ``flz role bind runner@<namespace> app <namespace>``; until then every
         call is refused.
         """
@@ -181,8 +181,8 @@ class Runner:
             # attempted.
             self._core = core or Core.create()
             determinism.install()
-            for operative in self._operatives:
-                self._declare(operative)
+            for operator in self._operators:
+                self._declare(operator)
             self._core.start(self._namespace)
             self._observe_shutdown()
 
@@ -291,13 +291,13 @@ class Runner:
             self._holds_slot = False
             _started_slot.release()
 
-    def _define(self, operative: Operative) -> Runner:
-        if any(o.factory_id == operative.factory_id for o in self._operatives):
+    def _define(self, operator: Operator) -> Runner:
+        if any(o.factory_id == operator.factory_id for o in self._operators):
             raise FlezhaError(
-                f"DuplicateFactoryId: `{operative.factory_id}` is already declared on this "
+                f"DuplicateFactoryId: `{operator.factory_id}` is already declared on this "
                 f"runner; a runner declares each factory id once"
             )
-        self._operatives.append(operative)
+        self._operators.append(operator)
         if self._started:
             # Declaring on a live core appends to the set its connect frame is
             # serialized from, which is the resync of record. An FFI host ships
@@ -306,15 +306,15 @@ class Runner:
             # The in-process Rust host, which owns the runner channel directly,
             # is the only one that can notify a live controller — OWED to
             # `sdk-abi-factory-resync`, and Java carries the same gap.
-            self._declare(operative)
+            self._declare(operator)
         return self
 
-    def _declare(self, operative: Operative) -> None:
+    def _declare(self, operator: Operator) -> None:
         assert self._core is not None
-        graph.declare(operative.spec, self._core, self._registry)
+        graph.declare(operator.spec, self._core, self._registry)
 
     def _observe_shutdown(self) -> None:
-        """Shutdown is observed three ways, because the harness, an operator and
+        """Shutdown is observed three ways, because the harness, a user and
         the controller each have their own: end of file on standard input, a
         signal, and the core's own stop — which every worker sees as
         ``shutting_down`` from its next poll.

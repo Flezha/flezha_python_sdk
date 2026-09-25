@@ -4,12 +4,12 @@ it: the same class the end-to-end scenario drives, so what passes here and what
 passes there cannot be two different graphs.
 
 The other ten capabilities in the vocabulary are the controller's: persistence,
-effectively-once, correction, partitioning, workflows, liveness, restarts. Local
+effectively-once, correction, partitioning, bounded, liveness, restarts. Local
 mode refuses them by name rather than approximating them.
 
 What each test can assert is what a run with no controller can see. A durable
 write reaches a null sink, a parked payload has nowhere to park, and a partition
-member's key range arrives with ``AddOperative``, so the assertions here are the
+member's key range arrives with ``AddOperator``, so the assertions here are the
 output side of each capability, which is the half the language layer produces.
 """
 
@@ -21,7 +21,7 @@ from collections.abc import Callable, Iterable
 import pytest
 
 import app
-from flezha import CoreError, LocalOperative, Operative, SinkOutput
+from flezha import CoreError, LocalOperator, Operator, SinkOutput
 
 fixtures = app.module("fixtures")
 fixtures_state = app.module("fixtures_state")
@@ -30,11 +30,11 @@ fixtures_state = app.module("fixtures_state")
 prefix = app.module("fixture_support").prefix
 
 #: The app's own registration list, keyed by the id `conformance.json` names.
-_REGISTERED: dict[str, Operative] = {operative.factory_id: operative for operative in fixtures.ALL}
+_REGISTERED: dict[str, Operator] = {operator.factory_id: operator for operator in fixtures.ALL}
 
 
 def release(
-    operative: Operative,
+    operator: Operator,
     channel: str,
     sink: str,
     inputs: Iterable[str],
@@ -47,7 +47,7 @@ def release(
     closing is what hands the last of them over.
     """
     released: list[SinkOutput] = []
-    with LocalOperative.start(operative) as run:
+    with LocalOperator.start(operator) as run:
         run.on_sink(sink, released.append)
         for value in inputs:
             run.feed(channel, value)
@@ -70,7 +70,7 @@ def per_cell(
     return grouped
 
 
-def declares(capability: str, factory_id: str) -> Operative:
+def declares(capability: str, factory_id: str) -> Operator:
     """The class under test, which is the one the manifest names for the capability."""
     listed = app.declared_fixtures()[capability]
     assert factory_id in listed, (
@@ -96,7 +96,7 @@ def test_shorthand_a_short_form_is_built_and_run_with_no_controller() -> None:
 def test_keyed_channels_a_keyed_sink_stamps_the_key_the_class_resolved() -> None:
     # `partition_relay` is the manifest's only keyed-channel class. Partitioning
     # itself is the controller's (a member's key-group range arrives with
-    # `AddOperative`), so what is asserted here is the half the language layer
+    # `AddOperator`), so what is asserted here is the half the language layer
     # owns: the key it resolves and the stamps it puts on the released value.
     released = release(
         declares("keyed_channels", "partition_relay"),
@@ -180,7 +180,7 @@ def test_a_controller_capability_is_refused_by_name_not_approximated() -> None:
     # `tier_store` is effectively-once, which needs a durable store to release
     # from, so a local run says so instead of running the graph.
     with pytest.raises(CoreError) as caught:
-        LocalOperative.start(fixtures_state.tier_store_operative)
+        LocalOperator.start(fixtures_state.tier_store_operator)
 
     message = str(caught.value)
     assert "effectively_once" in message and "requires a controller" in message, message

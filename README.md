@@ -4,7 +4,7 @@ The Flezha Python SDK — a poll host over `flz_core`, the runner kernel the
 Rust, Java, Node and Ruby SDKs also drive.
 
 The kernel owns transport, ordering, per-cell exclusivity, durability,
-retries, timers, credit, routing and workflow runs. This package brings
+retries, timers, credit, routing and bounded runs. This package brings
 the authoring surface, the codec for user types, the threading host and
 idiomatic errors — and no kernel code.
 
@@ -17,17 +17,17 @@ def echo(value: str) -> str:
     return value
 
 
-@flezha.stream_operative("echo")
-def echo_operative(c: flezha.Channels) -> None:
+@flezha.unbounded_operator("echo")
+def echo_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(echo).sink("out")
 
 
-flezha.create_runner("default").register_factory(echo_operative).run()
+flezha.create_runner("default").register_factory(echo_operator).run()
 ```
 
-- **Run a graph with no controller.** `LocalOperative.start` takes the same
-  operative and runs its declared graph in this process — for trying Flezha out
-  and for developing an operative. State is held in memory and nothing is
+- **Run a graph with no controller.** `LocalOperator.start` takes the same
+  operator and runs its declared graph in this process — for trying Flezha out
+  and for developing an operator. State is held in memory and nothing is
   durable; every run says so.
 - **Python 3.11+**, CPython only. Two wheel tiers from one source: an `abi3`
   compatibility wheel per platform, and per-version free-threaded wheels.

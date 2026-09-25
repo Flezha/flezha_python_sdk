@@ -23,7 +23,7 @@ def other(value: str) -> str:
     return value
 
 
-@flezha.stream_operative("other")
+@flezha.unbounded_operator("other")
 def other_op(c: flezha.Channels) -> None:
     c.input("in").into(other).sink()
 
@@ -52,7 +52,7 @@ def runner() -> Any:
 def test_creating_a_runner_connects_nothing(runner: Any) -> None:
     r = runner("my_app")
     assert r.namespace == "my_app"
-    assert r.operatives() == []
+    assert r.operators() == []
 
 
 def test_start_declares_then_connects(runner: Any) -> None:
@@ -63,7 +63,7 @@ def test_start_declares_then_connects(runner: Any) -> None:
         assert core.started == "my_app"
         assert len(core.declared) == 1
         assert json.loads(core.declared[0])["factory_id"] == "demo"
-        assert r.operatives() == ["demo"]
+        assert r.operators() == ["demo"]
     finally:
         r.stop()
         r.drain()
@@ -122,7 +122,7 @@ def test_only_one_runner_may_be_started_per_process(runner: Any) -> None:
 
 
 def test_a_declaration_that_fails_releases_the_slot(runner: Any) -> None:
-    @flezha.stream_operative("broken")
+    @flezha.unbounded_operator("broken")
     def broken(c: flezha.Channels) -> None:
         c.input("dangling")
 
@@ -139,7 +139,7 @@ def test_a_post_start_define_reaches_the_core(runner: Any) -> None:
     try:
         r.register_factory(other_op)
         assert [json.loads(body)["factory_id"] for body in core.declared] == ["demo", "other"]
-        assert r.operatives() == ["demo", "other"]
+        assert r.operators() == ["demo", "other"]
     finally:
         r.stop()
         r.drain()
@@ -161,7 +161,7 @@ def test_removing_a_type_with_live_instances_is_refused(runner: Any) -> None:
         dispatch_now(work_activation(1, "abc"), core, deps)
         with pytest.raises(FlezhaError, match="live instances"):
             r.unregister_factory(demo)
-        assert r.operatives() == ["demo"]
+        assert r.operators() == ["demo"]
     finally:
         r.stop()
         r.drain()
@@ -172,7 +172,7 @@ def test_removing_a_type_with_no_instances_succeeds(runner: Any) -> None:
     r = runner().register_factory(demo).register_factory(other_op).start(core=core)
     try:
         r.unregister_factory(other_op)
-        assert r.operatives() == ["demo"]
+        assert r.operators() == ["demo"]
     finally:
         r.stop()
         r.drain()
@@ -188,7 +188,7 @@ def test_register_modules_imports_and_registers(runner: Any) -> None:
     core = FakeCore()
     r = runner().register_modules("declaring_module").start(core=core)
     try:
-        assert r.operatives() == ["from_module", "from_module_short_form"]
+        assert r.operators() == ["from_module", "from_module_short_form"]
     finally:
         r.stop()
         r.drain()
@@ -204,7 +204,7 @@ def test_an_unimportable_module_names_it_and_chains_the_original(runner: Any) ->
 def test_the_context_manager_drains_on_exit(runner: Any) -> None:
     core = FakeCore()
     with runner().register_factory(demo).start(core=core) as r:
-        assert r.operatives() == ["demo"]
+        assert r.operators() == ["demo"]
     assert core.shut_down
     assert core.freed
 
@@ -300,13 +300,13 @@ def test_a_start_takes_the_factory_first_and_answers_the_id_and_the_outcome(
 
     monkeypatch.setattr(core, "admin_call", admin_call)
     admin = runner().start(core=core).admin()
-    assert admin.start_operative("echo") == flezha.StartResult("echo-k7m2qzxw4pd3fn2a", "started")
-    assert admin.start_operative("echo", id="my_echo", init_values={"a": 1}) == flezha.StartResult(
+    assert admin.start_operator("echo") == flezha.StartResult("echo-k7m2qzxw4pd3fn2a", "started")
+    assert admin.start_operator("echo", id="my_echo", init_values={"a": 1}) == flezha.StartResult(
         "my_echo", "already_running"
     )
     assert calls == [
-        ("Operative.start", [{"factory_id": "echo"}]),
-        ("Operative.start", [{"factory_id": "echo", "id": "my_echo", "init_values": {"a": 1}}]),
+        ("Operator.start", [{"factory_id": "echo"}]),
+        ("Operator.start", [{"factory_id": "echo", "id": "my_echo", "init_values": {"a": 1}}]),
     ]
 
 
@@ -347,46 +347,46 @@ def test_one_call_turns_diagnostics_on() -> None:
         root.setLevel(logging.NOTSET)
 
 
-@flezha.stream_operative(id="short_stream", sink="out", codec="text")
-def short_stream(value: str) -> str:
+@flezha.unbounded_operator(id="short_unbounded", sink="out", codec="text")
+def short_unbounded(value: str) -> str:
     return value
 
 
-@flezha.workflow_operative(id="short_workflow", sink="placed", codec="text")
-def short_workflow(value: str) -> str:
+@flezha.bounded_operator(id="short_bounded", sink="placed", codec="text")
+def short_bounded(value: str) -> str:
     return value
 
 
 def test_register_factory_takes_a_short_form_of_either_kind(runner: Any) -> None:
-    r = runner().register_factory(short_stream).register_factory(short_workflow)
-    assert r.operatives() == ["short_stream", "short_workflow"]
+    r = runner().register_factory(short_unbounded).register_factory(short_bounded)
+    assert r.operators() == ["short_unbounded", "short_bounded"]
 
-    r.unregister_factory(short_workflow)
-    assert r.operatives() == ["short_stream"]
-    r.unregister_factory(short_stream)
-    assert r.operatives() == []
+    r.unregister_factory(short_bounded)
+    assert r.operators() == ["short_unbounded"]
+    r.unregister_factory(short_unbounded)
+    assert r.operators() == []
 
 
 def test_register_modules_collects_a_short_form(runner: Any) -> None:
     core = FakeCore()
     r = runner().register_modules("declaring_module").start(core=core)
     try:
-        assert "from_module_short_form" in r.operatives()
+        assert "from_module_short_form" in r.operators()
     finally:
         r.stop()
         r.drain()
 
 
 def test_a_short_form_collides_with_one_of_the_other_kind(runner: Any) -> None:
-    @flezha.workflow_operative(id="short_stream", sink="placed")
+    @flezha.bounded_operator(id="short_unbounded", sink="placed")
     def twin(value: str) -> str:
         return value
 
-    r = runner().register_factory(short_stream)
-    with pytest.raises(FlezhaError, match="DuplicateFactoryId: `short_stream`"):
+    r = runner().register_factory(short_unbounded)
+    with pytest.raises(FlezhaError, match="DuplicateFactoryId: `short_unbounded`"):
         r.register_factory(twin)
 
 
 def test_registering_a_tasklet_is_refused(runner: Any) -> None:
-    with pytest.raises(FlezhaError, match="declares no operative"):
+    with pytest.raises(FlezhaError, match="declares no operator"):
         runner().register_factory(other)  # type: ignore[arg-type]

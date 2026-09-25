@@ -2,7 +2,7 @@
 
 The SDK contains no kernel code. Transport, framing, ordering, per-cell
 exclusivity, durability, retries, the retry-to-park ladder, timers, credit,
-routing, the workflow driver and reconnect all live in the core; this package
+routing, the bounded driver and reconnect all live in the core; this package
 brings the authoring surface, the codec for user types, the threading host and
 idiomatic errors.
 
@@ -14,11 +14,11 @@ idiomatic errors.
     def echo(value: str) -> str:
         return value
 
-    @flezha.stream_operative("echo")
-    def echo_operative(c: flezha.Channels) -> None:
+    @flezha.unbounded_operator("echo")
+    def echo_operator(c: flezha.Channels) -> None:
         c.input("input").into(echo).sink("out")
 
-    flezha.create_runner("default").register_factory(echo_operative).run()
+    flezha.create_runner("default").register_factory(echo_operator).run()
 """
 
 from __future__ import annotations
@@ -39,16 +39,16 @@ from .errors import (
     SchemaMismatchError,
     SpawnAlreadyRunningError,
     SpawnError,
-    SpawnFactoryNotWorkflowError,
+    SpawnFactoryNotBoundedError,
     SpawnFactoryUnknownError,
     SpawnRefusedError,
     SpawnTimeoutError,
     SpawnUnavailableError,
     UnrepresentableValueError,
 )
-from .local import LocalOperative, SinkOutput
+from .local import LocalOperator, SinkOutput
 from .logger import configure as configure_logging
-from .operative import Operative, stream_operative, workflow_operative
+from .operator import Operator, bounded_operator, unbounded_operator
 from .runner import ACTIVATION_SCHEMA_VERSION, Runner, create_runner
 from .tasklet import Tasklet, tasklet
 from .version import __version__
@@ -59,8 +59,8 @@ __all__ = [
     # authoring
     "tasklet",
     "state",
-    "stream_operative",
-    "workflow_operative",
+    "unbounded_operator",
+    "bounded_operator",
     "Channels",
     "Edge",
     "Merge",
@@ -68,12 +68,12 @@ __all__ = [
     "SpawnHandle",
     "SpawnResult",
     "Tasklet",
-    "Operative",
+    "Operator",
     "DROPPED",
     # runner
     "create_runner",
     "Runner",
-    "LocalOperative",
+    "LocalOperator",
     "SinkOutput",
     "configure_logging",
     # codec
@@ -92,7 +92,7 @@ __all__ = [
     "SpawnError",
     "SpawnAlreadyRunningError",
     "SpawnFactoryUnknownError",
-    "SpawnFactoryNotWorkflowError",
+    "SpawnFactoryNotBoundedError",
     "SpawnRefusedError",
     "SpawnTimeoutError",
     "SpawnUnavailableError",
