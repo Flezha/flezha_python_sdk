@@ -68,7 +68,7 @@ That is also why the compose file sets `stdin_open: true`.
 |---|---|---|
 | `echo_tasklet.py` | the tasklet | the processing stage: prefixes each message |
 | `echo_operator.py` | the operator | the graph: `in` feeds the tasklet, output lands on `out` |
-| `runner.py` | the runner | this process: offers the operator and waits |
+| `runner.py` | the runner | this process: registers the echo factory and waits |
 
 The tasklet never says where its output goes; the operator decides that.
 That split is what lets the graph be rewired without touching the tasklet.
