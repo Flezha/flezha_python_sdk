@@ -30,7 +30,7 @@ from .errors import FlezhaError
 from .executor import Executor
 from .executor import build as build_executor
 from .logger import logger
-from .native import ACTIVATION_SCHEMA_VERSION, Core, build_tier, load_extension
+from .native import ACTIVATION_SCHEMA_VERSION, Core, build_tier
 from .operator import Operator
 
 __all__ = ["Runner", "create_runner", "ACTIVATION_SCHEMA_VERSION"]
@@ -160,9 +160,12 @@ class Runner:
         connection proved, so no credential is held here and nothing expires.
         A user grants a namespace's applications the authority once, with
         ``flz role bind runner@<namespace> app <namespace>``; until then every
-        call is refused.
+        call is refused. It needs a started runner, whose connection is what
+        the controller judges.
         """
-        return Admin(self._core or load_extension())
+        if self._core is None:
+            raise FlezhaError("administration needs a started runner: call start() first")
+        return Admin(self._core)
 
     # -- lifecycle ---------------------------------------------------------
 

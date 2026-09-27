@@ -310,6 +310,11 @@ def test_a_start_takes_the_factory_first_and_answers_the_id_and_the_outcome(
     ]
 
 
+def test_admin_before_start_is_refused(runner: Any) -> None:
+    with pytest.raises(FlezhaError, match="call start"):
+        runner().admin()
+
+
 def test_the_double_answers_every_call_a_host_can_make_on_a_core() -> None:
     """``native.Core.ENTRY_POINTS`` is asserted against the extension in
     ``test_native.py``; nothing held it against the double, which is hand written.
