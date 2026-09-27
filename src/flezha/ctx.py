@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 from . import codec as _codec
-from .builder import ChannelSpec, ClassSpec, ConsumerEdge, TaskNode, apply_transforms
+from .builder import DROPPED, ChannelSpec, ClassSpec, ConsumerEdge, TaskNode, apply_transforms
 from .errors import EmitError, SpawnError
 from .identity import cell_identity, stable_id
 
@@ -325,6 +325,18 @@ class Ctx(Generic[S]):
         )
 
     # -- what the dispatcher collects ---------------------------------------
+
+    def emit_returned(self, returned: Any) -> None:
+        """Emit what a handler returned, if anything.
+
+        ``None`` emits nothing, which is the warmup gate, so a handler that emits
+        through the context and one that returns a value compose. A value
+        returned by a tasklet with no outgoing channel is left alone, as the
+        reference leaves an unconsumed output. One method, because the
+        dispatcher and the test harness must not disagree about it.
+        """
+        if returned is not None and returned is not DROPPED and self._outgoing:
+            self.emit(returned)
 
     def effect(self, consumed_offset: int | None) -> dict[str, Any]:
         """The effect record for this item, as the core folds it."""

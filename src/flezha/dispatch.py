@@ -19,7 +19,7 @@ from typing import Any
 
 from . import codec as _codec
 from . import determinism
-from .builder import DROPPED, ChannelSpec, ClassSpec, ConsumerEdge, TaskNode, apply_transforms
+from .builder import ChannelSpec, ClassSpec, ConsumerEdge, TaskNode, apply_transforms
 from .cell_state import fold_restore
 from .ctx import Ctx
 from .errors import FlezhaError
@@ -34,7 +34,6 @@ __all__ = [
     "answer",
     "dispatch",
     "dispatch_now",
-    "emit_returned",
     "invoke",
     "run_now",
     "resolve",
@@ -430,14 +429,6 @@ def _failure_of(error: BaseException) -> tuple[str, str]:
     return ("non_retryable" if is_non_retryable(error) else "retryable"), error_message(error)
 
 
-def emit_returned(ctx: Ctx[Any], returned: Any) -> None:
-    """A returned value is emitted; `None` emits nothing, which is the warmup
-    gate. A handler that emits through the context returns nothing, so the two
-    spellings compose rather than conflict."""
-    if returned is not None and returned is not DROPPED:
-        ctx.emit(returned)
-
-
 async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any]) -> None:
     task = cell.task
     if item["kind"] == "timer":
@@ -446,8 +437,7 @@ async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any]) -> None:
                 f"{task.name} registered a timer but declares no on_timer; registration is a "
                 f"runtime call, so this cannot be refused at declaration time"
             )
-        emit_returned(
-            ctx,
+        ctx.emit_returned(
             await resolve(
                 task.on_timer(
                     {
@@ -485,7 +475,7 @@ async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any]) -> None:
     # its offset advances once and nothing is retried.
     for value in values:
         if edge is None or _routes_to(cell, edge, value):
-            emit_returned(ctx, await resolve(task(value, ctx)))
+            ctx.emit_returned(await resolve(task(value, ctx)))
 
 
 def _restore_fold(cell: Cell, activation: dict[str, Any]) -> dict[str, Any]:

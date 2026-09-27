@@ -115,6 +115,22 @@ def default_codecs(c: Channels) -> None:
     c.input("in").into(defaults).sink("out")
 
 
+calls: list[str] = []
+
+
+@unbounded_operator("local_echoless_python", input="ticks", codec="text")
+def echoless(tick: str) -> str:
+    calls.append(tick)
+    return f"got {tick}"
+
+
+def test_a_sinkless_short_form_whose_run_returns_a_value_runs_it_once() -> None:
+    with LocalOperator.start(echoless) as run:
+        run.feed("ticks", "a")
+        run.run_until_idle(5_000)
+    assert calls == ["a"], "a value with nowhere to go is left alone, never retried"
+
+
 def test_an_undeclared_entry_reads_json_and_an_undeclared_sink_follows_the_value() -> None:
     released: list[bytes] = []
     with LocalOperator.start(default_codecs) as run:

@@ -20,7 +20,7 @@ from typing import Any, Generic, TypeVar
 from . import codec as _codec
 from .builder import Channels, ClassSpec
 from .cell_state import fold_restore
-from .dispatch import DispatchDeps, RegisteredClass, emit_returned, invoke, run_now
+from .dispatch import DispatchDeps, RegisteredClass, invoke, run_now
 from .errors import CoreError, FlezhaError
 from .tasklet import Tasklet
 
@@ -231,7 +231,7 @@ class TaskletTestHarness(Generic[S]):
             self._spawns.clear()
         # The runner never emits what a compensate hook returns.
         if emit:
-            emit_returned(ctx, returned)
+            ctx.emit_returned(returned)
         self.log.extend(ctx.changes)
         self._change_seq += len(ctx.changes)
         self._timers.extend(timer for timer in ctx.timers if timer["register"])
