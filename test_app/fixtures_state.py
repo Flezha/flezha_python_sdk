@@ -10,6 +10,7 @@ from typing import Any
 
 import flezha
 from fixture_support import _as_int, _env_int, prefix
+from fixtures_bounded import RELEASE_ENV
 from flezha import codec as flezha_codec
 
 # -- bench_keyed_nopersist ---------------------------------------------------
@@ -305,6 +306,50 @@ def tier_store_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").on_full("drop_nothing").retry_backoff_ms(300).into(
         tier_store, "tier_store_tasklet"
     ).keyed().sink("sink")
+
+
+# -- tier_chain --------------------------------------------------------------
+#
+# An effectively-once stream of two tasklets. `tier_relay` counts what it
+# relays and passes each `key:value` on; `tier_tally` counts each key's inputs
+# and emits `key=count`. Until the release env is set the tally fails the value
+# `hold` and keeps retrying it, so a runner killed there has made the relay's
+# record durable and not the tally's.
+
+
+class Counting:
+    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+        return {"value": 0}
+
+    def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
+        state["value"] += change["delta"]
+
+
+class TierRelay(Counting):
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+        ctx.change({"delta": 1})
+        ctx.emit(value)
+
+
+class TierTally(Counting):
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+        key, _, item = value.partition(":")
+        if item == "hold" and RELEASE_ENV not in os.environ:
+            raise ValueError("held until released")
+        ctx.change({"delta": 1})
+        ctx.emit(f"{key}={ctx.state['value']}", key=key)
+
+
+tier_relay = flezha.tasklet(TierRelay, name="tier_relay")
+tier_tally = flezha.tasklet(TierTally, name="tier_tally")
+
+
+@flezha.unbounded_operator("tier_chain")
+def tier_chain_operator(c: flezha.Channels) -> None:
+    c.effectively_once()
+    c.input("input", codec="text").on_full("drop_nothing").into(tier_relay).key_by(
+        prefix
+    ).retry_max(1_000).into(tier_tally).keyed().sink("sink")
 
 
 class CheckpointStore(KeyedUpsert):

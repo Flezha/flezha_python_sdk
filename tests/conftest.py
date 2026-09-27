@@ -190,7 +190,14 @@ class FakeCore:
         self.freed = True
 
     def spawn_request(
-        self, token: int, factory_id: str, id: str, payload: bytes, if_running: str, replay: bool
+        self,
+        token: int,
+        factory_id: str,
+        id: str,
+        payload: bytes,
+        if_running: str,
+        replay: bool,
+        offset: int | None,
     ) -> int:
         with self._lock:
             self.spawns.append(
@@ -201,6 +208,7 @@ class FakeCore:
                     "payload": payload,
                     "if_running": if_running,
                     "replay": replay,
+                    "offset": offset,
                     "due": time.monotonic() + self.spawn_answer_after_s,
                 }
             )

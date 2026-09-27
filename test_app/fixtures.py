@@ -17,7 +17,7 @@ from typing import Any, ClassVar
 
 import flezha
 from fixture_support import _as_int, _env_int, passthrough, prefix
-from fixtures_bounded import stateless_loop_bounded
+from fixtures_bounded import block_until_released, stateless_loop_bounded
 from fixtures_state import (
     bench_checkpoint_operator,
     bench_keyed_nopersist_operator,
@@ -32,6 +32,7 @@ from fixtures_state import (
     sleeping_counter_operator,
     stateful_counter_operator,
     store_input_operator,
+    tier_chain_operator,
     tier_store_operator,
 )
 
@@ -577,6 +578,28 @@ def spawn_requester_operator(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(spawn_requester).sink("out")
 
 
+# -- spawn_hold_requester ----------------------------------------------------
+#
+# An effectively-once stream whose tasklet spawns `stateless_loop_bounded` with
+# no id, prints the answer as `spawn_result hold <id> <outcome>`, then blocks
+# until the release env is set, so a runner killed there dies with the spawn
+# answered and its input not durably consumed.
+
+
+@flezha.tasklet(name="spawn_hold_requester")
+async def spawn_hold_requester(value: str, ctx: flezha.Ctx[None]) -> None:
+    _report("hold", ctx.spawn_bounded(stateless_loop_bounded.factory_id, value))
+    await block_until_released()
+
+
+@flezha.unbounded_operator("spawn_hold_requester")
+def spawn_hold_requester_operator(c: flezha.Channels) -> None:
+    c.effectively_once()
+    c.input("in", codec="text").on_full("drop_nothing").into(spawn_hold_requester).keyed().sink(
+        "out"
+    )
+
+
 # -- spawn_once_requester ----------------------------------------------------
 #
 # On each input it spawns `typed_once_bounded` once, with no id, carrying the
@@ -624,6 +647,7 @@ ALL: list[flezha.Operator] = [
     schema_evolution_v1_operator,
     schema_evolution_v2_operator,
     tier_store_operator,
+    tier_chain_operator,
     checkpoint_store_operator,
     checkpoint_batched_operator,
     bench_checkpoint_operator,
@@ -635,5 +659,6 @@ ALL: list[flezha.Operator] = [
     partition_relay_operator,
     dynamic_cell_operator,
     spawn_requester_operator,
+    spawn_hold_requester_operator,
     spawn_once_requester_operator,
 ]

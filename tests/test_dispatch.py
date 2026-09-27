@@ -834,11 +834,19 @@ def test_a_spawn_without_an_id_asks_for_one_and_a_spawn_with_an_id_carries_it(
         flezha.SpawnResult("w1", "spawned"),
     ]
     assert [
-        (s["token"], s["factory_id"], s["id"], s["payload"], s["if_running"], s["replay"])
+        (
+            s["token"],
+            s["factory_id"],
+            s["id"],
+            s["payload"],
+            s["if_running"],
+            s["replay"],
+            s["offset"],
+        )
         for s in fake_core.spawns
     ] == [
-        (91, "worker", "", b"p", "", False),
-        (91, "worker", "w1", b"p", "", False),
+        (91, "worker", "", b"p", "", False, 91),
+        (91, "worker", "w1", b"p", "", False, 91),
     ]
 
 

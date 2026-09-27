@@ -124,6 +124,7 @@ class Ctx(Generic[S]):
         "_now",
         "_bridge",
         "_token",
+        "_offset",
         "_identity",
         "_ordinal",
         "_emit_ordinal",
@@ -152,6 +153,7 @@ class Ctx(Generic[S]):
         state: S,
         bridge: Core | Any,
         token: int,
+        offset: int | None = None,
         compensating: bool = False,
     ) -> None:
         self._spec = spec
@@ -162,6 +164,10 @@ class Ctx(Generic[S]):
         self._now = now
         self._bridge = bridge
         self._token = token
+        # The input-log offset of the item this invocation runs: a spawn
+        # carries it so a crash re-run of the same input resolves to the worker
+        # the first run spawned.
+        self._offset = offset
         self._identity: bytes | None = None
         self._ordinal = 0
         # Separate from the `stable_id` ordinal on purpose: one counts
@@ -321,6 +327,7 @@ class Ctx(Generic[S]):
                 _codec.plain_payload(payload, self._node.name),
                 if_running or "",
                 self.replay,
+                self._offset,
             ),
         )
 

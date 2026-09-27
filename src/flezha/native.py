@@ -203,10 +203,20 @@ class Core:
         self._call("abandon", token)
 
     def spawn_request(
-        self, token: int, factory_id: str, id: str, payload: bytes, if_running: str, replay: bool
+        self,
+        token: int,
+        factory_id: str,
+        id: str,
+        payload: bytes,
+        if_running: str,
+        replay: bool,
+        offset: int | None,
     ) -> int:
-        """Request a spawn from the activation ``token``; answers its handle at once."""
-        return int(self._call("spawn_request", token, factory_id, id, payload, if_running, replay))
+        """Request a spawn from the activation ``token``; answers its handle at once.
+        ``offset`` is the input-log offset of the item the request runs under, if any."""
+        return int(
+            self._call("spawn_request", token, factory_id, id, payload, if_running, replay, offset)
+        )
 
     def spawn_result(self, handle: int, timeout_ms: int) -> str | None:
         """A handle's answer as JSON, or ``None`` while it is pending."""

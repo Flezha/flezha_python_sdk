@@ -293,6 +293,7 @@ async def invoke(
     now: int,
     replay: bool,
     body: Callable[[Ctx[Any]], Any],
+    offset: int | None = None,
 ) -> tuple[Ctx[Any], Any]:
     """Run user code against one cell, and keep the state it produced.
 
@@ -315,6 +316,7 @@ async def invoke(
         state=cell.state,
         bridge=deps.bridge,
         token=activation["token"],
+        offset=offset,
         compensating=activation.get("kind") == "compensate_run",
     )
     try:
@@ -400,6 +402,7 @@ async def _run_work(cell: Cell, activation: dict[str, Any], deps: DispatchDeps) 
                 now,
                 bool(item.get("replay")),
                 lambda c, item=item: _run_item(cell, item, c),
+                item.get("consumed_offset"),
             )
             effects.append(ctx.effect(item.get("consumed_offset")))
         except Exception as error:  # noqa: BLE001 - the verdict is the report

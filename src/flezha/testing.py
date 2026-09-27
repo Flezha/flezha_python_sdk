@@ -193,13 +193,20 @@ class TaskletTestHarness(Generic[S]):
     # -- the spawn bridge a `Ctx` asks ---------------------------------------
 
     def spawn_request(
-        self, token: int, factory_id: str, id: str, payload: bytes, if_running: str, replay: bool
+        self,
+        token: int,
+        factory_id: str,
+        id: str,
+        payload: bytes,
+        if_running: str,
+        replay: bool,
+        offset: int | None,
     ) -> int:
         """A harness has no controller, so a spawn resolves at once to what one
         would answer for a free id: ``spawned`` under the given id, or under a
         deterministic one shaped like a generated id. A replay answers
         ``skipped_on_replay`` with the given id, or an empty one."""
-        del token, payload, if_running
+        del token, payload, if_running, offset
         self._spawn_count += 1
         if replay:
             answer = {"id": id, "outcome": "skipped_on_replay"}
