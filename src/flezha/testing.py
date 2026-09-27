@@ -142,7 +142,12 @@ class TaskletTestHarness(Generic[S]):
         """Run the declared compensation over recorded forward outputs."""
         if self._task.compensate is None:
             raise FlezhaError(f"{self._task.name} declares no compensate hook")
-        return self._run(0, False, lambda ctx: self._task.compensate(outputs, ctx))  # type: ignore[misc]
+        return self._run(
+            0,
+            False,
+            lambda ctx: self._task.compensate(outputs, ctx),  # type: ignore[misc]
+            emit=False,
+        )
 
     def restore(self, *, snapshot: bytes | None = None, changes: Iterable[bytes] = ()) -> S:
         """Rebuild the state the way a restore does, from a snapshot and a log.
@@ -213,7 +218,7 @@ class TaskletTestHarness(Generic[S]):
 
     # -- internals -----------------------------------------------------------
 
-    def _run(self, now: int, replay: bool, body: Any) -> Outcome:
+    def _run(self, now: int, replay: bool, body: Any, *, emit: bool = True) -> Outcome:
         activation = {
             "token": 0,
             "operator": self._operator,
@@ -224,7 +229,9 @@ class TaskletTestHarness(Generic[S]):
             ctx, returned = run_now(invoke(self._cell, activation, self._deps, now, replay, body))
         finally:
             self._spawns.clear()
-        emit_returned(ctx, returned)
+        # The runner never emits what a compensate hook returns.
+        if emit:
+            emit_returned(ctx, returned)
         self.log.extend(ctx.changes)
         self._change_seq += len(ctx.changes)
         self._timers.extend(timer for timer in ctx.timers if timer["register"])

@@ -144,6 +144,18 @@ def test_a_compensation_is_driven_over_recorded_outputs() -> None:
     assert seen == ["a", "b"]
 
 
+def test_a_compensate_hook_s_return_value_is_not_emitted() -> None:
+    class Returning:
+        def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
+            ctx.emit(value)
+
+        def compensate(self, outputs: list[Any], ctx: flezha.Ctx[None]) -> str:
+            return "undo"
+
+    harness: TaskletTestHarness[None] = TaskletTestHarness(flezha.tasklet(Returning))
+    assert harness.compensate(["a"]).outputs == []
+
+
 def test_an_async_handler_needs_no_event_loop_in_the_test() -> None:
     @flezha.tasklet
     async def slow(value: str) -> str:
