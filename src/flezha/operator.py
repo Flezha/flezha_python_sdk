@@ -236,7 +236,8 @@ def _short_form(
         )
     generated = Tasklet(body, name=factory_id, **settings)
     returned = output_type(generated)
-    if sink is not None and (returned is None or returned is type(None)):
+    # An unresolvable hint degrades to the raw annotation, where `-> None` is the string.
+    if sink is not None and (returned is None or returned is type(None) or returned == "None"):
         raise DeclarationError(
             factory_id,
             name,

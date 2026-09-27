@@ -14,7 +14,7 @@ from __future__ import annotations
 import socket
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -25,6 +25,9 @@ from conftest import Bumped, Counter, count_up, declare, demo, echo
 from flezha import codec, graph
 from flezha.builder import apply_transforms
 from flezha.errors import DeclarationError, EmitError, UnrepresentableValueError
+
+if TYPE_CHECKING:
+    from decimal import Decimal
 
 fixtures = app.module("fixtures")
 
@@ -834,7 +837,15 @@ def _returns_unannotated(value: str):
     return value
 
 
-@pytest.mark.parametrize("body", [_returns_none, _returns_unannotated])
+# `Decimal` is imported for the type checker only, so the hints cannot resolve
+# at run time and the return reaches the check as the raw annotation.
+def _returns_none_under_an_unresolvable_hint(value: Decimal) -> None:
+    del value
+
+
+@pytest.mark.parametrize(
+    "body", [_returns_none, _returns_unannotated, _returns_none_under_an_unresolvable_hint]
+)
 def test_a_sink_on_a_body_with_no_output_is_refused(body: Callable[[str], Any]) -> None:
     with pytest.raises(DeclarationError) as caught:
         flezha.unbounded_operator(id="drain", sink="out")(body)
