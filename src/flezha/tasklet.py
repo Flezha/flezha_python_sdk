@@ -79,6 +79,12 @@ class _ClassHandler(Protocol[I_contra, O_co]):
     def run(self, value: I_contra, ctx: Ctx[Any], /) -> O_co: ...
 
 
+class _ClassHandlerNoCtx(Protocol[I_contra, O_co]):
+    """The class spelling whose ``run`` takes no context."""
+
+    def run(self, value: I_contra, /) -> O_co: ...
+
+
 def _snake_case(name: str) -> str:
     name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
     return re.sub(r"([a-z\d])([A-Z])", r"\1_\2", name).lower()
@@ -459,6 +465,10 @@ _OPERATOR_KEYWORDS = ("kind", "sink", "input", "codec")
 
 @overload
 def tasklet(target: type[_ClassHandler[I, O]], /) -> Tasklet[I, O]: ...
+
+
+@overload
+def tasklet(target: type[_ClassHandlerNoCtx[I, O]], /) -> Tasklet[I, O]: ...
 
 
 @overload
