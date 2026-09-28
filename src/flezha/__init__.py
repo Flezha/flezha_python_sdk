@@ -10,13 +10,14 @@ idiomatic errors.
 
     import flezha
 
-    @flezha.tasklet
-    def echo(value: str) -> str:
-        return value
+    @flezha.tasklet(name="echo")
+    class Echo:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            ctx.emit(value)
 
     @flezha.unbounded_operator("echo")
     def echo_operator(c: flezha.Channels) -> None:
-        c.input("input").into(echo).sink("out")
+        c.input("input").into(Echo).sink("out")
 
     flezha.create_runner("default").register_factory(echo_operator).run()
 """

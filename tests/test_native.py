@@ -218,18 +218,19 @@ def test_a_spawn_with_no_control_plane_answers_unavailable_until_its_invocation_
     unread: list[flezha.SpawnHandle] = []
 
     @flezha.tasklet(name="spawner")
-    def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
-        handle = ctx.spawn_bounded("worker", value, id="w1")
-        for read in (handle.try_result, handle.wait):
-            try:
-                read()
-            except flezha.SpawnUnavailableError as error:
-                reads.append((error.reason, error.id, str(error)))
-        unread.append(ctx.spawn_bounded("worker", value))
+    class Spawner:
+        def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+            handle = ctx.spawn_bounded("worker", value, id="w1")
+            for read in (handle.try_result, handle.wait):
+                try:
+                    read()
+                except flezha.SpawnUnavailableError as error:
+                    reads.append((error.reason, error.id, str(error)))
+            unread.append(ctx.spawn_bounded("worker", value))
 
     @flezha.unbounded_operator("spawn_without_control_plane")
     def operator(c: flezha.Channels) -> None:
-        c.input("in", codec="text").into(spawner).sink("out")
+        c.input("in", codec="text").into(Spawner).sink("out")
 
     with flezha.LocalOperator.start(operator) as run:
         run.feed("in", "p")

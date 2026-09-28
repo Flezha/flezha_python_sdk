@@ -107,14 +107,36 @@ def _channel_json(channel: ChannelSpec) -> dict[str, Any]:
     )
 
 
-def _tasklet_json(spec: ClassSpec, node: TaskNode) -> dict[str, Any]:
+def _keyed_consumers(spec: ClassSpec) -> set[int]:
+    """The nodes some chain reaches through a `key` link: the cell mode is the
+    wiring's, so one tasklet can be keyed in one operator and single in another."""
+    keyed: set[int] = set()
+    for channel in spec.channels:
+        for chain in channel.chains:
+            key = False
+            for link in chain:
+                if link["link"] == "key":
+                    key = True
+                elif key and link["link"] in ("into", "merge"):
+                    keyed.add(link["tasklet"])
+    return keyed
+
+
+def _cell_mode(node: TaskNode, keyed: set[int]) -> str:
+    if node.task.cell_keys is not None:
+        return "static"
+    return "dynamic" if node.index in keyed else "single"
+
+
+def _tasklet_json(spec: ClassSpec, node: TaskNode, keyed: set[int]) -> dict[str, Any]:
     task = node.task
+    ttl = task.idle_ttl_seconds
     return _compact(
         {
             "name": node.name,
-            "cell_mode": task.cell_mode,
+            "cell_mode": _cell_mode(node, keyed),
             "cell_keys": task.cell_keys or [],
-            "idle_ttl_ms": task.idle_ttl_ms,
+            "idle_ttl_ms": None if ttl is None else ttl * 1000,
             "max_cells": task.max_cells,
             "cells_for_overridden": task.cells_for is not None,
             "compensate_overridden": task.compensate is not None,
@@ -142,6 +164,7 @@ def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
     own test reads: a key the core learns that Python cannot spell fails that
     test.
     """
+    keyed = _keyed_consumers(spec)
     return _compact(
         {
             "factory_id": spec.factory_id,
@@ -160,7 +183,7 @@ def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
             "compact_after_bytes": spec.compact_after_bytes,
             "sync_durability": spec.sync_durability,
             "channels": [_channel_json(channel) for channel in spec.channels],
-            "tasklets": [_tasklet_json(spec, node) for node in spec.tasklets],
+            "tasklets": [_tasklet_json(spec, node, keyed) for node in spec.tasklets],
             "bounded": _compact(spec.bounded) if spec.bounded else None,
         }
     )

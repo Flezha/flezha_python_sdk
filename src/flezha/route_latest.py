@@ -41,7 +41,7 @@ def traffic_input(key: Any) -> dict[str, Any]:
 class LatestRouter:
     """Retains the latest document and owes each key one delivery per version."""
 
-    def run(self, value: dict[str, Any], ctx: Ctx[dict[str, Any]]) -> None:
+    def run(self, value: dict[str, Any], ctx: Ctx[dict[str, Any], tuple[str, Any]]) -> None:
         state = ctx.state
         if "document" in value:
             document = value["document"]
@@ -59,7 +59,7 @@ class LatestRouter:
         ctx.emit((key, state["document"]))
         ctx.change({"delivered": key, "version": version})
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"document": None, "version": 0, "delivered": {}}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:

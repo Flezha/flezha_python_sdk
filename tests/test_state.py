@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import FrozenInstanceError, dataclass, field
+from typing import Any, TypedDict
 
 import pytest
 
@@ -109,19 +110,132 @@ def test_a_declared_state_survives_a_nested_fold() -> None:
         depth: int = 0
 
     class Folding:
-        def run(self, value: str, ctx: flezha.Ctx[Nested]) -> None:
+        def run(self, value: str, ctx: flezha.Ctx[Nested, None]) -> None:
             ctx.change({"item": value})
 
-        def initial_state(self, key: str | None) -> Nested:
+        def init_state(self, key: str | None) -> Nested:
             return Nested()
 
         def apply_change(self, state: Nested, change: dict[str, str]) -> None:
             state.items = [*state.items, change["item"]]
             state.depth += 1
 
-    task = flezha.tasklet(Folding)
+    task = flezha.tasklet(Folding, name="folding")
     harness: TaskletTestHarness[Nested] = TaskletTestHarness(task)
     harness.feed("a")
     harness.feed("b")
     assert harness.state == Nested(items=["a", "b"], depth=2)
+    assert harness.replay_equals()
+
+
+# -- where a new cell's state comes from ---------------------------------------
+
+
+@dataclass
+class Seen:
+    words: list[str] = field(default_factory=list)
+
+
+class SeesWords:
+    def run(self, word: str, ctx: flezha.Ctx[Seen, str]) -> None:
+        ctx.change(word)
+        ctx.emit(word)
+
+    def apply_change(self, state: Seen, word: Any) -> None:
+        state.words.append(word)
+
+
+class ByCell:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, str], None]) -> None:
+        del value
+
+    def init_state(self, cell_key: str | None) -> dict[str, str]:
+        return {"cell": str(cell_key)}
+
+    def cells_for(self, value: str) -> list[str]:
+        return [value]
+
+
+class Totals:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, int], None]) -> None:
+        ctx.change(value)
+
+    def apply_change(self, state: dict[str, int], value: Any) -> None:
+        state[value] = state.get(value, 0) + 1
+
+
+@dataclass
+class Needs:
+    seed: int
+
+
+class NeedsSeed:
+    def run(self, value: str, ctx: flezha.Ctx[Needs, None]) -> None:
+        del value
+
+
+def test_a_new_cell_starts_from_the_state_class_its_context_names() -> None:
+    harness: TaskletTestHarness[Seen] = TaskletTestHarness(
+        flezha.tasklet(SeesWords, name="sees_words")
+    )
+    assert harness.state == Seen()
+    assert harness.feed("a").outputs == ["a"]
+    assert harness.state == Seen(words=["a"])
+
+
+def test_a_written_init_state_receives_the_cell_key() -> None:
+    task = flezha.tasklet(ByCell, name="by_cell", cell_keys=["a", "b"])
+    harness: TaskletTestHarness[dict[str, str]] = TaskletTestHarness(task, cell_key="b")
+    assert harness.state == {"cell": "b"}
+
+
+def test_a_parameterised_builtin_starts_empty() -> None:
+    harness: TaskletTestHarness[dict[str, int]] = TaskletTestHarness(
+        flezha.tasklet(Totals, name="totals")
+    )
+    assert harness.state == {}
+    harness.apply_inputs(["x", "y", "x"])
+    assert harness.state == {"x": 2, "y": 1}
+
+
+def test_an_unbuildable_state_class_is_refused_naming_it_and_init_state() -> None:
+    with pytest.raises(flezha.DeclarationError) as caught:
+        flezha.tasklet(NeedsSeed, name="needs_seed")
+    assert "state class `Needs` cannot be built with no arguments" in str(caught.value)
+    assert "`init_state(self, cell_key)`" in str(caught.value)
+
+
+def test_a_restore_folds_from_the_state_class_default() -> None:
+    task = flezha.tasklet(SeesWords, name="sees_words")
+    live: TaskletTestHarness[Seen] = TaskletTestHarness(task)
+    live.apply_inputs(["a", "b", "c"])
+    restored: TaskletTestHarness[Seen] = TaskletTestHarness(task)
+    assert restored.restore(changes=live.log) == live.state == Seen(words=["a", "b", "c"])
+
+
+class Window(TypedDict):
+    prices: list[float]
+
+
+class PriceSeen(TypedDict):
+    price: float
+
+
+class Windows:
+    def run(self, price: float, ctx: flezha.Ctx[Window, None]) -> None:
+        ctx.change(PriceSeen(price=price))
+
+    def init_state(self, cell_key: str | None) -> Window:
+        return Window(prices=[])
+
+    def apply_change(self, window: Window, seen: PriceSeen) -> None:
+        window["prices"].append(seen["price"])
+
+
+def test_a_typed_dict_state_and_change_are_plain_dicts() -> None:
+    task = flezha.tasklet(Windows, name="windows")
+    assert (task.state_codec, task.change_codec) == (None, None)
+    harness: TaskletTestHarness[Window] = TaskletTestHarness(task)
+    harness.apply_inputs([1.5, 2.5])
+    assert harness.state == {"prices": [1.5, 2.5]}
     assert harness.replay_equals()

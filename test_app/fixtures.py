@@ -65,10 +65,11 @@ class CompareFilter:
     There is nothing to journal, so the tasklet declares no change fold.
     """
 
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str | None:
-        return value if ctx.state["comparable"] == value else None
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
+        if ctx.state["comparable"] == value:
+            ctx.emit(value)
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"comparable": "default", "inverted": False}
 
 
@@ -94,7 +95,7 @@ class SeenLog:
     Sharing it is how the Ruby app spells the same thing.
     """
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"seen": []}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -104,9 +105,9 @@ class SeenLog:
 class StaticEntry(SeenLog):
     """The static fan-out every static fixture shares."""
 
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
         ctx.change({"push": value})
-        return value
+        ctx.emit(value)
 
     def cells_for(self, value: str) -> list[str]:
         first = value[0] if value else ""
@@ -167,11 +168,11 @@ def sugar_do_nothing(value: str) -> str:
 
 @flezha.unbounded_operator(id="sugar_store_input", sink="sugar_store_sink", codec="text")
 class SugarStoreInput:
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
         ctx.change({"push": value})
-        return value
+        ctx.emit(value)
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"text_inputs": []}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -206,7 +207,7 @@ def sugar_bounded_per_input(value: str) -> str:
 class SugarStateOnly(SeenLog):
     """No sink: what it was sent is proven by its state alone."""
 
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], None]) -> None:
         ctx.change({"push": value})
 
 
@@ -221,25 +222,27 @@ HYBRID_SENTINEL = 0xDEADBEEF
 
 
 @flezha.tasklet(name="hybrid_producer_tasklet")
-def hybrid_producer(value: str, ctx: flezha.Ctx[None]) -> None:
-    try:
-        parsed = int(value)
-    except ValueError:
-        parsed = 0
-    number = parsed if 0 <= parsed <= 0xFFFFFFFF else 0
-    try:
-        ctx.emit(number)
-    except Exception as error:  # noqa: BLE001 - the isolation is the fixture
-        print(
-            f"hybrid_producer_tasklet: serializer refused an emit: {error}",
-            file=sys.stderr,
-            flush=True,
-        )
+class HybridProducer:
+    def run(self, value: str, ctx: flezha.Ctx[None, Any]) -> None:
+        try:
+            parsed = int(value)
+        except ValueError:
+            parsed = 0
+        number = parsed if 0 <= parsed <= 0xFFFFFFFF else 0
+        try:
+            ctx.emit(number)
+        except Exception as error:  # noqa: BLE001 - the isolation is the fixture
+            print(
+                f"hybrid_producer_tasklet: serializer refused an emit: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
 
 
 @flezha.tasklet(name="hybrid_consumer_tasklet")
-def hybrid_consumer(value: int) -> None:
-    print(f"hybrid_consumer_tasklet: received {value}", flush=True)
+class HybridConsumer:
+    def run(self, value: int, ctx: flezha.Ctx[None, None]) -> None:
+        print(f"hybrid_consumer_tasklet: received {value}", flush=True)
 
 
 def hybrid_encode(value: int) -> bytes:
@@ -250,10 +253,10 @@ def hybrid_encode(value: int) -> bytes:
 
 @flezha.unbounded_operator("hybrid_channel")
 def hybrid_channel_operator(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(hybrid_producer).branch(
+    c.input("input", codec="text").into(HybridProducer).branch(
         # The consumer edge first, so a refused plugin serialization leaves the
         # in-process fan-out already recorded — the reference's isolation.
-        lambda edge: edge.named("hybrid_indicator").into(hybrid_consumer),
+        lambda edge: edge.named("hybrid_indicator").into(HybridConsumer),
         lambda edge: edge.sink(encode=hybrid_encode),
     )
 
@@ -272,9 +275,10 @@ def tagged(source: str) -> Callable[[str], dict[str, str]]:
     return tag
 
 
-@flezha.tasklet(name="merge_label_tasklet", dynamic_cells=True)
-def merge_label(value: dict[str, str]) -> str:
-    return f"{value['source']}:{value['payload']}"
+@flezha.tasklet(name="merge_label_tasklet")
+class MergeLabel:
+    def run(self, value: dict[str, str], ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(f"{value['source']}:{value['payload']}")
 
 
 @flezha.unbounded_operator("merged_input")
@@ -283,7 +287,7 @@ def merged_input_operator(c: flezha.Channels) -> None:
     quotes = c.input("quotes", codec="text")
     c.merge().from_(ticks, tagged("ticks")).from_(quotes, tagged("quotes")).key_by(
         lambda value: value["symbol"]
-    ).into(merge_label).keyed().sink("merged")
+    ).into(MergeLabel).keyed().sink("merged")
 
 
 # -- transform_chain ---------------------------------------------------------
@@ -292,7 +296,7 @@ def merged_input_operator(c: flezha.Channels) -> None:
 # out into one value per element, each is upper-cased and keyed on its prefix.
 
 
-transform_label = passthrough("transform_label_tasklet", dynamic_cells=True)
+transform_label = passthrough("transform_label_tasklet")
 
 
 @flezha.unbounded_operator("transform_chain")
@@ -314,8 +318,8 @@ class StressFanOut:
     #: the rest funnel back to one, which is the topology the stress exercises.
     targets: ClassVar[list[str]] = STRESS_KEYS
 
-    def run(self, value: str) -> str:
-        return value
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(value)
 
     def cells_for(self, value: str) -> list[str]:
         return self.targets
@@ -348,7 +352,7 @@ def cell_stress_operator(c: flezha.Channels) -> None:
 
 
 class Candle:
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         # `ctx.now()` IS the extracted event time under an event-time clock.
         event_time = ctx.now()
         ctx.change({"fold": event_time})
@@ -357,7 +361,7 @@ class Candle:
         bucket = event_time // 1_000
         ctx.emit(f"{bucket}={value}", key=f"candle/{bucket}")
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         #: Event times in fold order. The assertion surface.
         return {"folded": []}
 
@@ -368,7 +372,7 @@ class Candle:
         return _as_int(value.split(":", 1)[0])
 
 
-candle = flezha.tasklet(Candle, name="candle_tasklet", clock="event_time")
+candle = flezha.tasklet(Candle, name="candle_tasklet")
 
 
 @flezha.unbounded_operator("candle")
@@ -383,24 +387,25 @@ _ANTIDOTE = {"taken": False}
 
 
 @flezha.tasklet(name="poison_probe_tasklet")
-def poison_probe(value: str) -> str:
-    if value == "antidote":
-        _ANTIDOTE["taken"] = True
-    if value == "poison" and not _ANTIDOTE["taken"]:
-        raise ValueError("poison payload")
-    return f"ok:{value}"
+class PoisonProbe:
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        if value == "antidote":
+            _ANTIDOTE["taken"] = True
+        if value == "poison" and not _ANTIDOTE["taken"]:
+            raise ValueError("poison payload")
+        ctx.emit(f"ok:{value}")
 
 
 @flezha.unbounded_operator("poison_probe")
 def poison_probe_operator(c: flezha.Channels) -> None:
-    c.input("input", codec="text").retry_backoff_ms(25).into(poison_probe).sink("out")
+    c.input("input", codec="text").retry_backoff_ms(25).into(PoisonProbe).sink("out")
 
 
 _ABORTED = {"done": False}
 
 
 @flezha.tasklet(name="wedge_probe_tasklet")
-def wedge_probe(value: str) -> str:
+class WedgeProbe:
     """The ``pool_wedge`` fixture: the two ways a runner stops doing work.
 
     ``wedge`` blocks the dispatch inside user code forever, so the SDK's
@@ -412,18 +417,20 @@ def wedge_probe(value: str) -> str:
     the scenario asserts is that the Cell is served again and the aborting
     item does not produce twice.
     """
-    if value == "wedge":
-        while True:
-            time.sleep(3600)
-    if value == "abort" and not _ABORTED["done"]:
-        _ABORTED["done"] = True
-        raise RuntimeError("wedge_probe: killing the worker holding this activation")
-    return f"ok:{value}"
+
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        if value == "wedge":
+            while True:
+                time.sleep(3600)
+        if value == "abort" and not _ABORTED["done"]:
+            _ABORTED["done"] = True
+            raise RuntimeError("wedge_probe: killing the worker holding this activation")
+        ctx.emit(f"ok:{value}")
 
 
 @flezha.unbounded_operator("wedge_probe")
 def wedge_probe_operator(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(wedge_probe).sink("out")
+    c.input("input", codec="text").into(WedgeProbe).sink("out")
 
 
 # -- session_timeout ---------------------------------------------------------
@@ -435,18 +442,18 @@ def wedge_probe_operator(c: flezha.Channels) -> None:
 
 
 class SessionTimeout:
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], bytes]) -> None:
         ctx.change({"touched": value})
         # A processing-time timer, because the answer to "nothing has arrived"
         # cannot be an event-time one: nothing would advance the clock.
         ctx.timer_after(_env_int("TIMER_TEST_TIMEOUT_MS", 1_000) or 1_000)
 
-    def on_timer(self, timer: dict[str, Any], ctx: flezha.Ctx[dict[str, Any]]) -> bytes:
+    def on_timer(self, timer: dict[str, Any], ctx: flezha.Ctx[dict[str, Any], bytes]) -> None:
         fired_at = int(timer["scheduled_at"])
         ctx.change({"closed": fired_at})
-        return f"closed@{fired_at}".encode()
+        ctx.emit(f"closed@{fired_at}".encode())
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"touched": [], "closed_at": []}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -468,11 +475,11 @@ def session_timeout_operator(c: flezha.Channels) -> None:
 
 
 class BoundedMailbox:
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
         ctx.change({"processed": True})
-        return value
+        ctx.emit(value)
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"processed": 0}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -507,12 +514,12 @@ BOUNDED_MAILBOX = [
 
 
 class PartitionRelay(SeenLog):
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         ctx.change({"push": value})
         ctx.emit(value, key=prefix(value))
 
 
-partition_relay = flezha.tasklet(PartitionRelay, name="partition_relay_tasklet", dynamic_cells=True)
+partition_relay = flezha.tasklet(PartitionRelay, name="partition_relay_tasklet")
 
 
 @flezha.unbounded_operator("partition_relay")
@@ -524,16 +531,18 @@ def partition_relay_operator(c: flezha.Channels) -> None:
 
 
 class DynamicCell(SeenLog):
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
         ctx.change({"push": value})
-        return value
+        ctx.emit(value)
 
 
+#: The e2e sets the TTL in milliseconds for every SDK's runner; an idle TTL is
+#: whole seconds, so it is rounded up.
+_DYN_TTL_MS = _env_int("DYN_TEST_TTL_MS", None)
 dynamic_cell = flezha.tasklet(
     DynamicCell,
     name="dynamic_cell_tasklet",
-    dynamic_cells=True,
-    idle_ttl_ms=_env_int("DYN_TEST_TTL_MS", None),
+    idle_ttl_seconds=None if _DYN_TTL_MS is None else -(-_DYN_TTL_MS // 1_000),
 )
 
 
@@ -563,19 +572,20 @@ def _report(label: str, handle: Any) -> None:
 
 
 @flezha.tasklet(name="spawn_requester")
-def spawn_requester(value: str, ctx: flezha.Ctx[None]) -> None:
-    factory = stateless_loop_bounded.factory_id
-    handles = [
-        ("unnamed", ctx.spawn_bounded(factory, value)),
-        ("named", ctx.spawn_bounded(factory, value, id=value)),
-    ]
-    for label, handle in handles:
-        _report(label, handle)
+class SpawnRequester:
+    def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+        factory = stateless_loop_bounded.factory_id
+        handles = [
+            ("unnamed", ctx.spawn_bounded(factory, value)),
+            ("named", ctx.spawn_bounded(factory, value, id=value)),
+        ]
+        for label, handle in handles:
+            _report(label, handle)
 
 
 @flezha.unbounded_operator("spawn_requester")
 def spawn_requester_operator(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(spawn_requester).sink("out")
+    c.input("in", codec="text").into(SpawnRequester).sink("out")
 
 
 # -- spawn_hold_requester ----------------------------------------------------
@@ -587,17 +597,16 @@ def spawn_requester_operator(c: flezha.Channels) -> None:
 
 
 @flezha.tasklet(name="spawn_hold_requester")
-async def spawn_hold_requester(value: str, ctx: flezha.Ctx[None]) -> None:
-    _report("hold", ctx.spawn_bounded(stateless_loop_bounded.factory_id, value))
-    await block_until_released()
+class SpawnHoldRequester:
+    async def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+        _report("hold", ctx.spawn_bounded(stateless_loop_bounded.factory_id, value))
+        await block_until_released()
 
 
 @flezha.unbounded_operator("spawn_hold_requester")
 def spawn_hold_requester_operator(c: flezha.Channels) -> None:
     c.effectively_once()
-    c.input("in", codec="text").on_full("drop_nothing").into(spawn_hold_requester).keyed().sink(
-        "out"
-    )
+    c.input("in", codec="text").on_full("drop_nothing").into(SpawnHoldRequester).keyed().sink("out")
 
 
 # -- spawn_once_requester ----------------------------------------------------
@@ -609,13 +618,14 @@ def spawn_hold_requester_operator(c: flezha.Channels) -> None:
 
 
 @flezha.tasklet(name="spawn_once_requester")
-def spawn_once_requester(value: str, ctx: flezha.Ctx[None]) -> None:
-    _report("once", ctx.spawn_bounded("typed_once_bounded", {"text": value}))
+class SpawnOnceRequester:
+    def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+        _report("once", ctx.spawn_bounded("typed_once_bounded", {"text": value}))
 
 
 @flezha.unbounded_operator("spawn_once_requester")
 def spawn_once_requester_operator(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(spawn_once_requester).sink("out")
+    c.input("in", codec="text").into(SpawnOnceRequester).sink("out")
 
 
 #: Every operator this app registers, in declaration order.

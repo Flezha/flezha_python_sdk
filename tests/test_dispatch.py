@@ -18,18 +18,24 @@ import pytest
 
 import app
 import flezha
-from conftest import FakeCore, compensating, demo, deps_for, echo, solo_deps, work_activation
+from conftest import (
+    FakeCore,
+    answered,
+    compensating,
+    demo,
+    deps_for,
+    echo,
+    key_request,
+    solo_deps,
+    wire_work,
+    work_activation,
+)
 from flezha import codec, native
-from flezha.dispatch import DispatchDeps, answer, dispatch_now, run_now
+from flezha.dispatch import DispatchDeps, answer, dispatch_now
 from flezha.errors import NonRetryableError
 
 fixtures = app.module("fixtures")
 fixture_support = app.module("fixture_support")
-
-
-def answered(activation: dict[str, Any], deps: DispatchDeps) -> dict[str, Any]:
-    """The answer for one activation, driven with no event loop."""
-    return run_now(answer(activation, deps))
 
 
 @pytest.fixture
@@ -55,22 +61,24 @@ def test_an_unknown_factory_is_a_non_retryable_failure(deps: DispatchDeps) -> No
 
 
 def test_a_handler_error_becomes_a_retryable_verdict(fake_core: FakeCore) -> None:
-    @flezha.tasklet
-    def boom(value: str) -> str:
-        raise ValueError("nope")
+    @flezha.tasklet(name="boom")
+    class Boom:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            raise ValueError("nope")
 
-    deps = solo_deps(boom, fake_core)
+    deps = solo_deps(Boom, fake_core)
     (effect,) = answered(work_activation(3, "x", factory="solo"), deps)["effects"]
     assert effect["verdict"] == "retryable"
     assert effect["message"] == "ValueError: nope"
 
 
 def test_a_non_retryable_error_says_so(fake_core: FakeCore) -> None:
-    @flezha.tasklet
-    def refuse(value: str) -> str:
-        raise NonRetryableError("bad input")
+    @flezha.tasklet(name="refuse")
+    class Refuse:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            raise NonRetryableError("bad input")
 
-    deps = solo_deps(refuse, fake_core)
+    deps = solo_deps(Refuse, fake_core)
     (effect,) = answered(work_activation(4, "x", factory="solo"), deps)["effects"]
     assert effect["verdict"] == "non_retryable"
 
@@ -78,14 +86,15 @@ def test_a_non_retryable_error_says_so(fake_core: FakeCore) -> None:
 def test_a_batch_stops_at_the_first_failure(fake_core: FakeCore) -> None:
     seen: list[str] = []
 
-    @flezha.tasklet
-    def picky(value: str) -> str:
-        seen.append(value)
-        if value == "bad":
-            raise ValueError("nope")
-        return value
+    @flezha.tasklet(name="picky")
+    class Picky:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            seen.append(value)
+            if value == "bad":
+                raise ValueError("nope")
+            ctx.emit(value)
 
-    deps = solo_deps(picky, fake_core)
+    deps = solo_deps(Picky, fake_core)
     effects = answered(work_activation(5, "ok", "bad", "never", factory="solo"), deps)["effects"]
     # Items after the failure are re-handed by the core, so the batch stops
     # rather than reporting effects the cell never saw.
@@ -113,12 +122,13 @@ def test_a_failure_inside_complete_abandons_rather_than_retiring_the_cell(
 
 
 def test_an_async_handler_is_driven_off_an_event_loop(fake_core: FakeCore) -> None:
-    @flezha.tasklet
-    async def slow(value: str) -> str:
-        await asyncio.sleep(0)
-        return value.upper()
+    @flezha.tasklet(name="slow")
+    class Slow:
+        async def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            await asyncio.sleep(0)
+            ctx.emit(value.upper())
 
-    deps = solo_deps(slow, fake_core)
+    deps = solo_deps(Slow, fake_core)
     (effect,) = answered(work_activation(7, "hi", factory="solo"), deps)["effects"]
     assert effect["outputs"][0]["payload"] == b"HI"
 
@@ -126,14 +136,15 @@ def test_an_async_handler_is_driven_off_an_event_loop(fake_core: FakeCore) -> No
 def test_a_filtered_input_is_consumed_and_reaches_no_handler(fake_core: FakeCore) -> None:
     seen: list[str] = []
 
-    @flezha.tasklet
-    def only_long(value: str) -> str:
-        seen.append(value)
-        return value
+    @flezha.tasklet(name="only_long")
+    class OnlyLong:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            seen.append(value)
+            ctx.emit(value)
 
     @flezha.unbounded_operator("filtered")
     def filtered(c: flezha.Channels) -> None:
-        c.input("in").filter(lambda value: len(value) > 2).into(only_long).sink()
+        c.input("in").filter(lambda value: len(value) > 2).into(OnlyLong).sink()
 
     deps = deps_for(filtered, fake_core)
 
@@ -145,47 +156,15 @@ def test_a_filtered_input_is_consumed_and_reaches_no_handler(fake_core: FakeCore
     assert effect["outputs"] == []
 
 
-def key_request(token: int, factory: str, *payloads: bytes, channel: int = 0) -> dict[str, Any]:
-    """One key request over wire payloads, as the veneer produces it."""
-    return {
-        "token": token,
-        "operator": "op",
-        "tasklet": 0,
-        "change_seq": 0,
-        "factory": factory,
-        "kind": "key_request",
-        "key_request": {
-            "channel": channel,
-            "payloads": list(payloads),
-            "want_keys": True,
-            "want_event_time": False,
-        },
-    }
-
-
-def wire_work(
-    token: int,
-    factory: str,
-    *items: tuple[int, bytes],
-    tasklet: int = 0,
-    cell: str | None = None,
-) -> dict[str, Any]:
-    """One work activation over wire payloads, ``(channel, payload)`` per item."""
-    activation = work_activation(token, *[None] * len(items), factory=factory, tasklet=tasklet)
-    activation["cell_key"] = cell
-    for item, (channel, payload) in zip(activation["items"], items, strict=True):
-        item.update(channel=channel, payload=payload)
-    return activation
-
-
 def test_a_key_request_answers_one_entry_per_payload(fake_core: FakeCore) -> None:
-    @flezha.tasklet(dynamic_cells=True)
-    def routed(value: dict[str, str]) -> dict[str, str]:
-        return value
+    @flezha.tasklet(name="routed")
+    class Routed:
+        def run(self, value: dict[str, str], ctx: flezha.Ctx[None, dict[str, str]]) -> None:
+            ctx.emit(value)
 
     @flezha.unbounded_operator("routed_op")
     def routed_op(c: flezha.Channels) -> None:
-        c.input("in").key_by(lambda value: value["k"]).into(routed).sink()
+        c.input("in").key_by(lambda value: value["k"]).into(Routed).sink()
 
     deps = deps_for(routed_op, fake_core)
 
@@ -195,9 +174,10 @@ def test_a_key_request_answers_one_entry_per_payload(fake_core: FakeCore) -> Non
 
 
 def test_a_per_payload_refusal_does_not_fail_the_whole_crossing(fake_core: FakeCore) -> None:
-    @flezha.tasklet(dynamic_cells=True)
-    def routed(value: dict[str, str]) -> dict[str, str]:
-        return value
+    @flezha.tasklet(name="routed")
+    class Routed:
+        def run(self, value: dict[str, str], ctx: flezha.Ctx[None, dict[str, str]]) -> None:
+            ctx.emit(value)
 
     def key_of(value: dict[str, str]) -> str:
         if value["k"] == "bad":
@@ -206,7 +186,7 @@ def test_a_per_payload_refusal_does_not_fail_the_whole_crossing(fake_core: FakeC
 
     @flezha.unbounded_operator("picky_keys")
     def picky_keys(c: flezha.Channels) -> None:
-        c.input("in").key_by(key_of).into(routed).sink()
+        c.input("in").key_by(key_of).into(Routed).sink()
 
     deps = deps_for(picky_keys, fake_core)
 
@@ -275,24 +255,26 @@ def test_an_unknown_activation_kind_is_a_non_retryable_failure(deps: DispatchDep
 
 
 def test_reserved_metadata_is_refused_naming_the_key(fake_core: FakeCore) -> None:
-    @flezha.tasklet
-    def stamped(value: str, ctx: flezha.Ctx[None]) -> None:
-        ctx.emit(value, metadata={"flz.seq": "1"})
+    @flezha.tasklet(name="stamped")
+    class Stamped:
+        def run(self, value: str, ctx: flezha.Ctx[None, Any]) -> None:
+            ctx.emit(value, metadata={"flz.seq": "1"})
 
-    deps = solo_deps(stamped, fake_core)
+    deps = solo_deps(Stamped, fake_core)
     (effect,) = answered(work_activation(17, "x", factory="solo"), deps)["effects"]
     assert effect["verdict"] == "retryable"
     assert "flz.seq" in effect["message"]
 
 
 def test_a_keyed_channel_with_no_key_is_refused_naming_it(fake_core: FakeCore) -> None:
-    @flezha.tasklet
-    def keyless(value: str, ctx: flezha.Ctx[None]) -> None:
-        ctx.emit(value)
+    @flezha.tasklet(name="keyless")
+    class Keyless:
+        def run(self, value: str, ctx: flezha.Ctx[None, Any]) -> None:
+            ctx.emit(value)
 
     @flezha.unbounded_operator("keyed_sink")
     def keyed_sink(c: flezha.Channels) -> None:
-        c.input("in").into(keyless).keyed().sink("out")
+        c.input("in").into(Keyless).keyed().sink("out")
 
     deps = deps_for(keyed_sink, fake_core)
     (effect,) = answered(work_activation(18, "x", factory="keyed_sink"), deps)["effects"]
@@ -308,19 +290,20 @@ _RESULTS: dict[str, Any] = {"text": "3", "bytes": b"\x00raw", "json": {"turns": 
 
 
 @flezha.tasklet(name="finisher")
-def _finisher(value: str, ctx: flezha.Ctx[None]) -> None:
-    ctx.complete("replaced")
-    ctx.complete(_RESULTS[value])
+class Finisher:
+    def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+        ctx.complete("replaced")
+        ctx.complete(_RESULTS[value])
 
 
 @flezha.bounded_operator("finishing_bounded")
 def _finishing_bounded(c: flezha.Channels) -> None:
-    c.input("in").into(_finisher).sink()
+    c.input("in").into(Finisher).sink()
 
 
 @flezha.unbounded_operator("finishing_unbounded")
 def _finishing_unbounded(c: flezha.Channels) -> None:
-    c.input("in").into(_finisher).sink()
+    c.input("in").into(Finisher).sink()
 
 
 @pytest.mark.parametrize(
@@ -345,12 +328,13 @@ def test_an_unbounded_tasklet_completing_is_carried_the_same_way(fake_core: Fake
 
 
 def test_a_failed_item_carries_no_completion(fake_core: FakeCore) -> None:
-    @flezha.tasklet
-    def fails_after_completing(value: str, ctx: flezha.Ctx[None]) -> None:
-        ctx.complete(value)
-        raise ValueError("after completing")
+    @flezha.tasklet(name="fails_after_completing")
+    class FailsAfterCompleting:
+        def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+            ctx.complete(value)
+            raise ValueError("after completing")
 
-    deps = solo_deps(fails_after_completing, fake_core)
+    deps = solo_deps(FailsAfterCompleting, fake_core)
     (effect,) = answered(work_activation(21, "x", factory="solo"), deps)["effects"]
     assert effect["verdict"] == "retryable"
     assert "complete" not in effect
@@ -363,23 +347,24 @@ def test_a_failed_item_carries_no_completion(fake_core: FakeCore) -> None:
 
 
 @flezha.tasklet(name="timer_setter")
-def _timer_setter(call: str, ctx: flezha.Ctx[None]) -> None:
-    if call == "after":
-        ctx.timer_after(60_000)
-    elif call == "event_time":
-        ctx.timer_at_event_time(60_000)
-    else:
-        ctx.cancel_timer("processing_time", 60_000)
+class TimerSetter:
+    def run(self, call: str, ctx: flezha.Ctx[None, None]) -> None:
+        if call == "after":
+            ctx.timer_after(60_000)
+        elif call == "event_time":
+            ctx.timer_at_event_time(60_000)
+        else:
+            ctx.cancel_timer("processing_time", 60_000)
 
 
 @flezha.bounded_operator("timer_bounded")
 def _timer_bounded(c: flezha.Channels) -> None:
-    c.input("in").into(_timer_setter)
+    c.input("in").into(TimerSetter)
 
 
 @flezha.unbounded_operator("timer_unbounded")
 def _timer_unbounded(c: flezha.Channels) -> None:
-    c.input("in").into(_timer_setter)
+    c.input("in").into(TimerSetter)
 
 
 @pytest.mark.parametrize(
@@ -400,10 +385,10 @@ def test_a_timer_call_inside_a_bounded_reaches_the_item_effect(
 
 
 class _ArmsOnUndo:
-    def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[None, Any]) -> None:
         ctx.emit(value)
 
-    def compensate(self, outputs: list[Any], ctx: flezha.Ctx[None]) -> None:
+    def compensate(self, outputs: list[Any], ctx: flezha.Ctx[None, Any]) -> None:
         ctx.timer_after(1_000)
 
 
@@ -459,8 +444,9 @@ def test_a_compensation_runs_over_the_recorded_outputs(fake_core: FakeCore) -> N
 
 
 @flezha.tasklet(name="bounded_producer")
-def _bounded_producer(value: int, ctx: flezha.Ctx[None]) -> None:
-    ctx.emit(value)
+class BoundedProducer:
+    def run(self, value: int, ctx: flezha.Ctx[None, Any]) -> None:
+        ctx.emit(value)
 
 
 _DELIVERED: list[Any] = []
@@ -468,19 +454,21 @@ _DELIVERED: list[Any] = []
 
 
 @flezha.tasklet(name="bounded_b")
-def _bounded_b(value: int) -> None:
-    _DELIVERED.append(value)
+class BoundedB:
+    def run(self, value: int, ctx: flezha.Ctx[None, None]) -> None:
+        _DELIVERED.append(value)
 
 
 @flezha.tasklet(name="bounded_c")
-def _bounded_c(value: int) -> None:
-    _DELIVERED.append(value)
+class BoundedC:
+    def run(self, value: int, ctx: flezha.Ctx[None, None]) -> None:
+        _DELIVERED.append(value)
 
 
 def _bounded_graph(c: flezha.Channels) -> None:
-    edge = c.input("in").into(_bounded_producer).named("handoff")
-    edge.map(lambda value: value + 1).into(_bounded_b)
-    edge.into(_bounded_c)
+    edge = c.input("in").into(BoundedProducer).named("handoff")
+    edge.map(lambda value: value + 1).into(BoundedB)
+    edge.into(BoundedC)
     edge.sink()
 
 
@@ -592,12 +580,13 @@ def test_plain_text_into_an_entry_naming_no_codec_never_reaches_the_handler(
     channel, and a bounded keeps waiting), and the handler is never handed it."""
     seen: list[Any] = []
 
-    @flezha.tasklet
-    def record(value: Any) -> None:
-        seen.append(value)
+    @flezha.tasklet(name="record")
+    class Record:
+        def run(self, value: Any, ctx: flezha.Ctx[None, None]) -> None:
+            seen.append(value)
 
     activation = wire_work(60, "solo", (0, b'{"a": 1}'), (0, b"hello"))
-    effects = answered(activation, solo_deps(record, fake_core))["effects"]
+    effects = answered(activation, solo_deps(Record, fake_core))["effects"]
     assert [effect["verdict"] for effect in effects] == ["ok", "unreadable"]
     assert effects[1]["message"].startswith("JSONDecodeError")
     assert seen == [{"a": 1}]
@@ -611,9 +600,10 @@ def test_an_entry_edge_transform_that_raises_makes_the_message_unreadable(
     handler that never saw it."""
     seen: list[Any] = []
 
-    @flezha.tasklet
-    def record(value: Any) -> None:
-        seen.append(value)
+    @flezha.tasklet(name="record")
+    class Record:
+        def run(self, value: Any, ctx: flezha.Ctx[None, None]) -> None:
+            seen.append(value)
 
     def strict(value: Any) -> Any:
         if "k" not in value:
@@ -622,7 +612,7 @@ def test_an_entry_edge_transform_that_raises_makes_the_message_unreadable(
 
     @flezha.unbounded_operator("strict_entry")
     def strict_entry(c: flezha.Channels) -> None:
-        c.input("in").map(strict).into(record).sink()
+        c.input("in").map(strict).into(Record).sink()
 
     deps = deps_for(strict_entry, fake_core)
     effects = answered(
@@ -639,11 +629,12 @@ def test_an_unreadable_message_is_told_apart_from_a_handler_failure(
     """Only the entrance answers `unreadable`: a readable message the handler
     raises on is the handler's failure, retryable as before."""
 
-    @flezha.tasklet
-    def refuse(value: Any) -> None:
-        raise ValueError("cannot place this")
+    @flezha.tasklet(name="refuse")
+    class Refuse:
+        def run(self, value: Any, ctx: flezha.Ctx[None, None]) -> None:
+            raise ValueError("cannot place this")
 
-    deps = solo_deps(refuse, fake_core)
+    deps = solo_deps(Refuse, fake_core)
     (unreadable,) = answered(wire_work(61, "solo", (0, b"not json")), deps)["effects"]
     assert unreadable["verdict"] == "unreadable"
     assert unreadable["message"].startswith("JSONDecodeError")
@@ -695,7 +686,7 @@ def _merged_edge(c: flezha.Channels) -> None:
     quotes = c.input("quotes", codec="text").into(echo)
     c.merge().from_(ticks, fixtures.tagged("ticks")).from_(
         quotes, fixtures.tagged("quotes")
-    ).key_by(lambda value: value["symbol"]).into(fixtures.merge_label).sink("merged")
+    ).key_by(lambda value: value["symbol"]).into(fixtures.MergeLabel).sink("merged")
 
 
 def test_an_inter_tasklet_merge_source_is_mapped_and_keyed_as_it_is_released(
@@ -797,19 +788,20 @@ def test_a_spawn_returns_before_the_controller_answers_and_its_refusal_stays_in_
     }
     seen: dict[str, Any] = {}
 
-    @flezha.tasklet
-    def spawner(value: str, ctx: flezha.Ctx[None]) -> str:
-        began = time.monotonic()
-        handle = ctx.spawn_bounded("worker", value)
-        seen["returned_after_s"] = time.monotonic() - began
-        seen["pending"] = handle.try_result()
-        try:
-            handle.wait()
-        except flezha.SpawnRefusedError as refusal:
-            seen["refusal"] = refusal
-        return value
+    @flezha.tasklet(name="spawner")
+    class Spawner:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            began = time.monotonic()
+            handle = ctx.spawn_bounded("worker", value)
+            seen["returned_after_s"] = time.monotonic() - began
+            seen["pending"] = handle.try_result()
+            try:
+                handle.wait()
+            except flezha.SpawnRefusedError as refusal:
+                seen["refusal"] = refusal
+            ctx.emit(value)
 
-    (effect,) = answered(work_activation(90, "p", factory="solo"), solo_deps(spawner, fake_core))[
+    (effect,) = answered(work_activation(90, "p", factory="solo"), solo_deps(Spawner, fake_core))[
         "effects"
     ]
     assert seen["returned_after_s"] < fake_core.spawn_answer_after_s / 5
@@ -823,12 +815,13 @@ def test_a_spawn_without_an_id_asks_for_one_and_a_spawn_with_an_id_carries_it(
 ) -> None:
     results: list[flezha.SpawnResult] = []
 
-    @flezha.tasklet
-    def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
-        results.append(ctx.spawn_bounded("worker", value).wait())
-        results.append(ctx.spawn_bounded("worker", value, id="w1").wait())
+    @flezha.tasklet(name="spawner")
+    class Spawner:
+        def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+            results.append(ctx.spawn_bounded("worker", value).wait())
+            results.append(ctx.spawn_bounded("worker", value, id="w1").wait())
 
-    answered(work_activation(91, "p", factory="solo"), solo_deps(spawner, fake_core))
+    answered(work_activation(91, "p", factory="solo"), solo_deps(Spawner, fake_core))
     assert results == [
         flezha.SpawnResult("worker-k7m2qzxw4pd3fn2a", "spawned"),
         flezha.SpawnResult("w1", "spawned"),
@@ -855,13 +848,14 @@ def test_a_spawn_payload_is_what_a_text_or_json_entry_reads(fake_core: FakeCore)
     its UTF-8, bytes are themselves, anything else its JSON, so the spawned
     bounded's `text` or `json` entry decodes it as a send's payload."""
 
-    @flezha.tasklet
-    def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
-        ctx.spawn_bounded("place", "o-1").wait()
-        ctx.spawn_bounded("place", b"\xff\x00raw").wait()
-        ctx.spawn_bounded("place", {"symbol": "AAPL", "quantity": 10}).wait()
+    @flezha.tasklet(name="spawner")
+    class Spawner:
+        def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+            ctx.spawn_bounded("place", "o-1").wait()
+            ctx.spawn_bounded("place", b"\xff\x00raw").wait()
+            ctx.spawn_bounded("place", {"symbol": "AAPL", "quantity": 10}).wait()
 
-    answered(work_activation(92, "p", factory="solo"), solo_deps(spawner, fake_core))
+    answered(work_activation(92, "p", factory="solo"), solo_deps(Spawner, fake_core))
     payloads = [s["payload"] for s in fake_core.spawns]
     assert payloads[0] == b"o-1"
     assert payloads[1] == b"\xff\x00raw"
@@ -885,15 +879,16 @@ def test_each_failure_a_read_meets_is_its_own_spawn_error(
     fake_core.spawn_answer = {"error": reason, "message": f"the spawn failed: {reason}"}
     raised: list[flezha.SpawnError] = []
 
-    @flezha.tasklet
-    def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
-        handle = ctx.spawn_bounded("worker", value, id="w1", if_running="error")
-        try:
-            handle.wait()
-        except flezha.SpawnError as error:
-            raised.append(error)
+    @flezha.tasklet(name="spawner")
+    class Spawner:
+        def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+            handle = ctx.spawn_bounded("worker", value, id="w1", if_running="error")
+            try:
+                handle.wait()
+            except flezha.SpawnError as error:
+                raised.append(error)
 
-    (effect,) = answered(work_activation(92, "p", factory="solo"), solo_deps(spawner, fake_core))[
+    (effect,) = answered(work_activation(92, "p", factory="solo"), solo_deps(Spawner, fake_core))[
         "effects"
     ]
     (error,) = raised
@@ -907,11 +902,12 @@ def test_each_failure_a_read_meets_is_its_own_spawn_error(
 def test_if_running_without_an_id_is_refused_at_the_call_and_sends_nothing(
     fake_core: FakeCore,
 ) -> None:
-    @flezha.tasklet
-    def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
-        ctx.spawn_bounded("worker", value, if_running="error")
+    @flezha.tasklet(name="spawner")
+    class Spawner:
+        def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+            ctx.spawn_bounded("worker", value, if_running="error")
 
-    (effect,) = answered(work_activation(93, "p", factory="solo"), solo_deps(spawner, fake_core))[
+    (effect,) = answered(work_activation(93, "p", factory="solo"), solo_deps(Spawner, fake_core))[
         "effects"
     ]
     assert effect["message"].startswith("ValueError: ")
@@ -927,14 +923,15 @@ def test_a_replayed_spawn_hands_the_replay_to_the_core_and_answers_the_id_it_was
     the SDK owns is handing it the flag and reading the answer."""
     results: list[flezha.SpawnResult | None] = []
 
-    @flezha.tasklet
-    def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
-        results.append(ctx.spawn_bounded("worker", value).try_result())
-        results.append(ctx.spawn_bounded("worker", value, id="w1").try_result())
+    @flezha.tasklet(name="spawner")
+    class Spawner:
+        def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+            results.append(ctx.spawn_bounded("worker", value).try_result())
+            results.append(ctx.spawn_bounded("worker", value, id="w1").try_result())
 
     activation = work_activation(94, "p", factory="solo")
     activation["items"][0]["replay"] = True
-    answered(activation, solo_deps(spawner, fake_core))
+    answered(activation, solo_deps(Spawner, fake_core))
     assert results == [
         flezha.SpawnResult("", "skipped_on_replay"),
         flezha.SpawnResult("w1", "skipped_on_replay"),
@@ -946,11 +943,12 @@ def test_an_async_handler_awaits_a_spawn_while_its_loop_keeps_serving(fake_core:
     fake_core.spawn_answer_after_s = 0.3
     results: list[flezha.SpawnResult] = []
 
-    @flezha.tasklet
-    async def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
-        results.append(await ctx.spawn_bounded("worker", value, id="w1"))
+    @flezha.tasklet(name="spawner")
+    class Spawner:
+        async def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+            results.append(await ctx.spawn_bounded("worker", value, id="w1"))
 
-    deps = solo_deps(spawner, fake_core)
+    deps = solo_deps(Spawner, fake_core)
 
     async def serve() -> tuple[int, dict[str, Any]]:
         ticks = 0

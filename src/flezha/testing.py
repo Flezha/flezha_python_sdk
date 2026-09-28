@@ -50,7 +50,6 @@ class Outcome:
     outputs: list[Any] = field(default_factory=list)
     changes: list[Any] = field(default_factory=list)
     timers: list[dict[str, Any]] = field(default_factory=list)
-    returned: Any = None
 
 
 class TaskletTestHarness(Generic[S]):
@@ -89,7 +88,7 @@ class TaskletTestHarness(Generic[S]):
         # The dispatcher's own cell store, so the state this harness reports
         # is the state a runner would hold.
         self._registered = RegisteredClass(self._spec)
-        self._cell = self._registered.cell(self._node, cell_key)
+        self._cell = self._registered.cell(self._node, operator, cell_key)
         self._deps = DispatchDeps(registry=None, bridge=self)
         self.log: list[bytes] = []
         self._timers: list[dict[str, Any]] = []
@@ -108,7 +107,7 @@ class TaskletTestHarness(Generic[S]):
 
     def feed(self, value: Any, *, now: int = 0, replay: bool = False) -> Outcome:
         """Run the tasklet against one input."""
-        return self._run(now, replay, lambda ctx: self._task(value, ctx))
+        return self._run(now, replay, lambda ctx: self._task(value, ctx), "run")
 
     def apply_inputs(self, values: Iterable[Any], *, now: int = 0) -> list[Outcome]:
         """Run the tasklet against several inputs, in order."""
@@ -124,6 +123,7 @@ class TaskletTestHarness(Generic[S]):
             lambda ctx: self._task.on_timer(  # type: ignore[misc]
                 {"kind": kind, "scheduled_at": scheduled_at}, ctx
             ),
+            "on_timer",
         )
 
     def advance_event_time(self, to: int) -> list[Outcome]:
@@ -146,7 +146,7 @@ class TaskletTestHarness(Generic[S]):
             0,
             False,
             lambda ctx: self._task.compensate(outputs, ctx),  # type: ignore[misc]
-            emit=False,
+            "compensate",
         )
 
     def restore(self, *, snapshot: bytes | None = None, changes: Iterable[bytes] = ()) -> S:
@@ -225,7 +225,7 @@ class TaskletTestHarness(Generic[S]):
 
     # -- internals -----------------------------------------------------------
 
-    def _run(self, now: int, replay: bool, body: Any, *, emit: bool = True) -> Outcome:
+    def _run(self, now: int, replay: bool, body: Any, hook: str) -> Outcome:
         activation = {
             "token": 0,
             "operator": self._operator,
@@ -236,9 +236,7 @@ class TaskletTestHarness(Generic[S]):
             ctx, returned = run_now(invoke(self._cell, activation, self._deps, now, replay, body))
         finally:
             self._spawns.clear()
-        # The runner never emits what a compensate hook returns.
-        if emit:
-            ctx.emit_returned(returned)
+        ctx.settle_return(returned, hook)
         self.log.extend(ctx.changes)
         self._change_seq += len(ctx.changes)
         self._timers.extend(timer for timer in ctx.timers if timer["register"])
@@ -246,7 +244,6 @@ class TaskletTestHarness(Generic[S]):
             outputs=[_codec.decode(output["payload"]) for output in ctx.outputs],
             changes=[self._task.decode_change(body) for body in ctx.changes],
             timers=list(ctx.timers),
-            returned=returned,
         )
 
 

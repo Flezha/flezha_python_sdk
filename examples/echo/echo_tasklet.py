@@ -2,11 +2,14 @@ import flezha
 
 
 # A processing stage of the operator's graph, run once per message. This one
-# prefixes the input, and what it returns is emitted.
+# prefixes the input and emits it through the context, the one way a value
+# leaves a tasklet.
 #
-# A function with no declared state keeps nothing between messages and journals
-# nothing. Where the result goes is not decided here: the operator decides
-# that, so the graph can be rewired without touching this function.
+# `Ctx[None, str]` names no state, so it keeps nothing between messages and
+# journals nothing, and a str output. Where the output goes is not decided here:
+# the operator decides that, so the graph can be rewired without touching this
+# class.
 @flezha.tasklet(name="echo")  # the durable identity: state is filed under it
-def echo(value: str) -> str:
-    return f"echo: {value}"
+class Echo:
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(f"echo: {value}")

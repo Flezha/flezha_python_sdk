@@ -9,6 +9,7 @@ never learned already fails at the core's ``deny_unknown_fields``.
 from __future__ import annotations
 
 import dataclasses
+from typing import Any
 
 import pytest
 
@@ -57,10 +58,10 @@ class Keyed:
     rather than the subset a simpler fixture would produce.
     """
 
-    def run(self, value: dict[str, int], ctx: flezha.Ctx[Everything]) -> None:
+    def run(self, value: dict[str, int], ctx: flezha.Ctx[Everything, None]) -> None:
         ctx.change({"by": 1})
 
-    def initial_state(self, key: str | None) -> Everything:
+    def init_state(self, key: str | None) -> Everything:
         return Everything()
 
     def apply_change(self, state: Everything, change: dict[str, int]) -> None:
@@ -69,7 +70,7 @@ class Keyed:
     def event_time(self, value: dict[str, int]) -> int:
         return value["at"]
 
-    def compensate(self, outputs: list[object], ctx: flezha.Ctx[Everything]) -> None:
+    def compensate(self, outputs: list[object], ctx: flezha.Ctx[Everything, None]) -> None:
         return None
 
     def migrate_state(self, from_version: int, body: bytes) -> Everything:
@@ -81,9 +82,8 @@ class Keyed:
 
 keyed = flezha.tasklet(
     Keyed,
-    clock="event_time",
-    dynamic_cells=True,
-    idle_ttl_ms=60_000,
+    name="keyed",
+    idle_ttl_seconds=60,
     max_cells=1024,
     mailbox_capacity=2048,
     schema_version=3,
@@ -92,7 +92,7 @@ keyed = flezha.tasklet(
 
 
 class Statics:
-    def run(self, value: dict[str, int], ctx: flezha.Ctx[None]) -> None:
+    def run(self, value: dict[str, int], ctx: flezha.Ctx[None, Any]) -> None:
         return None
 
     def cells_for(self, value: dict[str, int]) -> list[str]:
@@ -295,12 +295,12 @@ def _bytes(value: object) -> bytes:
 
 
 class HybridProducer:
-    def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[None, Any]) -> None:
         ctx.emit(value)
 
 
 class HybridConsumer:
-    def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[None, Any]) -> None:
         return None
 
 
@@ -316,12 +316,12 @@ def hybrid_channel(c: flezha.Channels) -> None:
 
 
 class TierCommitA:
-    def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[None, Any]) -> None:
         ctx.emit(value, key="job")
 
 
 class BlockB:
-    def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[None, Any]) -> None:
         return None
 
 
@@ -340,3 +340,55 @@ def test_the_hybrid_stream_topology_is_the_reference() -> None:
 
 def test_the_structured_bounded_topology_is_the_reference() -> None:
     assert _lines("commit_block_chain", commit_block_chain) == _golden("commit_block_chain")
+
+
+# --- the cell mode is the wiring's -------------------------------------------
+
+
+class Plain:
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(value)
+
+
+plain = flezha.tasklet(Plain, name="plain")
+
+
+def _modes(operator: flezha.Operator) -> dict[str, str]:
+    return {
+        tasklet["name"]: tasklet["cell_mode"]
+        for tasklet in graph.to_host_class_decl(operator.spec)["tasklets"]
+    }
+
+
+def test_key_by_alone_makes_the_consumer_dynamic_and_one_tasklet_can_be_both() -> None:
+    @flezha.unbounded_operator("keyed_plain")
+    def keyed_plain(c: flezha.Channels) -> None:
+        c.input("in", codec="text").key_by(lambda value: value[:1]).into(plain).sink()
+
+    @flezha.unbounded_operator("single_plain")
+    def single_plain(c: flezha.Channels) -> None:
+        c.input("in", codec="text").into(plain).sink()
+
+    assert _modes(keyed_plain) == {"plain": "dynamic"}
+    assert _modes(single_plain) == {"plain": "single"}
+    declare(keyed_plain)
+
+
+def test_a_keyed_merge_makes_the_merged_tasklet_dynamic() -> None:
+    @flezha.unbounded_operator("keyed_merge")
+    def keyed_merge(c: flezha.Channels) -> None:
+        c.merge().from_(c.input("a"), str).from_(c.input("b"), str).key_by(str).into(plain)
+
+    assert _modes(keyed_merge) == {"plain": "dynamic"}
+    declare(keyed_merge)
+
+
+def test_a_static_key_set_fed_by_key_by_is_refused_by_the_core() -> None:
+    @flezha.unbounded_operator("static_keyed")
+    def static_keyed(c: flezha.Channels) -> None:
+        c.input("in").key_by(str).into(statics).sink()
+
+    assert _modes(static_keyed) == {"statics": "static"}
+    with pytest.raises(flezha.DeclarationError) as caught:
+        declare(static_keyed)
+    assert caught.value.refusals == ["KeyByOnUnkeyableTarget"]

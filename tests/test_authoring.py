@@ -25,6 +25,7 @@ from conftest import Bumped, Counter, count_up, declare, demo, echo
 from flezha import codec, graph
 from flezha.builder import apply_transforms
 from flezha.errors import DeclarationError, EmitError, UnrepresentableValueError
+from flezha.testing import TaskletTestHarness
 
 if TYPE_CHECKING:
     from decimal import Decimal
@@ -50,13 +51,8 @@ def _derived(operator: flezha.Operator) -> list[tuple[object, ...]]:
 # ---------------------------------------------------------------------------
 
 
-def test_a_decorated_handler_is_an_ordinary_callable() -> None:
-    assert echo("hello") == "hello"
-    assert echo.name == "echo"
-
-
 def test_a_class_tasklet_carries_its_hooks() -> None:
-    assert count_up.initial_state is not None
+    assert count_up.init_state is not None
     assert count_up.apply_change is not None
     assert count_up.on_timer is None
     assert count_up.state_type is Counter
@@ -74,13 +70,14 @@ def test_declaring_performs_no_io(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(socket, "socket", watched)
 
-    @flezha.tasklet
-    def later(value: str) -> str:
-        return value
+    @flezha.tasklet(name="later")
+    class Later:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            ctx.emit(value)
 
     @flezha.unbounded_operator("late")
     def late(c: flezha.Channels) -> None:
-        c.input("in").into(later).sink()
+        c.input("in").into(Later).sink()
 
     declare(late)
     assert opened == []
@@ -93,19 +90,21 @@ def test_the_decl_carries_the_python_language_and_codec_bytes() -> None:
 
 
 def test_two_unnamed_mentions_of_one_tasklet_are_one_node() -> None:
-    @flezha.tasklet
-    def split(value: str) -> str:
-        return value
+    @flezha.tasklet(name="split")
+    class Split:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            ctx.emit(value)
 
-    @flezha.tasklet
-    def join(value: str) -> str:
-        return value
+    @flezha.tasklet(name="join")
+    class Join:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            ctx.emit(value)
 
     @flezha.unbounded_operator("diamond")
     def diamond(c: flezha.Channels) -> None:
         entry = c.input("in")
-        entry.into(split).named("a").into(join, "join_a").sink()
-        entry.into(split).named("b").into(join, "join_b").sink()
+        entry.into(Split).named("a").into(Join, "join_a").sink()
+        entry.into(Split).named("b").into(Join, "join_b").sink()
 
     declare(diamond)
     assert [node.name for node in diamond.spec.tasklets] == ["split", "join_a", "join_b"]
@@ -127,9 +126,10 @@ def test_two_unnamed_mentions_of_one_tasklet_are_one_node() -> None:
 def test_an_unannotated_parameter_is_refused_naming_it() -> None:
     with pytest.raises(DeclarationError) as caught:
 
-        @flezha.tasklet
-        def handle(order):  # type: ignore[no-untyped-def]
-            return order
+        @flezha.tasklet(name="handle")
+        class Handle:
+            def run(self, order, ctx: flezha.Ctx[None, Any]) -> None:
+                ctx.emit(order)
 
     assert "order" in str(caught.value)
     assert "annotation" in str(caught.value)
@@ -137,18 +137,20 @@ def test_an_unannotated_parameter_is_refused_naming_it() -> None:
 
 def test_a_node_identity_collision_is_refused() -> None:
     @flezha.tasklet(name="shared")
-    def first(value: str) -> str:
-        return value
+    class First:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            ctx.emit(value)
 
     @flezha.tasklet(name="shared")
-    def second(value: str) -> str:
-        return value
+    class Second:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            ctx.emit(value)
 
     @flezha.unbounded_operator("collision")
     def collision(c: flezha.Channels) -> None:
         entry = c.input("in")
-        entry.into(first).sink()
-        entry.into(second).sink()
+        entry.into(First).sink()
+        entry.into(Second).sink()
 
     with pytest.raises(DeclarationError, match="node identity") as caught:
         declare(collision)
@@ -163,9 +165,10 @@ def test_a_node_identity_collision_is_refused() -> None:
 # core derives the acknowledgement granularity from any of them, so no order of
 # calls can clear another's.
 def test_the_checkpoint_options_compose_in_any_order_and_none_clears_another() -> None:
-    @flezha.tasklet
-    def one(value: str) -> str:
-        return value
+    @flezha.tasklet(name="one")
+    class One:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            ctx.emit(value)
 
     @flezha.unbounded_operator("compose")
     def compose(c: flezha.Channels) -> None:
@@ -173,7 +176,7 @@ def test_the_checkpoint_options_compose_in_any_order_and_none_clears_another() -
         c.outputs_at_checkpoint(250)
         c.checkpoint_ack()
         c.checkpoint_every(4)
-        c.input("in").into(one).keyed().sink()
+        c.input("in").into(One).keyed().sink()
 
     assert declare(compose)["ack_granularity"] == "checkpoint"
     decl = graph.to_host_class_decl(compose.spec)
@@ -218,15 +221,7 @@ def test_a_tasklet_that_folds_no_change_declares_it() -> None:
     assert folds["change_is_nochange"] is False
 
 
-def test_an_event_time_clock_without_an_extractor_is_refused() -> None:
-    with pytest.raises(DeclarationError, match="no event_time extractor"):
-
-        @flezha.tasklet(clock="event_time")
-        def timed(value: str) -> str:
-            return value
-
-
-def test_an_extractor_without_an_event_time_clock_is_refused() -> None:
+def test_apply_change_without_state_is_refused_naming_where_state_is_declared() -> None:
     """A tasklet-local defect is refused when the decorator builds it.
 
     Earlier than the `register_factory` call site and with the traceback on the
@@ -234,27 +229,18 @@ def test_an_extractor_without_an_event_time_clock_is_refused() -> None:
     and `graph.validate` holds only the defects that need the graph.
     """
 
-    class Timed:
-        def run(self, value: dict[str, int]) -> dict[str, int]:
-            return value
-
-        def event_time(self, value: dict[str, int]) -> int:
-            return value["at"]
-
-    with pytest.raises(DeclarationError, match="only consulted by an event_time clock"):
-        flezha.tasklet(Timed)
-
-
-def test_apply_change_without_initial_state_is_refused() -> None:
     class Folding:
-        def run(self, value: str) -> str:
-            return value
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            ctx.emit(value)
 
         def apply_change(self, state: dict[str, int], change: dict[str, int]) -> None:
             return None
 
-    with pytest.raises(DeclarationError, match="nothing to fold into"):
-        flezha.tasklet(Folding)
+    with pytest.raises(DeclarationError, match="no state to fold into") as caught:
+        flezha.tasklet(Folding, name="folding")
+    assert "`init_state`" in str(caught.value)
+    assert "`state=`" in str(caught.value)
+    assert "Ctx[State, Output]" in str(caught.value)
 
 
 def test_an_unrepresentable_state_field_is_refused_naming_it() -> None:
@@ -264,14 +250,14 @@ def test_an_unrepresentable_state_field_is_refused_naming_it() -> None:
         conn: object = field(default_factory=lambda: socket.socket())
 
     class Holder:
-        def run(self, value: str) -> str:
-            return value
+        def run(self, value: str, ctx: flezha.Ctx[WithSocket, str]) -> None:
+            ctx.emit(value)
 
-        def initial_state(self, key: str | None) -> WithSocket:
+        def init_state(self, key: str | None) -> WithSocket:
             return WithSocket()
 
     with pytest.raises(UnrepresentableValueError, match="conn"):
-        flezha.tasklet(Holder)
+        flezha.tasklet(Holder, name="holder")
 
 
 def test_a_bounded_that_declares_no_tasklet_is_refused() -> None:
@@ -566,9 +552,10 @@ def test_a_merge_source_already_wired_into_the_tasklet_is_refused() -> None:
     assert caught.value.refusals == ["EdgeAlreadyWired"]
 
 
-@flezha.tasklet
-def routed_document(value: Any) -> None:
-    return None
+@flezha.tasklet(name="routed_document")
+class RoutedDocument:
+    def run(self, value: Any, ctx: flezha.Ctx[None, None]) -> None:
+        pass
 
 
 def test_the_router_is_one_route_latest_node_and_a_named_router_is_another() -> None:
@@ -576,11 +563,11 @@ def test_the_router_is_one_route_latest_node_and_a_named_router_is_another() -> 
     def routers(c: flezha.Channels) -> None:
         trades = c.input("trades")
         c.route_latest(c.input("config"), trades, lambda trade: trade["symbol"]).into(
-            routed_document
+            RoutedDocument
         )
         c.route_latest_named(
             c.input("feature_flags"), trades, lambda trade: trade["desk"], "flags"
-        ).into(routed_document)
+        ).into(RoutedDocument)
 
     declare(routers)
     assert [node.name for node in routers.spec.tasklets] == [
@@ -588,7 +575,7 @@ def test_the_router_is_one_route_latest_node_and_a_named_router_is_another() -> 
         "routed_document",
         "flags",
     ]
-    assert routers.spec.tasklets[0].task.cell_mode == "single"
+    assert graph.to_host_class_decl(routers.spec)["tasklets"][0]["cell_mode"] == "single"
 
 
 def test_two_unnamed_routers_are_one_node_so_a_shared_traffic_edge_is_refused() -> None:
@@ -732,12 +719,13 @@ def test_an_unbounded_short_form_is_its_hand_written_twin() -> None:
         return value.upper()
 
     @flezha.tasklet(name="upcase")
-    def upcase_tasklet(value: str) -> str:
-        return value.upper()
+    class UpcaseTasklet:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            ctx.emit(value.upper())
 
     @flezha.unbounded_operator("upcase")
     def twin(c: flezha.Channels) -> None:
-        c.input("input", codec="text").into(upcase_tasklet).sink("out")
+        c.input("input", codec="text").into(UpcaseTasklet).sink("out")
 
     assert upcase.kind == "unbounded"
     assert graph.to_host_class_decl(upcase.spec) == graph.to_host_class_decl(twin.spec)
@@ -755,12 +743,13 @@ def test_a_bounded_short_form_is_its_hand_written_twin(
         return order
 
     @flezha.tasklet(name="place")
-    def place_tasklet(order: str) -> str:
-        return order
+    class PlaceTasklet:
+        def run(self, order: str, ctx: flezha.Ctx[None, str]) -> None:
+            ctx.emit(order)
 
     @flezha.bounded_operator("place", **written)
     def twin(c: flezha.Channels) -> None:
-        c.input("order", codec="text").into(place_tasklet).sink("placed")
+        c.input("order", codec="text").into(PlaceTasklet).sink("placed")
 
     assert place.kind == "bounded"
     record = graph.to_host_class_decl(place.spec)
@@ -789,12 +778,15 @@ def test_a_channels_body_annotated_or_not_is_still_the_full_form() -> None:
         assert [node.name for node in full.spec.tasklets] == ["echo"]
 
 
-def test_a_function_taking_a_context_is_a_tasklet_body() -> None:
-    @flezha.unbounded_operator(id="stamp", sink="out")
-    def stamp(value: str, ctx: flezha.Ctx[None]) -> str:
-        return value
+def test_a_function_short_form_taking_a_context_is_refused() -> None:
+    with pytest.raises(DeclarationError) as caught:
 
-    assert [node.name for node in stamp.spec.tasklets] == ["stamp"]
+        @flezha.unbounded_operator(id="stamp", sink="out")
+        def stamp(value: str, ctx: flezha.Ctx[None, str]) -> str:
+            return value
+
+    assert "`ctx`" in str(caught.value)
+    assert "class whose `run(self, value, ctx)`" in str(caught.value)
 
 
 def test_the_generated_tasklet_composes_in_another_topology() -> None:
@@ -874,8 +866,9 @@ def test_an_operator_keyword_on_a_tasklet_is_refused(keyword: str) -> None:
     with pytest.raises(DeclarationError) as caught:
 
         @flezha.tasklet(name="upcase", **declarations)
-        def upcase(value: str) -> str:
-            return value
+        class Upcase:
+            def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+                ctx.emit(value)
 
     assert f"`{keyword}`" in str(caught.value)
     assert "flezha.unbounded_operator" in str(caught.value)
@@ -883,8 +876,8 @@ def test_an_operator_keyword_on_a_tasklet_is_refused(keyword: str) -> None:
 
 def test_a_short_form_carries_its_tasklets_own_settings() -> None:
     class Keyed:
-        def run(self, value: str) -> str:
-            return value
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            ctx.emit(value)
 
         def cells_for(self, value: str) -> list[str]:
             return ["a"]
@@ -952,18 +945,18 @@ def test_a_class_setting_on_a_short_form_is_refused(
 
 
 def test_a_class_tasklet_body_is_its_run_method() -> None:
-    @flezha.tasklet
+    @flezha.tasklet(name="upcase")
     class Upcase:
-        def run(self, value: str) -> str:
-            return value.upper()
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            ctx.emit(value.upper())
 
-    assert Upcase("abc") == "ABC"
+    assert TaskletTestHarness(Upcase).feed("abc").outputs == ["ABC"]
 
 
 def test_a_class_with_a_process_body_and_no_run_is_refused_naming_run() -> None:
     with pytest.raises(DeclarationError, match="`run`"):
 
-        @flezha.tasklet
+        @flezha.tasklet(name="upcase")  # type: ignore[arg-type]
         class Upcase:
             def process(self, value: str) -> str:
                 return value.upper()

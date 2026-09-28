@@ -9,14 +9,15 @@ from __future__ import annotations
 import flezha
 
 
-@flezha.tasklet
-def handle(value: str) -> str:
-    return value
+@flezha.tasklet(name="handle")
+class Handle:
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(value)
 
 
 @flezha.unbounded_operator("from_module")
 def from_module(c: flezha.Channels) -> None:
-    c.input("in").into(handle).sink()
+    c.input("in").into(Handle).sink()
 
 
 @flezha.unbounded_operator(id="from_module_short_form", sink="out")

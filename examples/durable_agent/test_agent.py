@@ -1,7 +1,6 @@
 """The example's own tests, with no controller running.
 
-A decorated handler is an ordinary callable and the harness drives the same
-dispatch the runner does, so an agent's durability is testable at the speed of a
+The harness drives the same dispatch the runner does, so an agent's durability is testable at the speed of a
 unit test — which is the point of shipping the harness at all.
 """
 

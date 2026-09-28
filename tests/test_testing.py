@@ -15,8 +15,16 @@ from flezha.testing import ReplayMismatch, TaskletTestHarness, replay_equals
 
 
 def test_a_handler_is_testable_with_no_runtime_and_no_controller() -> None:
-    """The decorator returns something that forwards, not something to drive."""
-    assert echo("plain") == "plain"
+    """A tasklet class through the harness, a short form's function directly."""
+
+    @flezha.unbounded_operator(id="shout", sink="out")
+    def shout(value: str) -> str:
+        return value.upper()
+
+    outcomes = TaskletTestHarness(echo).apply_inputs(["plain", "again"])
+    assert [outcome.outputs for outcome in outcomes] == [["plain"], ["again"]]
+    assert shout.tasklet is not None
+    assert shout.tasklet("plain") == "PLAIN"
 
 
 def test_the_harness_reports_state_changes_and_emits() -> None:
@@ -59,10 +67,10 @@ def test_the_replay_gate_reports_both_states_on_a_mismatch() -> None:
     drift = {"n": 0}
 
     class Impure:
-        def run(self, value: str, ctx: flezha.Ctx[dict[str, int]]) -> None:
+        def run(self, value: str, ctx: flezha.Ctx[dict[str, int], None]) -> None:
             ctx.change({"by": 1})
 
-        def initial_state(self, key: str | None) -> dict[str, int]:
+        def init_state(self, key: str | None) -> dict[str, int]:
             return {"total": 0}
 
         def apply_change(self, state: dict[str, int], change: dict[str, int]) -> None:
@@ -70,7 +78,7 @@ def test_the_replay_gate_reports_both_states_on_a_mismatch() -> None:
             drift["n"] += 1
             state["total"] += change["by"] * drift["n"]
 
-    task = flezha.tasklet(Impure)
+    task = flezha.tasklet(Impure, name="impure")
     harness: TaskletTestHarness[dict[str, int]] = TaskletTestHarness(task)
     harness.apply_inputs(["a", "b"])
     with pytest.raises(ReplayMismatch) as caught:
@@ -82,18 +90,18 @@ def test_the_replay_gate_catches_a_mutation_that_recorded_no_change() -> None:
     """The gate catches what the state guard cannot: an unguarded state shape."""
 
     class Sneaky:
-        def run(self, value: str, ctx: flezha.Ctx[dict[str, int]]) -> None:
+        def run(self, value: str, ctx: flezha.Ctx[dict[str, int], None]) -> None:
             # A plain dict is not a declared state, so nothing refuses this —
             # the replay gate is what reports it.
             ctx.state["total"] = ctx.state["total"] + 1
 
-        def initial_state(self, key: str | None) -> dict[str, int]:
+        def init_state(self, key: str | None) -> dict[str, int]:
             return {"total": 0}
 
         def apply_change(self, state: dict[str, int], change: dict[str, int]) -> None:
             state["total"] += change["by"]
 
-    task = flezha.tasklet(Sneaky)
+    task = flezha.tasklet(Sneaky, name="sneaky")
     harness: TaskletTestHarness[dict[str, int]] = TaskletTestHarness(task)
     harness.feed("a")
     with pytest.raises(ReplayMismatch):
@@ -104,13 +112,13 @@ def test_timers_are_recorded_and_fired() -> None:
     fired: list[int] = []
 
     class Timed:
-        def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
+        def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
             ctx.timer_after(1000)
 
-        def on_timer(self, timer: dict[str, object], ctx: flezha.Ctx[None]) -> None:
+        def on_timer(self, timer: dict[str, object], ctx: flezha.Ctx[None, None]) -> None:
             fired.append(int(timer["scheduled_at"]))  # type: ignore[arg-type]
 
-    task = flezha.tasklet(Timed)
+    task = flezha.tasklet(Timed, name="timed")
     harness: TaskletTestHarness[None] = TaskletTestHarness(task)
     outcome = harness.feed("x", now=500)
     assert outcome.timers == [{"kind": "processing_time", "scheduled_at": 1500, "register": True}]
@@ -122,13 +130,13 @@ def test_event_time_is_advanced_through_the_registered_timers() -> None:
     fired: list[int] = []
 
     class EventTimed:
-        def run(self, value: dict[str, int], ctx: flezha.Ctx[None]) -> None:
+        def run(self, value: dict[str, int], ctx: flezha.Ctx[None, None]) -> None:
             ctx.timer_at_event_time(value["at"])
 
-        def on_timer(self, timer: dict[str, object], ctx: flezha.Ctx[None]) -> None:
+        def on_timer(self, timer: dict[str, object], ctx: flezha.Ctx[None, None]) -> None:
             fired.append(int(timer["scheduled_at"]))  # type: ignore[arg-type]
 
-    task = flezha.tasklet(EventTimed)
+    task = flezha.tasklet(EventTimed, name="event_timed")
     harness: TaskletTestHarness[None] = TaskletTestHarness(task)
     harness.feed({"at": 300})
     harness.feed({"at": 100})
@@ -144,45 +152,54 @@ def test_a_compensation_is_driven_over_recorded_outputs() -> None:
     assert seen == ["a", "b"]
 
 
-def test_a_compensate_hook_s_return_value_is_not_emitted() -> None:
+def test_a_compensate_hook_that_returns_a_value_is_refused_as_the_runner_refuses_it() -> None:
     class Returning:
-        def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
             ctx.emit(value)
 
-        def compensate(self, outputs: list[Any], ctx: flezha.Ctx[None]) -> str:
+        def compensate(self, outputs: list[Any], ctx: flezha.Ctx[None, str]):
             return "undo"
 
-    harness: TaskletTestHarness[None] = TaskletTestHarness(flezha.tasklet(Returning))
-    assert harness.compensate(["a"]).outputs == []
+    harness: TaskletTestHarness[None] = TaskletTestHarness(
+        flezha.tasklet(Returning, name="returning")
+    )
+    with pytest.raises(flezha.NonRetryableError) as caught:
+        harness.compensate(["a"])
+    assert str(caught.value) == (
+        "returning: `compensate` returned a str; a value leaves a tasklet only through "
+        "`ctx.emit`, so `compensate` returns None"
+    )
 
 
 def test_an_async_handler_needs_no_event_loop_in_the_test() -> None:
-    @flezha.tasklet
-    async def slow(value: str) -> str:
-        await asyncio.sleep(0)
-        return value.upper()
+    @flezha.tasklet(name="slow")
+    class Slow:
+        async def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            await asyncio.sleep(0)
+            ctx.emit(value.upper())
 
-    harness: TaskletTestHarness[None] = TaskletTestHarness(slow)
+    harness: TaskletTestHarness[None] = TaskletTestHarness(Slow)
     assert harness.feed("hi").outputs == ["HI"]
 
 
 def test_the_context_clock_and_identity_are_stable_within_an_invocation() -> None:
     ids: list[str] = []
 
-    @flezha.tasklet
-    def reads(value: str, ctx: flezha.Ctx[None]) -> None:
-        assert ctx.now() == ctx.now() == ctx.now()
-        ids.append(ctx.stable_id())
-        ids.append(ctx.stable_id())
+    @flezha.tasklet(name="reads")
+    class Reads:
+        def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+            assert ctx.now() == ctx.now() == ctx.now()
+            ids.append(ctx.stable_id())
+            ids.append(ctx.stable_id())
 
-    harness: TaskletTestHarness[None] = TaskletTestHarness(reads, cell_key="e")
+    harness: TaskletTestHarness[None] = TaskletTestHarness(Reads, cell_key="e")
     harness.feed("x", now=99)
     assert ids[0] != ids[1]
 
     replayed: list[str] = []
     ids_backup = list(ids)
     ids.clear()
-    again: TaskletTestHarness[None] = TaskletTestHarness(reads, cell_key="e")
+    again: TaskletTestHarness[None] = TaskletTestHarness(Reads, cell_key="e")
     again.feed("x", now=99)
     replayed = list(ids)
     # The n-th call of a replayed invocation equals the n-th of the original.
@@ -202,11 +219,12 @@ def test_the_harness_reports_a_string_and_a_dict_exactly_as_emitted() -> None:
     reported as the string rather than as the bytes a plugin would receive."""
 
     @flezha.tasklet(name="harness_emitter")
-    def emitter(value: str, ctx: flezha.Ctx[None]) -> str:
-        ctx.emit({"said": value})
-        return f"echo: {value}"
+    class Emitter:
+        def run(self, value: str, ctx: flezha.Ctx[None, Any]) -> None:
+            ctx.emit({"said": value})
+            ctx.emit(f"echo: {value}")
 
-    assert TaskletTestHarness(emitter).feed("hi").outputs == [{"said": "hi"}, "echo: hi"]
+    assert TaskletTestHarness(Emitter).feed("hi").outputs == [{"said": "hi"}, "echo: hi"]
 
 
 def test_the_router_delivers_each_document_once_on_each_keys_own_traffic() -> None:
@@ -243,15 +261,16 @@ def test_the_harness_answers_a_spawn_already_resolved() -> None:
     again: list[flezha.SpawnResult] = []
     unread: list[flezha.SpawnHandle] = []
 
-    @flezha.tasklet
-    def spawner(value: str, ctx: flezha.Ctx[None]) -> None:
-        results.append(ctx.spawn_bounded("worker", value).try_result())
-        named = ctx.spawn_bounded("worker", value, id="w1")
-        results.append(named.try_result())
-        again.append(named.wait())
-        unread.append(ctx.spawn_bounded("worker", value))
+    @flezha.tasklet(name="spawner")
+    class Spawner:
+        def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+            results.append(ctx.spawn_bounded("worker", value).try_result())
+            named = ctx.spawn_bounded("worker", value, id="w1")
+            results.append(named.try_result())
+            again.append(named.wait())
+            unread.append(ctx.spawn_bounded("worker", value))
 
-    harness: TaskletTestHarness[None] = TaskletTestHarness(spawner)
+    harness: TaskletTestHarness[None] = TaskletTestHarness(Spawner)
     harness.feed("a")
     harness.feed("a", replay=True)
     generated, named, replayed, replayed_named = results

@@ -5,7 +5,7 @@
 from the package root, once `.venv` holds the package: `scripts/ci.sh` makes it
 in this repository, `scripts/build-python-sdk.sh` in the core's.
 
-`split` and `Tally` are ordinary tasklets with nothing local-mode about
+`Split` and `Tally` are ordinary tasklets with nothing local-mode about
 them: the same declaration deploys against a controller unchanged. What local
 mode supplies is the sink — the values `Tally` releases arrive here instead of
 on a socket.
@@ -21,9 +21,10 @@ from flezha import Channels, Ctx, LocalOperator, state, tasklet, unbounded_opera
 
 
 @tasklet(name="split")
-def split(line: str, ctx: Ctx[None]) -> None:
-    for word in line.split():
-        ctx.emit(word.lower())
+class Split:
+    def run(self, line: str, ctx: Ctx[None, str]) -> None:
+        for word in line.split():
+            ctx.emit(word.lower())
 
 
 @state
@@ -37,15 +38,12 @@ class Seen:
     seen: int
 
 
-@tasklet(name="tally", state=Count, change=Seen, dynamic_cells=True, idle_ttl_ms=300_000)
+@tasklet(name="tally", idle_ttl_seconds=300)
 class Tally:
-    def run(self, word: str, ctx: Ctx[Count]) -> None:
+    def run(self, word: str, ctx: Ctx[Count, str]) -> None:
         seen = ctx.state.seen + 1
         ctx.change(Seen(seen=seen))
         ctx.emit(f"{word} {seen}")
-
-    def initial_state(self, cell_key: str | None) -> Count:
-        return Count()
 
     def apply_change(self, state: Count, change: Seen) -> None:
         state.seen = change.seen
@@ -53,9 +51,9 @@ class Tally:
 
 @unbounded_operator("local_word_count_example")
 def word_count(c: Channels) -> None:
-    # One Cell per word: the hop from `split` to `Tally` is the runtime's,
+    # One Cell per word: the hop from `Split` to `Tally` is the runtime's,
     # not this file's.
-    c.input("lines", codec="text").into(split).key_by(lambda word: word).into(Tally).keyed().sink(
+    c.input("lines", codec="text").into(Split).key_by(lambda word: word).into(Tally).keyed().sink(
         "totals"
     )
 

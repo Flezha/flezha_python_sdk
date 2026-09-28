@@ -29,6 +29,7 @@ __all__ = [
     "ConsumerEdge",
     "Edge",
     "Merge",
+    "Sealed",
     "ChannelSpec",
     "ClassSpec",
     "Link",
@@ -434,6 +435,13 @@ class Merge:
         return Edge(self._builder, ("tasklet", node), {})
 
 
+class Sealed(Generic[T]):
+    """A channel nothing follows. It has no builder methods, so a later
+    consumer, transform or sink on it is a type error."""
+
+    __slots__ = ()
+
+
 class Edge(Generic[T]):
     """One edge under construction, carrying the type that flows on it.
 
@@ -568,6 +576,12 @@ class Edge(Generic[T]):
             channel.sink = channel.name
             channel.sink_encode = encode or _codec.channel_encoder(named, channel)
         return self
+
+    def sealed(self) -> Sealed[T]:
+        """State that the chain ends here. Purely type-level: the declared
+        topology is the same without it, but a later ``into`` on it is a type
+        error."""
+        return Sealed()
 
     # -- internals ---------------------------------------------------------
 

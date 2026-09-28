@@ -96,7 +96,7 @@ class ModelUnavailable(Exception):
 class Agent:
     """One agent turn: call the model, act, record, emit."""
 
-    def run(self, prompt: str, ctx: flezha.Ctx[Conversation]) -> None:
+    def run(self, prompt: str, ctx: flezha.Ctx[Conversation, str]) -> None:
         # Deterministic and replay-stable: the n-th call of a replayed
         # invocation returns the n-th id of the original, so a retry does not
         # mint a second tool call for the same turn.
@@ -118,9 +118,6 @@ class Agent:
         )
         ctx.emit(answer, key=call_id)
 
-    def initial_state(self, cell_key: str | None) -> Conversation:
-        return Conversation()
-
     def apply_change(self, state: Conversation, change: TurnRecorded) -> None:
         """The fold. Pure, in place, and the only way the state moves.
 
@@ -133,7 +130,7 @@ class Agent:
         if change.booked is not None:
             state.booked.append(change.booked)
 
-    def compensate(self, outputs: list[Any], ctx: flezha.Ctx[Conversation]) -> None:
+    def compensate(self, outputs: list[Any], ctx: flezha.Ctx[Conversation, str]) -> None:
         """Undo what this turn did, from what the engine recorded it doing.
 
         The engine hands back the forward outputs; the agent does not have to
@@ -164,9 +161,9 @@ class Agent:
 
 
 # One cell per conversation, appearing on first sight of its key: an agent
-# deployment does not know its users in advance, and `idle_ttl_ms` is what stops
-# a finished conversation holding memory forever.
-agent = flezha.tasklet(Agent, name="agent_turn", dynamic_cells=True, idle_ttl_ms=15 * 60 * 1000)
+# deployment does not know its users in advance, and `idle_ttl_seconds` is what
+# stops a finished conversation holding memory forever.
+agent = flezha.tasklet(Agent, name="agent_turn", idle_ttl_seconds=15 * 60)
 
 
 @flezha.unbounded_operator("durable_agent")
@@ -174,8 +171,8 @@ def durable_agent(c: flezha.Channels) -> None:
     """One conversation per key, with a retry ladder on the model call.
 
     The key is the text before the first ``|``, so ``user-1|hello`` reaches
-    user-1's conversation. Every edge into a dynamic tasklet must name the
-    cell its inputs reach; the SDK refuses one that does not.
+    user-1's conversation. The ``key_by`` is what makes the tasklet's cells
+    dynamic: one per key, created on its first input.
     """
     c.input("prompts", codec="text").retry_max(4).retry_backoff_ms(250).key_by(
         lambda prompt: prompt.split("|", 1)[0]
@@ -206,7 +203,7 @@ class SessionEvent:
 class SessionTurn:
     """One message of a session: open it, answer it, or end it."""
 
-    def run(self, message: Any, ctx: flezha.Ctx[Session]) -> None:
+    def run(self, message: Any, ctx: flezha.Ctx[Session, dict[str, Any]]) -> None:
         # The first message opens the session; the session's goal is in it.
         if ctx.state.goal is None:
             goal = (message or {}).get("goal", "help the user")
@@ -219,9 +216,6 @@ class SessionTurn:
         else:
             ctx.change(SessionEvent())
             ctx.emit({"event": "turn", "n": ctx.state.turns, "message": message})
-
-    def initial_state(self, cell_key: str | None) -> Session:
-        return Session()
 
     def apply_change(self, state: Session, change: SessionEvent) -> None:
         if change.goal is not None:

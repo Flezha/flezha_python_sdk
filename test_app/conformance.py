@@ -64,15 +64,12 @@ CITED = {
 
 
 class Plain:
-    def run(self, value: str) -> str:
-        return value
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(value)
 
 
-class Routed:
+class Routed(Plain):
     """`cell_keys` WITH the router that says which cell an input belongs to."""
-
-    def run(self, value: str) -> str:
-        return value
 
     def cells_for(self, value: str) -> list[str]:
         return ["a"]
@@ -85,17 +82,11 @@ class NoChangeLogical:
     the durable change sequence a logical clock reads never advances.
     """
 
-    def run(self, value: str) -> str:
-        return value
-
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
-        return {}
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
+        ctx.emit(value)
 
 
-class EventTime:
-    def run(self, value: str) -> str:
-        return value
-
+class EventTime(Plain):
     def event_time(self, value: str) -> int:
         return len(value)
 
@@ -107,9 +98,9 @@ PALETTE: dict[str, tuple[type, str, dict[str, Any]]] = {
     "twin": (Plain, "plain", {}),
     "static": (Plain, "static", {"cell_keys": ["a", "b"]}),
     "routed": (Routed, "routed", {"cell_keys": ["a", "b"]}),
-    "dynamic": (Plain, "dynamic", {"dynamic_cells": True}),
-    "nochange": (NoChangeLogical, "nochange", {"clock": "logical"}),
-    "eventtime": (EventTime, "eventtime", {"clock": "event_time"}),
+    "dynamic": (Plain, "dynamic", {}),
+    "nochange": (NoChangeLogical, "nochange", {"logical_clock": True}),
+    "eventtime": (EventTime, "eventtime", {}),
 }
 
 

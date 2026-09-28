@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 from . import codec as _codec
 from .builder import DROPPED, ChannelSpec, ClassSpec, ConsumerEdge, TaskNode, apply_transforms
-from .errors import EmitError, SpawnError
+from .errors import EmitError, NonRetryableError, SpawnError
 from .identity import cell_identity, stable_id
 
 if TYPE_CHECKING:
@@ -32,6 +32,8 @@ __all__ = [
 ]
 
 S = TypeVar("S")
+# Contravariant, because the output appears only as what `emit` takes.
+O_contra = TypeVar("O_contra", contravariant=True)
 
 #: Metadata keys the runtime owns. A handler that sets one is refused.
 RESERVED_PREFIX = "flz."
@@ -112,8 +114,11 @@ class SpawnHandle:
         return SpawnResult(fields["id"], fields["outcome"])
 
 
-class Ctx(Generic[S]):
-    """What a handler is handed alongside its input."""
+class Ctx(Generic[S, O_contra]):
+    """What a handler is handed alongside its input: `Ctx[State, Output]`.
+
+    ``None`` in either position means no state or no output.
+    """
 
     __slots__ = (
         "_spec",
@@ -221,7 +226,7 @@ class Ctx(Generic[S]):
 
     def emit(
         self,
-        value: Any,
+        value: O_contra,
         *,
         key: str | None = None,
         channel: str | None = None,
@@ -333,16 +338,25 @@ class Ctx(Generic[S]):
 
     # -- what the dispatcher collects ---------------------------------------
 
-    def emit_returned(self, returned: Any) -> None:
-        """Emit what a handler returned, if anything.
+    def settle_return(self, returned: Any, hook: str) -> None:
+        """Settle what a hook returned: the runtime's call, never the author's.
 
-        ``None`` emits nothing, which is the warmup gate, so a handler that emits
-        through the context and one that returns a value compose. A value
-        returned by a tasklet with no outgoing channel is left alone, as the
-        reference leaves an unconsumed output. One method, because the
-        dispatcher and the test harness must not disagree about it.
+        A short form's function returns its output: ``None`` emits nothing, and
+        a value with no outgoing channel is left alone, as the reference leaves
+        an unconsumed output. A tasklet class hands a value on only through
+        :meth:`emit`, so a value its hook returns fails the invocation without
+        a retry rather than vanish. One method, because the dispatcher and the
+        test harness must not disagree about it.
         """
-        if returned is not None and returned is not DROPPED and self._outgoing:
+        if returned is None:
+            return
+        task = self._node.task
+        if not task.function_body:
+            raise NonRetryableError(
+                f"{task.name}: `{hook}` returned a {type(returned).__name__}; a value leaves "
+                f"a tasklet only through `ctx.emit`, so `{hook}` returns None"
+            )
+        if returned is not DROPPED and self._outgoing:
             self.emit(returned)
 
     def effect(self, consumed_offset: int | None) -> dict[str, Any]:

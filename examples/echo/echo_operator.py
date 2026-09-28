@@ -1,4 +1,4 @@
-from echo_tasklet import echo
+from echo_tasklet import Echo
 
 import flezha
 
@@ -13,4 +13,4 @@ import flezha
 # as its own bytes.
 @flezha.unbounded_operator("echo")  # the stable identity `flz operator start` takes
 def echo_operator(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(echo).sink("out")
+    c.input("in", codec="text").into(Echo).sink("out")

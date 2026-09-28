@@ -1,25 +1,28 @@
 """What a declared tasklet resolves to, and the decorator that declares one.
 
-A tasklet is a handler plus the optional hooks that make it stateful. Two
-spellings populate one type, because the two shapes it takes in practice are
-genuinely different sizes:
+A tasklet is a named class whose ``run(self, value, ctx)`` is the handler and
+whose other methods are the hooks, so a declaration and its implementation
+cannot disagree about which ones exist. A value leaves it only through
+``ctx.emit``:
 
-* a function, when the tasklet is a transform — it stays an ordinary callable
-  a plain unit test invokes with no runtime present;
-* a class, when it has state, timers, a clock extractor or a compensation —
-  the hooks are its methods, so a declaration and its implementation cannot
-  disagree about which ones exist.
+.. code-block:: python
 
-Both produce a :class:`Tasklet`, and everything downstream — the graph, the
-dispatcher, the harness — sees only that.
+    @flezha.tasklet(name="upcase")
+    class Upcase:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            ctx.emit(value.upper())
+
+The one other body is a short form's function, whose return value is its
+output; :mod:`flezha.operator` builds that one. Both produce a
+:class:`Tasklet`, and everything downstream — the graph, the dispatcher, the
+harness — sees only that.
 """
 
 from __future__ import annotations
 
 import inspect
-import re
 import types
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -29,8 +32,9 @@ from typing import (
     TypeVar,
     Union,
     Unpack,
-    cast,
+    get_args,
     get_origin,
+    is_typeddict,
     overload,
 )
 
@@ -51,7 +55,6 @@ I_contra = TypeVar("I_contra", contravariant=True)
 O_co = TypeVar("O_co", covariant=True)
 
 Clock = str
-CellMode = str
 
 
 class TaskletSettings(TypedDict, total=False):
@@ -61,10 +64,9 @@ class TaskletSettings(TypedDict, total=False):
     and the short form of both operator decorators.
     """
 
-    clock: Clock
+    logical_clock: bool
     cell_keys: Iterable[str] | None
-    dynamic_cells: bool
-    idle_ttl_ms: int | None
+    idle_ttl_seconds: int | None
     max_cells: int | None
     mailbox_capacity: int | None
     schema_version: int | None
@@ -74,20 +76,15 @@ class TaskletSettings(TypedDict, total=False):
 
 
 class _ClassHandler(Protocol[I_contra, O_co]):
-    """The shape the class spelling of a tasklet has."""
+    """The shape a tasklet class has: the output is its context's."""
 
-    def run(self, value: I_contra, ctx: Ctx[Any], /) -> O_co: ...
-
-
-class _ClassHandlerNoCtx(Protocol[I_contra, O_co]):
-    """The class spelling whose ``run`` takes no context."""
-
-    def run(self, value: I_contra, /) -> O_co: ...
+    def run(self, value: I_contra, ctx: Ctx[Any, O_co], /) -> Awaitable[None] | None: ...
 
 
-def _snake_case(name: str) -> str:
-    name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
-    return re.sub(r"([a-z\d])([A-Z])", r"\1_\2", name).lower()
+class _Declare(Protocol):
+    """What ``flezha.tasklet(name=...)`` answers: the typed class decorator."""
+
+    def __call__(self, target: type[_ClassHandler[I, O]], /) -> Tasklet[I, O]: ...
 
 
 def positional_parameters(fn: Callable[..., Any], *, skip_self: bool = True) -> list[str]:
@@ -117,10 +114,10 @@ class Tasklet(Generic[I, O]):
     __slots__ = (
         "name",
         "handler",
+        "function_body",
         "clock",
         "cell_keys",
-        "dynamic",
-        "idle_ttl_ms",
+        "idle_ttl_seconds",
         "max_cells",
         "mailbox_capacity",
         "schema_version",
@@ -129,7 +126,7 @@ class Tasklet(Generic[I, O]):
         "change_type",
         "state_codec",
         "change_codec",
-        "initial_state",
+        "init_state",
         "apply_change",
         "cells_for",
         "event_time",
@@ -137,8 +134,8 @@ class Tasklet(Generic[I, O]):
         "compensate",
         "migrate_state",
         "migrate_change",
+        "_state_class",
         "_target",
-        "_handler_takes_ctx",
         "__name__",
         "__wrapped__",
         "doc",
@@ -149,10 +146,9 @@ class Tasklet(Generic[I, O]):
         target: Any,
         *,
         name: str | None = None,
-        clock: Clock = "wall",
+        logical_clock: bool = False,
         cell_keys: Iterable[str] | None = None,
-        dynamic_cells: bool = False,
-        idle_ttl_ms: int | None = None,
+        idle_ttl_seconds: int | None = None,
         max_cells: int | None = None,
         mailbox_capacity: int | None = None,
         schema_version: int | None = None,
@@ -161,39 +157,27 @@ class Tasklet(Generic[I, O]):
         change: type | None = None,
     ) -> None:
         self._target = target
-        instance: Any = target() if inspect.isclass(target) else None
-        handler: Any = getattr(instance, "run", None) if instance is not None else target
-        if not callable(handler):
-            raise DeclarationError(
-                "<tasklet>",
-                getattr(target, "__name__", str(target)),
-                "declares no `run`; a class tasklet's body is its `run` method, which is what "
-                "runs against an input",
-            )
-        self.handler: Callable[..., Any] = handler
-
-        self.name = name or _snake_case(getattr(target, "__name__", "tasklet"))
+        #: A short form's function, whose return value is its output. Every
+        #: other tasklet is a class, whose value leaves only through `ctx`.
+        self.function_body = not inspect.isclass(target)
+        instance: Any = None if self.function_body else target()
+        self.handler: Callable[..., Any] = _handler_of(target, instance)
+        self.name = _required_name(target, name)
         self.__name__ = self.name
         #: The handler's own docstring. Not `__doc__`, which `__slots__` may
         #: not name on a class that has one of its own.
         self.doc = target.__doc__
         self.__wrapped__ = self.handler
-        # A handler may be written `(value)` or `(value, ctx)`: the first is
-        # what a transform needs and the second what an emit, a timer or a
-        # change needs. Which one it is is read from the signature.
-        self._handler_takes_ctx = len(positional_parameters(self.handler)) >= 2
 
-        self.clock = clock
         self.cell_keys = list(cell_keys) if cell_keys is not None else None
-        self.dynamic = dynamic_cells
-        self.idle_ttl_ms = idle_ttl_ms
+        self.idle_ttl_seconds = idle_ttl_seconds
         self.max_cells = max_cells
         self.mailbox_capacity = mailbox_capacity
         self.schema_version = schema_version
         self.min_readable_schema_version = min_readable_schema_version
 
         hook = _hooks_of(instance)
-        self.initial_state: Callable[[str | None], Any] | None = hook("initial_state")
+        self.init_state: Callable[[str | None], Any] | None = hook("init_state")
         self.apply_change: Callable[[Any, Any], Any] | None = hook("apply_change")
         self.cells_for: Callable[[Any], Iterable[str]] | None = hook("cells_for")
         self.event_time: Callable[[Any], int] | None = hook("event_time")
@@ -201,35 +185,38 @@ class Tasklet(Generic[I, O]):
         self.compensate: Callable[..., Any] | None = hook("compensate")
         self.migrate_state: Callable[[int, Any], Any] | None = hook("migrate_state")
         self.migrate_change: Callable[[int, Any], Any] | None = hook("migrate_change")
+        self.clock = self._clock(logical_clock)
+        self._declare_types(state, change)
+        self._validate()
 
-        # Type hints drive the codec exactly as they drive the graph: the state
-        # type is what `initial_state` returns and the change type is what
-        # `apply_change` folds, so a declaration cannot disagree with the code.
-        self.state_type = state or _returned_type(self.initial_state)
+    def _declare_types(self, state: type | None, change: type | None) -> None:
+        """Type hints drive the codec exactly as they drive the graph: the
+        state is what the context names and the change is what `apply_change`
+        folds, so a declaration cannot disagree with the code."""
+        declared = _state_annotation(self, state)
+        self._state_class = _buildable(declared)
+        self.state_type = _declared_type(declared)
         self.change_type = change or _parameter_type(self.apply_change, 1)
         _refuse_union_change(self, change)
         self.state_codec = _codec.codec_for(self.state_type, "state")
         self.change_codec = _codec.codec_for(self.change_type, "change")
 
-        self._validate()
-
     # -- the ordinary callable -------------------------------------------
 
-    def __call__(self, value: I, ctx: Ctx[Any] | None = None) -> O:
+    def __call__(self, value: I, ctx: Ctx[Any, O] | None = None) -> Any:
         """Invoke the handler directly, as an ordinary Python callable.
 
-        This is what makes a decorated handler unit-testable with no runtime
-        present: the decorator returns something that forwards, not something
-        that has to be driven.
+        A short form's function takes the value alone, which is what keeps it
+        unit-testable with no runtime present; a class's `run` takes a
+        context, which :class:`flezha.testing.TaskletTestHarness` supplies.
         """
-        if self._handler_takes_ctx:
-            if ctx is None:
-                raise TypeError(
-                    f"{self.name} takes a context; pass one, or use "
-                    f"flezha.testing.TaskletTestHarness to supply it"
-                )
-            return cast("O", self.handler(value, ctx))
-        return cast("O", self.handler(value))
+        if self.function_body:
+            return self.handler(value)
+        if ctx is None:
+            raise TypeError(
+                f"{self.name} takes a context; drive it with flezha.testing.TaskletTestHarness"
+            )
+        return self.handler(value, ctx)
 
     def __repr__(self) -> str:
         return f"<flezha tasklet {self.name}>"
@@ -237,13 +224,16 @@ class Tasklet(Generic[I, O]):
     # -- what the dispatcher and the graph ask ---------------------------
 
     @property
-    def cell_mode(self) -> CellMode:
-        if self.cell_keys is not None:
-            return "static"
-        return "dynamic" if self.dynamic else "single"
+    def stateful(self) -> bool:
+        """Whether each cell holds a state: `init_state` written, or a state class."""
+        return self.init_state is not None or self._state_class is not None
 
     def build_initial_state(self, cell_key: str | None) -> Any:
-        return self.initial_state(cell_key) if self.initial_state else None
+        """A new cell's state: `init_state(cell_key)`, else the state class
+        called with no arguments, else none."""
+        if self.init_state is not None:
+            return self.init_state(cell_key)
+        return self._state_class() if self._state_class is not None else None
 
     def fold_change(self, state_value: Any, change: Any) -> None:
         """Fold one change into the live state, through the runtime's own path.
@@ -290,50 +280,62 @@ class Tasklet(Generic[I, O]):
     def _refuse(self, defect: str) -> None:
         raise DeclarationError("<tasklet>", self.name, defect)
 
-    def _validate(self) -> None:
-        if self.cell_keys is not None and self.dynamic:
+    def _clock(self, logical_clock: bool) -> Clock:
+        """The clock the class writes: `event_time`, `logical_clock=True`, or the wall."""
+        if logical_clock and self.event_time is not None:
             self._refuse(
-                "declares both a static key set and dynamic cells; the two modes are exclusive"
+                "declares `logical_clock=True` and writes `event_time`; a tasklet has one "
+                "clock, so keep the one it runs on"
             )
+        if self.event_time is not None:
+            return "event_time"
+        return "logical" if logical_clock else "wall"
+
+    def _validate(self) -> None:
         if self.cell_keys is not None and not self.cell_keys:
             self._refuse("declares an empty static key set; a static tasklet names its cells")
+        self._validate_idle_ttl()
         # State without a fold is legitimate: a value seeded at start and read
         # but never mutated has nothing to journal, and `ctx.change` already
         # refuses at the point of use. A fold with no state to fold into is not.
-        if self.initial_state is None and self.apply_change is not None:
+        if not self.stateful and self.apply_change is not None:
             self._refuse(
-                "declares apply_change but no initial_state; there is nothing to fold into"
-            )
-        if self.clock not in ("wall", "logical", "event_time"):
-            self._refuse(
-                f"declares clock {self.clock!r}; the declared clocks are wall, logical and event_time"
+                "declares apply_change but no state to fold into; write `init_state`, pass "
+                "`state=`, or name the state in run's context hint, `Ctx[State, Output]`"
             )
         _refuse_unannotated(self)
-        self._validate_clock()
+        if self.function_body:
+            _refuse_context_parameter(self)
+        else:
+            _refuse_context_hooks(self)
         self._validate_schema()
-        # A state that cannot be encoded cannot be restored, and the first
-        # anyone would learn of it is a restart. Walk the declared starting
-        # state now.
-        if self.initial_state is not None and self.state_codec is None:
-            _codec.assert_representable(f"{self.name}.state", self.build_initial_state(None))
+        if not self.stateful:
+            return
+        # A state that cannot be built or encoded cannot be restored, and the
+        # first anyone would learn of it is a restart. Build it now.
+        try:
+            initial = self.build_initial_state(None)
+        except TypeError as error:
+            if self.init_state is not None or self._state_class is None:
+                raise
+            raise DeclarationError(
+                "<tasklet>",
+                self.name,
+                f"its state class `{self._state_class.__name__}` cannot be built with no "
+                f"arguments ({error}); write `init_state(self, cell_key)` returning the "
+                f"starting state",
+            ) from error
+        if self.state_codec is None:
+            _codec.assert_representable(f"{self.name}.state", initial)
 
-    def _validate_clock(self) -> None:
-        """The extractor a clock needs, which the record cannot carry.
-
-        The declaration states the clock and never whether the host supplied an
-        `event_time` callable, so this pair is the SDK's to refuse; every other
-        clock rule is the core's.
-        """
-        if self.clock == "event_time" and self.event_time is None:
-            self._refuse(
-                "declares an event_time clock but no event_time extractor; the core evaluates "
-                "the declared clock per input and has nothing to evaluate"
-            )
-        if self.clock != "event_time" and self.event_time is not None:
-            self._refuse(
-                f"declares an event_time extractor with clock `{self.clock}`; the extractor is "
-                f"only consulted by an event_time clock, so one of the two is not what was meant"
-            )
+    def _validate_idle_ttl(self) -> None:
+        ttl = self.idle_ttl_seconds
+        if ttl is None or (isinstance(ttl, int) and not isinstance(ttl, bool) and ttl > 0):
+            return
+        self._refuse(
+            f"declares `idle_ttl_seconds={ttl!r}`; the idle TTL is a positive whole number of "
+            f"seconds, or unset for no eviction"
+        )
 
     def _validate_schema(self) -> None:
         """The readable floor against the running version and its migration."""
@@ -352,11 +354,120 @@ class Tasklet(Generic[I, O]):
             )
 
 
+def _handler_of(target: Any, instance: Any) -> Callable[..., Any]:
+    """A function body is its own handler; a class's is its `run` method."""
+    handler = target if instance is None else getattr(instance, "run", None)
+    if not callable(handler):
+        raise DeclarationError(
+            "<tasklet>",
+            getattr(target, "__name__", str(target)),
+            "declares no `run`; a class tasklet's body is its `run` method, which is what "
+            "runs against an input",
+        )
+    return handler
+
+
+def _required_name(target: Any, name: str | None) -> str:
+    if not name:
+        raise DeclarationError(
+            "<tasklet>",
+            getattr(target, "__name__", str(target)),
+            'declares no `name`; write `@flezha.tasklet(name="...")`. The name is where '
+            "the tasklet's state is saved, so it is written rather than derived from the "
+            "class name, and a renamed class keeps its state",
+        )
+    return name
+
+
 def _hooks_of(instance: Any) -> Callable[[str], Any]:
     def hook(name: str) -> Any:
         return getattr(instance, name, None) if instance is not None else None
 
     return hook
+
+
+def _refuse_context_parameter(task: Tasklet[Any, Any]) -> None:
+    """A short form's function takes the input alone and returns its output,
+    so a second parameter, such as a context, would be a second way out."""
+    names = positional_parameters(task.handler, skip_self=False)
+    if len(names) > 1:
+        task._refuse(
+            f"takes a second parameter `{names[1]}`; a function short form takes only its "
+            f"input and returns its output. For a context, write a class whose "
+            f"`run(self, value, ctx)` emits through it"
+        )
+
+
+def _refuse_context_hooks(task: Tasklet[Any, Any]) -> None:
+    """Each context hook takes the context last and hands nothing back, and
+    the retired `initial_state` hook is refused rather than silently ignored.
+
+    A value leaves a tasklet only through ``ctx.emit``, so a hook that cannot
+    reach a context, or says it returns a value, is refused before anything
+    runs. A value returned anyway is refused at run time by
+    :meth:`flezha.ctx.Ctx.settle_return`.
+    """
+    if hasattr(task._target, "initial_state"):
+        task._refuse(
+            "writes `initial_state`, which no longer declares anything; the hook is "
+            "`init_state(self, cell_key)`"
+        )
+    hooks = {"run": task.handler, "on_timer": task.on_timer, "compensate": task.compensate}
+    for hook, fn in hooks.items():
+        if fn is None:
+            continue
+        names = positional_parameters(fn)
+        if len(names) < 2:
+            first = names[0] if names else "value"
+            task._refuse(
+                f"`{hook}` takes no context parameter; write `{hook}(self, {first}, ctx)`, "
+                f"since a value leaves a tasklet only through `ctx.emit`"
+            )
+        returned = _codec.type_hints(fn).get("return", None)
+        if returned is not None and returned is not type(None) and returned != "None":
+            task._refuse(
+                f"`{hook}` is annotated to return `{returned}`; a value leaves a tasklet only "
+                f"through `ctx.emit`, so `{hook}` returns None"
+            )
+
+
+def _state_annotation(task: Tasklet[Any, Any], state: type | None) -> Any:
+    """The state a tasklet declares: `state=`, else the state argument of
+    run's context hint, else what `init_state` returns."""
+    if state is not None:
+        return state
+    declared = _context_argument(task, 0)
+    if _names_a_type(declared):
+        return declared
+    if task.init_state is None:
+        return None
+    return _codec.type_hints(task.init_state).get("return")
+
+
+def _context_argument(task: Tasklet[Any, Any], index: int) -> Any:
+    """One argument of a class's context hint, `Ctx[State, Output]`: 0 for the
+    state, 1 for the output; ``None`` when the hint has no such argument."""
+    if task.function_body:
+        return None
+    arguments = get_args(_parameter_annotation(task.handler, 1))
+    return arguments[index] if len(arguments) == 2 else None
+
+
+def _names_a_type(annotation: Any) -> bool:
+    return annotation not in (None, type(None), Any, object) and not isinstance(annotation, str)
+
+
+def _buildable(annotation: Any) -> type | None:
+    """The class a new cell's state is built by, when it is called with no
+    arguments: the declared class, or a parameterised builtin's origin."""
+    if not _names_a_type(annotation):
+        return None
+    if isinstance(annotation, type):
+        return annotation
+    origin = get_origin(annotation)
+    if isinstance(origin, type) and origin is not types.UnionType:
+        return origin
+    return None
 
 
 def _declared_type(annotation: Any) -> type | None:
@@ -367,17 +478,12 @@ def _declared_type(annotation: Any) -> type | None:
     a refusal. (`Any` is a class from 3.11 on, so the plain `isinstance` check
     accepts it and the codec then refuses a type nobody declared.) A union is
     not a declaration either, and is refused where it is used, because a decoded
-    body has nothing in it that says which arm wrote it.
+    body has nothing in it that says which arm wrote it. A ``TypedDict`` is a
+    plain dict at run time, so it takes the default too.
     """
-    if annotation is None or annotation is Any or annotation is object:
+    if not _names_a_type(annotation) or is_typeddict(annotation):
         return None
     return annotation if isinstance(annotation, type) else None
-
-
-def _returned_type(fn: Callable[..., Any] | None) -> type | None:
-    if fn is None:
-        return None
-    return _declared_type(_codec.type_hints(fn).get("return"))
 
 
 def _parameter_annotation(fn: Callable[..., Any] | None, index: int) -> Any:
@@ -399,8 +505,16 @@ def input_type(task: Tasklet[Any, Any]) -> Any:
 
 
 def output_type(task: Tasklet[Any, Any]) -> Any:
-    """The type the handler returns, as its annotation names it."""
-    return _codec.type_hints(task.handler).get("return")
+    """The type a tasklet hands on: a function's return annotation, or the
+    output argument of a class's context hint, `Ctx[State, Output]`.
+
+    An unresolvable hint degrades to the raw annotation, as every hint does.
+    """
+    if task.function_body:
+        return _codec.type_hints(task.handler).get("return")
+    context = _parameter_annotation(task.handler, 1)
+    # A bare or absent `Ctx` names no output; only an unresolvable hint keeps its text.
+    return context if isinstance(context, str) else _context_argument(task, 1)
 
 
 def _first_parameter(fn: Callable[..., Any]) -> str:
@@ -464,37 +578,23 @@ _OPERATOR_KEYWORDS = ("kind", "sink", "input", "codec")
 
 
 @overload
-def tasklet(target: type[_ClassHandler[I, O]], /) -> Tasklet[I, O]: ...
-
-
-@overload
-def tasklet(target: type[_ClassHandlerNoCtx[I, O]], /) -> Tasklet[I, O]: ...
-
-
-@overload
-def tasklet(target: Callable[[I, Ctx[Any]], O], /) -> Tasklet[I, O]: ...
-
-
-@overload
-def tasklet(target: Callable[[I], O], /) -> Tasklet[I, O]: ...
-
-
-@overload
 def tasklet(
-    *, name: str | None = ..., **settings: Unpack[TaskletSettings]
-) -> Callable[[Any], Tasklet[Any, Any]]: ...
+    target: type[_ClassHandler[I, O]], /, *, name: str, **settings: Unpack[TaskletSettings]
+) -> Tasklet[I, O]: ...
+
+
+@overload
+def tasklet(*, name: str, **settings: Unpack[TaskletSettings]) -> _Declare: ...
 
 
 def tasklet(target: Any = None, /, **declarations: Any) -> Any:
-    """Declare a tasklet.
+    """Declare a tasklet: a named class whose ``run(self, value, ctx)`` is the
+    handler and whose other methods are the hooks.
 
-    Decorates a handler function, or a class whose ``run`` is the handler and
-    whose other methods are the hooks. Declaring performs no I/O, opens no
-    socket and starts no thread: it builds one :class:`Tasklet` and returns
-    it.
-
-    A tasklet is never an operator on its own: the single-tasklet short
-    form is declared with :func:`~flezha.operator.unbounded_operator` or
+    Declaring performs no I/O, opens no socket and starts no thread: it builds
+    one :class:`Tasklet` and returns it. A function is refused: a whole
+    one-tasklet operator written as a function is the short form of
+    :func:`~flezha.operator.unbounded_operator` or
     :func:`~flezha.operator.bounded_operator`.
     """
     written = [key for key in _OPERATOR_KEYWORDS if key in declarations]
@@ -506,6 +606,16 @@ def tasklet(target: Any = None, /, **declarations: Any) -> Any:
             f"single-tasklet short form as `@flezha.unbounded_operator(id=...)` or "
             f"`@flezha.bounded_operator(id=...)`",
         )
-    if target is None:
-        return lambda inner: Tasklet(inner, **declarations)
-    return Tasklet(target, **declarations)
+
+    def declare(inner: Any) -> Tasklet[Any, Any]:
+        if not inspect.isclass(inner):
+            raise DeclarationError(
+                "<tasklet>",
+                getattr(inner, "__name__", str(inner)),
+                "is a function; a tasklet is a class whose `run(self, value, ctx)` takes the "
+                "value and the context. A whole one-tasklet operator written as a function "
+                "is `@flezha.unbounded_operator(id=...)` or `@flezha.bounded_operator(id=...)`",
+            )
+        return Tasklet(inner, **declarations)
+
+    return declare if target is None else declare(target)

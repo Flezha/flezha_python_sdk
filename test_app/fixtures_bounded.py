@@ -77,10 +77,9 @@ def durable_step(
     name: str,
     *,
     change: Callable[[str], str | None] | None = None,
-    emit: Callable[[str, flezha.Ctx[Any]], None] | None = None,
+    emit: Callable[[str, flezha.Ctx[Any, Any]], None] | None = None,
     compensate: Callable[..., Any] | None = None,
     gate: Callable[[str], bool] | None = None,
-    dynamic_cells: bool = False,
 ) -> flezha.Tasklet[str, str]:
     """The reference's ``durable_step!`` macro: a ``str -> str`` step committing
     one idempotent Change keyed by its own name, so a re-run after a resume
@@ -97,7 +96,7 @@ def durable_step(
     factory sixteen deep at rate.
     """
 
-    def record(value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def record(value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         recorded = change(value) if change else name
         if recorded is not None:
             ctx.change({"insert": recorded})
@@ -107,7 +106,7 @@ def durable_step(
             ctx.emit(value)
 
     class Step:
-        def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+        def init_state(self, cell_key: str | None) -> dict[str, Any]:
             return {"items": []}
 
         def apply_change(self, state: dict[str, Any], recorded: dict[str, Any]) -> None:
@@ -115,12 +114,12 @@ def durable_step(
 
         if gate is None:
 
-            def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+            def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
                 record(value, ctx)
 
         else:
 
-            async def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+            async def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
                 # A gated step waits BEFORE its change and its emit, so the kill
                 # window always finds it as the uncommitted producer while its
                 # sibling arm has committed.
@@ -132,28 +131,35 @@ def durable_step(
         # A crash-resumed compensation reconstructs completed stages with EMPTY
         # outputs, so a hook that records an undo does so unconditionally.
         Step.compensate = staticmethod(compensate)
-    return flezha.tasklet(Step, name=name, dynamic_cells=dynamic_cells)
+    return flezha.tasklet(Step, name=name)
 
 
 def stateless_step(name: str, handle: Callable[..., Any]) -> flezha.Tasklet[str, str]:
     """The reference's ``stateless_step!``: no state, no change, the whole
-    behaviour is the handler."""
-    return flezha.tasklet(handle, name=name)
+    behaviour is the handler, called with the value and the context."""
+
+    class Stateless:
+        # Answers the handler's coroutine when it is async, which the
+        # dispatcher awaits; a sync handler answers None.
+        def run(self, value: str, ctx: flezha.Ctx[None, Any]):
+            return handle(value, ctx)
+
+    return flezha.tasklet(Stateless, name=name)
 
 
 def failing_step(name: str) -> flezha.Tasklet[str, str]:
     """A terminal step that always fails, which is how a saga is made to unwind."""
 
-    def always_fails(value: str, ctx: flezha.Ctx[None]) -> None:
+    def always_fails(value: str, ctx: flezha.Ctx[None, Any]) -> None:
         raise RuntimeError(f"{name} always fails")
 
     return stateless_step(name, always_fails)
 
 
-def undoing(record: str) -> Callable[[list[Any], flezha.Ctx[Any]], None]:
+def undoing(record: str) -> Callable[[list[Any], flezha.Ctx[Any, Any]], None]:
     """A compensation hook whose whole behaviour is emitting one undo record."""
 
-    def compensate(outputs: list[Any], ctx: flezha.Ctx[Any]) -> None:
+    def compensate(outputs: list[Any], ctx: flezha.Ctx[Any, Any]) -> None:
         ctx.emit(record)
 
     return compensate
@@ -165,7 +171,7 @@ def undoing(record: str) -> Callable[[list[Any], flezha.Ctx[Any]], None]:
 # the controller deregisters the instance.
 
 
-def _echo(value: str, ctx: flezha.Ctx[None]) -> None:
+def _echo(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     ctx.emit(f"echo:{value}")
 
 
@@ -184,14 +190,14 @@ def echo_bounded(c: flezha.Channels) -> None:
 # `placed` sink and completes with it.
 
 
-def _once_placed(value: dict[str, Any], ctx: flezha.Ctx[None]) -> None:
+def _once_placed(value: dict[str, Any], ctx: flezha.Ctx[None, Any]) -> None:
     text = str(value["text"])
     print(f"once_ran {text}", flush=True)
     ctx.emit(f"placed:{text}")
     ctx.complete(text)
 
 
-once_placed = flezha.tasklet(_once_placed, name="once_placed")
+once_placed = stateless_step("once_placed", _once_placed)
 
 
 @flezha.bounded_operator("typed_once_bounded")
@@ -210,7 +216,7 @@ def typed_once_bounded(c: flezha.Channels) -> None:
 commit_a = durable_step("commit_a")
 
 
-async def _block(value: str, ctx: flezha.Ctx[None]) -> None:
+async def _block(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     await block_until_released()
 
 
@@ -269,7 +275,7 @@ def tier_commit_block_bounded(c: flezha.Channels) -> None:
 # finishes SA and SKIPS the already-done SB.
 
 
-async def _block_compensation(outputs: list[Any], ctx: flezha.Ctx[Any]) -> None:
+async def _block_compensation(outputs: list[Any], ctx: flezha.Ctx[Any, Any]) -> None:
     await block_until_released()
 
 
@@ -292,15 +298,13 @@ def saga_block_bounded(c: flezha.Channels) -> None:
 # is rolled back once per key.
 
 
-def _split_keys(value: str, ctx: flezha.Ctx[None]) -> None:
+def _split_keys(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     for key in value.split(","):
         ctx.emit(key)
 
 
 key_split = stateless_step("key_split", _split_keys)
-keyed_commit = durable_step(
-    "keyed_commit", compensate=lambda outputs, ctx: None, dynamic_cells=True
-)
+keyed_commit = durable_step("keyed_commit", compensate=lambda outputs, ctx: None)
 keyed_fail = failing_step("keyed_fail")
 
 
@@ -356,7 +360,7 @@ def outbox_block_bounded(c: flezha.Channels) -> None:
 # the undo is delivered exactly once.
 
 
-async def _undo_after_release(outputs: list[Any], ctx: flezha.Ctx[Any]) -> None:
+async def _undo_after_release(outputs: list[Any], ctx: flezha.Ctx[Any, Any]) -> None:
     await block_until_released()
     ctx.emit("undone")
 
@@ -380,7 +384,7 @@ def undo_outbox_bounded(c: flezha.Channels) -> None:
 # and no marker ever names that record.
 
 
-def _fail_on_b(value: str, ctx: flezha.Ctx[None]) -> None:
+def _fail_on_b(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     if value == "b":
         raise RuntimeError("failed_stage fails on b")
     ctx.emit(value)
@@ -429,7 +433,7 @@ branch_c = durable_step(
 
 
 # The deep leaf under BranchB: blocks (crash-resume), or fails (compensation).
-async def _branch_leaf(value: str, ctx: flezha.Ctx[None]) -> None:
+async def _branch_leaf(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     if armed(BRANCH_FAIL_ENV):
         raise RuntimeError("branch_d failed")
     await block_until_released()
@@ -481,7 +485,7 @@ diam_c = durable_step("diam_c", emit=lambda value, ctx: ctx.emit(f"c:{value}"))
 
 
 # The join: one `j:`-tagged record per accumulated contribution.
-def _join(value: str, ctx: flezha.Ctx[None]) -> None:
+def _join(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     ctx.emit(f"j:{value}")
 
 
@@ -527,7 +531,7 @@ def _armed_failures() -> int:
     return int(declared) if declared.isdigit() else 0
 
 
-def _flaky(value: str, ctx: flezha.Ctx[None]) -> None:
+def _flaky(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     attempt = next(_attempts)
     if attempt <= _armed_failures():
         raise RuntimeError(f"flaky attempt {attempt}")
@@ -573,7 +577,7 @@ CRASH_TURN = "mid-crash"
 BYE_TURN = "bye"
 
 
-def _turn_emit(value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+def _turn_emit(value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
     ctx.emit(value)
     if value == BYE_TURN:
         ctx.complete(str(len(ctx.state["items"])))
@@ -589,7 +593,7 @@ chat_turn = durable_step(
 )
 
 
-def _reply(value: str, ctx: flezha.Ctx[None]) -> None:
+def _reply(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     ctx.emit(f"reply:{value}")
 
 
@@ -597,7 +601,7 @@ chat_reply = stateless_step("chat_reply", _reply)
 
 
 class ChatReplyUndoable:
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"said": []}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -606,11 +610,11 @@ class ChatReplyUndoable:
         else:
             state["said"].pop()
 
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         ctx.change({"said": value})
         ctx.emit(f"reply:{value}")
 
-    def compensate(self, outputs: list[Any], ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def compensate(self, outputs: list[Any], ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         said = ctx.state["said"]
         if not said:
             return
@@ -644,19 +648,19 @@ def stateless_loop_bounded(c: flezha.Channels) -> None:
 # emits `<symbol>:<count>`: the shape a partition group of bounded operator members
 # takes.
 class KeyedLoopCount:
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"value": 0}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
         state["value"] += change["delta"]
 
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         symbol = prefix(value)
         ctx.change({"delta": 1})
         ctx.emit(f"{symbol}:{ctx.state['value']}")
 
 
-keyed_loop_count = flezha.tasklet(KeyedLoopCount, name="keyed_loop_count", dynamic_cells=True)
+keyed_loop_count = flezha.tasklet(KeyedLoopCount, name="keyed_loop_count")
 
 
 @flezha.bounded_operator("keyed_loop_bounded", **LOOP_KNOBS)
@@ -678,7 +682,7 @@ def chat_rewind_bounded(c: flezha.Channels) -> None:
 REPLY_CRASH_TURN = "reply-crash"
 
 
-async def _blocking_reply(value: str, ctx: flezha.Ctx[None]) -> None:
+async def _blocking_reply(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     if value == REPLY_CRASH_TURN:
         await block_until_released()
     ctx.emit(f"reply:{value}")
@@ -733,21 +737,21 @@ WAKE_AFTER_ENV = "FLEZHA_BENCH_WAKE_AFTER_MS"
 
 
 class BenchTurn:
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"turns": 0, "last": ""}
 
     def apply_change(self, state: dict[str, Any], seen: dict[str, Any]) -> None:
         state["turns"] += 1
         state["last"] = seen["turn"]
 
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         ctx.change({"turn": value})
         after = os.environ.get(WAKE_AFTER_ENV, "")
         if after.isdigit():
             ctx.timer_after(int(after))
         ctx.emit(value)
 
-    def on_timer(self, timer: dict[str, Any], ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def on_timer(self, timer: dict[str, Any], ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         ctx.emit(f"wake:{timer['scheduled_at']}")
 
 
@@ -780,13 +784,13 @@ def _millis(value: str, prefix: str) -> int:
 
 
 class TimerTick:
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"items": []}
 
     def apply_change(self, state: dict[str, Any], recorded: dict[str, Any]) -> None:
         insert_sorted(state["items"], recorded["insert"])
 
-    async def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    async def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         if value.startswith("after:"):
             at = ctx.timer_after(_millis(value, "after:"))
             ctx.change({"insert": f"armed:{at}"})
@@ -796,7 +800,7 @@ class TimerTick:
             await asyncio.sleep(_millis(value, "slow:") / 1000)
         ctx.emit(value)
 
-    async def on_timer(self, timer: dict[str, Any], ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    async def on_timer(self, timer: dict[str, Any], ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         await _hold_at("timer")
         ctx.emit(f"fired:{timer['scheduled_at']}")
 
@@ -807,7 +811,7 @@ async def _hold_at(point: str) -> None:
         await block_until_released()
 
 
-async def _relay(value: str, ctx: flezha.Ctx[None]) -> None:
+async def _relay(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     if value.startswith("fired:"):
         await _hold_at("relay")
     ctx.emit(f"relay:{value}")
@@ -830,7 +834,7 @@ def timer_loop_bounded(c: flezha.Channels) -> None:
 
 
 class EventTick:
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"items": []}
 
     def apply_change(self, state: dict[str, Any], recorded: dict[str, Any]) -> None:
@@ -840,16 +844,16 @@ class EventTick:
         leading = value.split(":", 1)[0]
         return int(leading) if leading.isdigit() else 0
 
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         at = ctx.timer_at_event_time(ctx.now() + 100)
         ctx.change({"insert": f"armed:{at}"})
         ctx.emit(f"seen:{ctx.now()}")
 
-    def on_timer(self, timer: dict[str, Any], ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def on_timer(self, timer: dict[str, Any], ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         ctx.emit(f"fired:{timer['scheduled_at']}")
 
 
-event_tick = flezha.tasklet(EventTick, name="event_tick", clock="event_time")
+event_tick = flezha.tasklet(EventTick, name="event_tick")
 
 
 @flezha.bounded_operator("event_timer_bounded", **LOOP_KNOBS)
@@ -865,7 +869,7 @@ def event_timer_bounded(c: flezha.Channels) -> None:
 
 
 class StaticCellStep:
-    def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[None, Any]) -> None:
         ctx.emit(f"{ctx.cell_key}:{value}")
 
     def cells_for(self, value: str) -> list[str]:

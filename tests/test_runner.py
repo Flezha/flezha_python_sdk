@@ -18,14 +18,15 @@ from flezha.errors import FlezhaError
 from flezha.runner import Runner
 
 
-@flezha.tasklet
-def other(value: str) -> str:
-    return value
+@flezha.tasklet(name="other")
+class Other:
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(value)
 
 
 @flezha.unbounded_operator("other")
 def other_op(c: flezha.Channels) -> None:
-    c.input("in").into(other).sink()
+    c.input("in").into(Other).sink()
 
 
 @pytest.fixture
@@ -394,4 +395,4 @@ def test_a_short_form_collides_with_one_of_the_other_kind(runner: Any) -> None:
 
 def test_registering_a_tasklet_is_refused(runner: Any) -> None:
     with pytest.raises(FlezhaError, match="declares no operator"):
-        runner().register_factory(other)  # type: ignore[arg-type]
+        runner().register_factory(Other)  # type: ignore[arg-type]

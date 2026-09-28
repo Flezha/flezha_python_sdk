@@ -22,13 +22,14 @@ from flezha.errors import FlezhaError
 from flezha.executor import AsyncioExecutor, ThreadExecutor, build
 
 
-@flezha.tasklet
-def passthrough(value: str) -> str:
-    return value
+@flezha.tasklet(name="passthrough")
+class Passthrough:
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(value)
 
 
 def _deps(core: FakeCore) -> DispatchDeps:
-    return solo_deps(passthrough, core)
+    return solo_deps(Passthrough, core)
 
 
 def _until(predicate: Any, timeout: float = 5.0) -> bool:
@@ -78,14 +79,15 @@ def test_blocked_handlers_buy_threads_and_the_grown_ones_retire() -> None:
     """The supervisor is what turns a starving core into more servicing."""
     release = threading.Event()
 
-    @flezha.tasklet
-    def blocks(value: str) -> str:
-        release.wait(timeout=5)
-        return value
+    @flezha.tasklet(name="blocks")
+    class Blocks:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            release.wait(timeout=5)
+            ctx.emit(value)
 
     @flezha.unbounded_operator("blocking")
     def blocking(c: flezha.Channels) -> None:
-        c.input("in").into(blocks).sink()
+        c.input("in").into(Blocks).sink()
 
     core = FakeCore(
         [work_activation(i, "x", factory="blocking") for i in range(8)],
@@ -110,14 +112,15 @@ def test_blocked_handlers_buy_threads_and_the_grown_ones_retire() -> None:
 def test_the_supervisor_stops_growing_at_the_ceiling() -> None:
     release = threading.Event()
 
-    @flezha.tasklet
-    def blocks(value: str) -> str:
-        release.wait(timeout=5)
-        return value
+    @flezha.tasklet(name="blocks")
+    class Blocks:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            release.wait(timeout=5)
+            ctx.emit(value)
 
     @flezha.unbounded_operator("capped")
     def capped(c: flezha.Channels) -> None:
-        c.input("in").into(blocks).sink()
+        c.input("in").into(Blocks).sink()
 
     core = FakeCore(
         [work_activation(i, "x", factory="capped") for i in range(20)],
@@ -239,14 +242,15 @@ def test_the_asyncio_executor_polls_on_a_real_thread_and_completes_on_the_loop()
 def test_an_async_handler_is_driven_under_either_executor(kind: str) -> None:
     import asyncio
 
-    @flezha.tasklet
-    async def slow(value: str) -> str:
-        await asyncio.sleep(0.001)
-        return value.upper()
+    @flezha.tasklet(name="slow")
+    class Slow:
+        async def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            await asyncio.sleep(0.001)
+            ctx.emit(value.upper())
 
     @flezha.unbounded_operator("async_op")
     def async_op(c: flezha.Channels) -> None:
-        c.input("in").into(slow).sink()
+        c.input("in").into(Slow).sink()
 
     core = FakeCore([work_activation(i, f"v{i}", factory="async_op") for i in range(4)])
     deps = deps_for(async_op, core)
@@ -267,15 +271,16 @@ def test_a_drain_has_a_time_limit_and_says_what_it_abandoned(
     never = threading.Event()
     entered = threading.Event()
 
-    @flezha.tasklet
-    def wedged(value: str) -> str:
-        entered.set()
-        never.wait(timeout=30)
-        return value
+    @flezha.tasklet(name="wedged")
+    class Wedged:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+            entered.set()
+            never.wait(timeout=30)
+            ctx.emit(value)
 
     @flezha.unbounded_operator("wedge")
     def wedge(c: flezha.Channels) -> None:
-        c.input("in").into(wedged).sink()
+        c.input("in").into(Wedged).sink()
 
     core = FakeCore([work_activation(1, "x", factory="wedge")])
     deps = deps_for(wedge, core)

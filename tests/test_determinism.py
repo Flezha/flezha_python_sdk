@@ -20,25 +20,29 @@ def _installed() -> None:
     determinism.install()
 
 
-@flezha.tasklet
-def reads_the_clock(value: str, ctx: flezha.Ctx[None]) -> str:
-    ambient = time.time()
-    return f"{value}:{ambient > 0}"
+@flezha.tasklet(name="reads_the_clock")
+class ReadsTheClock:
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        ambient = time.time()
+        ctx.emit(f"{value}:{ambient > 0}")
 
 
-@flezha.tasklet
-def reads_a_uuid(value: str, ctx: flezha.Ctx[None]) -> str:
-    return f"{value}:{uuid.uuid4() is not None}"
+@flezha.tasklet(name="reads_a_uuid")
+class ReadsAUuid:
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(f"{value}:{uuid.uuid4() is not None}")
 
 
-@flezha.tasklet
-def reads_datetime_now(value: str, ctx: flezha.Ctx[None]) -> str:
-    return f"{value}:{datetime.datetime.now().year > 2000}"
+@flezha.tasklet(name="reads_datetime_now")
+class ReadsDatetimeNow:
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(f"{value}:{datetime.datetime.now().year > 2000}")
 
 
-@flezha.tasklet
-def uses_the_context(value: str, ctx: flezha.Ctx[None]) -> str:
-    return f"{value}:{ctx.now()}"
+@flezha.tasklet(name="uses_the_context")
+class UsesTheContext:
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(f"{value}:{ctx.now()}")
 
 
 def _warnings_from(task: flezha.Tasklet[str, str]) -> list[warnings.WarningMessage]:
@@ -46,12 +50,12 @@ def _warnings_from(task: flezha.Tasklet[str, str]) -> list[warnings.WarningMessa
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         outcome = harness.feed("v")
-    assert outcome.returned is not None, "the invocation completes normally"
+    assert len(outcome.outputs) == 1, "the invocation completes normally"
     return [w for w in caught if issubclass(w.category, DeterminismWarning)]
 
 
 def test_an_ambient_clock_read_warns_and_the_invocation_completes() -> None:
-    caught = _warnings_from(reads_the_clock)
+    caught = _warnings_from(ReadsTheClock)
     assert len(caught) == 1
     assert "ctx.now()" in str(caught[0].message)
     # The warning names the handler's own file and line, not the SDK's.
@@ -59,19 +63,19 @@ def test_an_ambient_clock_read_warns_and_the_invocation_completes() -> None:
 
 
 def test_an_ambient_uuid_warns_and_points_at_stable_id() -> None:
-    caught = _warnings_from(reads_a_uuid)
+    caught = _warnings_from(ReadsAUuid)
     assert len(caught) == 1
     assert "ctx.stable_id()" in str(caught[0].message)
 
 
 def test_datetime_now_warns() -> None:
-    caught = _warnings_from(reads_datetime_now)
+    caught = _warnings_from(ReadsDatetimeNow)
     assert len(caught) == 1
     assert "datetime.now()" in str(caught[0].message)
 
 
 def test_the_context_clock_does_not_warn() -> None:
-    assert _warnings_from(uses_the_context) == []
+    assert _warnings_from(UsesTheContext) == []
 
 
 def test_nothing_warns_outside_an_invocation() -> None:
@@ -105,5 +109,5 @@ def test_the_wrapped_originals_stay_reachable() -> None:
 def test_installing_twice_does_not_stack_wrappers() -> None:
     determinism.install()
     determinism.install()
-    caught = _warnings_from(reads_the_clock)
+    caught = _warnings_from(ReadsTheClock)
     assert len(caught) == 1

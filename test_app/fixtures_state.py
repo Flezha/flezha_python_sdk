@@ -23,13 +23,13 @@ class KeyedUpsert:
     upsert under three acknowledgement postures; only `run` differs.
     """
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"values": {}}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
         state["values"][change["key"]] = change["value"]
 
-    def upsert(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def upsert(self, value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         """Record and emit one `key:value` input under its natural key."""
         key, _, item = value.partition(":")
         ctx.change({"key": key, "value": item})
@@ -37,7 +37,7 @@ class KeyedUpsert:
 
 
 class TierStore(KeyedUpsert):
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], None]) -> None:
         if value.partition(":")[2] == "poison":
             raise ValueError("poison value")
         self.upsert(value, ctx)
@@ -60,11 +60,11 @@ def bench_keyed_nopersist_operator(c: flezha.Channels) -> None:
 class StoreInput:
     """The durable-state reference: every input is appended through a change."""
 
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
         ctx.change({"push_text": value})
-        return value
+        ctx.emit(value)
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"binary_inputs": [], "text_inputs": []}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -80,15 +80,16 @@ def store_input_operator(c: flezha.Channels) -> None:
 
 
 @flezha.tasklet(name="counter_entry_tasklet")
-def counter_entry(value: str) -> int:
-    return _as_int(value)
+class CounterEntry:
+    def run(self, value: str, ctx: flezha.Ctx[None, int]) -> None:
+        ctx.emit(_as_int(value))
 
 
 class Counter:
-    def run(self, value: int, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: int, ctx: flezha.Ctx[dict[str, Any], None]) -> None:
         ctx.change({"delta": value})
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"value": 0}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -100,7 +101,7 @@ counter = flezha.tasklet(Counter, name="counter_tasklet")
 
 @flezha.unbounded_operator("stateful_counter")
 def stateful_counter_operator(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(counter_entry).named("ticks").into(counter)
+    c.input("input", codec="text").into(CounterEntry).named("ticks").into(counter)
 
 
 @flezha.unbounded_operator("persistence_off_counter", persistent=False)
@@ -111,7 +112,7 @@ def persistence_off_operator(c: flezha.Channels) -> None:
     class, so reusing `stateful_counter`'s would leave the two classes
     indistinguishable to anything that reads a declaration.
     """
-    c.input("input", codec="text").into(counter_entry, "persistence_off_entry_tasklet").named(
+    c.input("input", codec="text").into(CounterEntry, "persistence_off_entry_tasklet").named(
         "ticks"
     ).into(counter, "persistence_off_counter_tasklet")
 
@@ -125,12 +126,12 @@ def persistence_off_operator(c: flezha.Channels) -> None:
 
 
 class SleepingCounter:
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
         key, _, delta = value.partition(":")
         ctx.change({"delta": _as_int(delta)})
-        return f"{key}={ctx.state['value']}"
+        ctx.emit(f"{key}={ctx.state['value']}")
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"value": 0}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -146,14 +147,16 @@ def sleeping_counter_operator(c: flezha.Channels) -> None:
 
 
 @flezha.tasklet(name="tick_entry_tasklet")
-def tick_entry(value: str) -> dict[str, int]:
+class TickEntry:
     """Wire format: ``<interval>:<ts>:<delta>``."""
-    parts = value.split(":", 2)
 
-    def number(index: int) -> int:
-        return _as_int(parts[index]) if index < len(parts) else 0
+    def run(self, value: str, ctx: flezha.Ctx[None, dict[str, int]]) -> None:
+        parts = value.split(":", 2)
 
-    return {"interval": number(0), "ts": number(1), "delta": number(2)}
+        def number(index: int) -> int:
+            return _as_int(parts[index]) if index < len(parts) else 0
+
+        ctx.emit({"interval": number(0), "ts": number(1), "delta": number(2)})
 
 
 class Tick:
@@ -165,10 +168,10 @@ class Tick:
     way, so replay produces the same state.
     """
 
-    def run(self, value: dict[str, int], ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: dict[str, int], ctx: flezha.Ctx[dict[str, Any], None]) -> None:
         ctx.change(dict(value))
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"last": 0}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -180,19 +183,19 @@ tick = flezha.tasklet(Tick, name="tick_tasklet")
 
 @flezha.unbounded_operator("coalescing_counter")
 def coalescing_counter_operator(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(tick_entry).named("ticks").into(tick)
+    c.input("input", codec="text").into(TickEntry).named("ticks").into(tick)
 
 
 class ResumeProbe:
     """Emits the running total, so a resume is observable on the wire."""
 
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> bytes:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], bytes]) -> None:
         delta = _as_int(value)
         total = ctx.state["total"] + delta
         ctx.change({"add": delta})
-        return str(total).encode()
+        ctx.emit(str(total).encode())
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         # Default + change replay rebuilds the total on restore (the same
         # pattern as stateful_counter); no snapshot fast path needed.
         return {"total": 0}
@@ -231,13 +234,13 @@ def bench_keyed_operator(c: flezha.Channels) -> None:
 
 
 class EvolvingCartV1:
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> bytes:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], bytes]) -> None:
         delta = _as_int(value)
         total = ctx.state["total"] + delta
         ctx.change({"add": delta})
-        return f"{total}:".encode()
+        ctx.emit(f"{total}:".encode())
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"total": 0}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -245,14 +248,14 @@ class EvolvingCartV1:
 
 
 class EvolvingCartV2:
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> bytes:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], bytes]) -> None:
         delta = _as_int(value)
         total = ctx.state["total"] + delta
         currency = ctx.state.get("currency") or "EUR"
         ctx.change({"add": delta, "note": "live"})
-        return f"{total}:{currency}".encode()
+        ctx.emit(f"{total}:{currency}".encode())
 
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"total": 0, "currency": ""}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -318,7 +321,7 @@ def tier_store_operator(c: flezha.Channels) -> None:
 
 
 class Counting:
-    def initial_state(self, cell_key: str | None) -> dict[str, Any]:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
         return {"value": 0}
 
     def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
@@ -326,13 +329,13 @@ class Counting:
 
 
 class TierRelay(Counting):
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         ctx.change({"delta": 1})
         ctx.emit(value)
 
 
 class TierTally(Counting):
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
         key, _, item = value.partition(":")
         if item == "hold" and RELEASE_ENV not in os.environ:
             raise ValueError("held until released")
@@ -355,7 +358,7 @@ def tier_chain_operator(c: flezha.Channels) -> None:
 class CheckpointStore(KeyedUpsert):
     """``tier_store``'s twin, whose interval closes on a `commit:` input."""
 
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], None]) -> None:
         if value.partition(":")[0] == "commit":
             ctx.checkpoint()
             return
@@ -389,7 +392,7 @@ def checkpoint_batched_operator(c: flezha.Channels) -> None:
 class BenchCheckpoint(KeyedUpsert):
     """``checkpoint_store`` driven by a DECLARED cadence rather than an input."""
 
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], None]) -> None:
         self.upsert(value, ctx)
 
 

@@ -32,17 +32,16 @@ def _env_int(key: str, default: int | None) -> int | None:
     return int(declared) if declared.isdigit() and int(declared) > 0 else default
 
 
-def passthrough(name: str, *, dynamic_cells: bool = False) -> flezha.Tasklet[str, str]:
+class PassThrough:
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(value)
+
+
+def passthrough(name: str) -> flezha.Tasklet[str, str]:
     """A tasklet that answers its input, under the reference's node name.
 
     Several fixtures declare exactly this and differ only in the name the
     topology knows them by, which is what the Ruby app spells as a `PassThrough`
-    base with one subclass each. One behind a keyed edge declares dynamic
-    cells.
+    base with one subclass each.
     """
-
-    @flezha.tasklet(name=name, dynamic_cells=dynamic_cells)
-    def handler(value: str) -> str:
-        return value
-
-    return handler
+    return flezha.tasklet(PassThrough, name=name)

@@ -18,16 +18,18 @@ class Invoice:
     total: int
 
 
-@flezha.tasklet
-def bill(order: Order) -> Invoice:
-    return Invoice(order_id=order.id, total=1)
+@flezha.tasklet(name="bill")
+class Bill:
+    def run(self, order: Order, ctx: flezha.Ctx[None, Invoice]) -> None:
+        ctx.emit(Invoice(order_id=order.id, total=1))
 
 
-@flezha.tasklet
-def render(invoice: Invoice) -> str:
-    return f"{invoice.order_id}:{invoice.total}"
+@flezha.tasklet(name="render")
+class Render:
+    def run(self, invoice: Invoice, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(f"{invoice.order_id}:{invoice.total}")
 
 
 @flezha.unbounded_operator("billing")
 def billing(c: flezha.Channels) -> None:
-    c.input("orders").into(bill).named("invoices").into(render).sink()
+    c.input("orders").into(Bill).named("invoices").into(Render).sink().sealed()

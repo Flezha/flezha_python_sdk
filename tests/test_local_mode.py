@@ -22,10 +22,12 @@ FIXTURE = contract.member("test/fixtures/local_mode_word_count.txt")
 
 
 @tasklet(name="split")
-def split(line: str, ctx: Ctx[None]) -> None:
+class Split:
     """One line into its words: the hop to `tally` is the runtime's job."""
-    for word in line.split():
-        ctx.emit(word.lower())
+
+    def run(self, line: str, ctx: Ctx[None, Any]) -> None:
+        for word in line.split():
+            ctx.emit(word.lower())
 
 
 @state
@@ -39,16 +41,16 @@ class Seen:
     seen: int
 
 
-@tasklet(name="tally", state=Count, change=Seen, dynamic_cells=True, idle_ttl_ms=300_000)
+@tasklet(name="tally", state=Count, change=Seen, idle_ttl_seconds=300)
 class Tally:
     """One Cell per word, minted on first sight of it."""
 
-    def run(self, word: str, ctx: Ctx[Count]) -> None:
+    def run(self, word: str, ctx: Ctx[Count, Any]) -> None:
         seen = ctx.state.seen + 1
         ctx.change(Seen(seen=seen))
         ctx.emit(f"{word} {seen}")
 
-    def initial_state(self, cell_key: str | None) -> Count:
+    def init_state(self, cell_key: str | None) -> Count:
         return Count()
 
     def apply_change(self, state: Count, change: Seen) -> None:
@@ -57,7 +59,7 @@ class Tally:
 
 @unbounded_operator("local_word_count_python")
 def word_count(c: Channels) -> None:
-    c.input("lines", codec="text").into(split).key_by(lambda word: word).into(Tally).keyed().sink(
+    c.input("lines", codec="text").into(Split).key_by(lambda word: word).into(Tally).keyed().sink(
         "totals"
     )
 
@@ -104,15 +106,17 @@ def test_a_channel_the_class_does_not_declare_is_refused_by_name() -> None:
 
 
 @tasklet(name="defaults")
-def defaults(value: Any, ctx: Ctx[None]) -> None:
+class Defaults:
     """Reads the map an undeclared entry decodes, and emits a string and a map."""
-    ctx.emit(f"a is {value['a']}")
-    ctx.emit({"a": value["a"]})
+
+    def run(self, value: Any, ctx: Ctx[None, Any]) -> None:
+        ctx.emit(f"a is {value['a']}")
+        ctx.emit({"a": value["a"]})
 
 
 @unbounded_operator("local_default_codecs_python")
 def default_codecs(c: Channels) -> None:
-    c.input("in").into(defaults).sink("out")
+    c.input("in").into(Defaults).sink("out")
 
 
 calls: list[str] = []

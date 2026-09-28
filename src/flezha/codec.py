@@ -387,7 +387,7 @@ def codec_for(type_: type | None, which: str) -> ValueCodec | None:
 
 
 def assert_representable(type_name: str, sample: Any) -> None:
-    """Walk what ``initial_state`` produces and refuse what cannot be stored.
+    """Walk a tasklet's starting state and refuse what cannot be stored.
 
     Walked once at registration, so an author learns at startup rather than at
     the first restore that their state does not survive one.

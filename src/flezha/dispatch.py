@@ -14,7 +14,7 @@ import asyncio
 import inspect
 import threading
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from . import codec as _codec
@@ -44,14 +44,20 @@ __all__ = [
 class Cell:
     """One Cell of one declared class: what every activation kind operates on.
 
-    The `(registered, node, key)` triple every activation kind names, and where
-    `state` is read and written — so the lock stays inside
+    The `(registered, node, operator, key)` address every activation kind
+    names, and where `state` is read and written — so the lock stays inside
     :class:`RegisteredClass` and nothing else touches the cell table.
     """
 
     registered: RegisteredClass
     node: TaskNode
+    operator: str
     key: str | None
+    #: Where the cell's state is kept in its class's table.
+    address: tuple[str, int, str | None] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.address = (self.operator, self.node.index, self.key)
 
     @property
     def task(self) -> Tasklet[Any, Any]:
@@ -64,11 +70,11 @@ class Cell:
     @property
     def state(self) -> Any:
         """The live state, created from the declaration on first touch."""
-        return self.registered.state_of(self.node, self.key)
+        return self.registered.state_of(self)
 
     @state.setter
     def state(self, value: Any) -> None:
-        self.registered.set_state(self.node, self.key, value)
+        self.registered.set_state(self, value)
 
 
 class RegisteredClass:
@@ -82,32 +88,34 @@ class RegisteredClass:
             [channel for channel in spec.channels if channel.producer == node.index]
             for node in spec.tasklets
         ]
-        self._cells: dict[tuple[int, str | None], Any] = {}
+        # Keyed by operator too: one class serves every operator of its
+        # factory on this runner, such as each bounded instance, and each has
+        # cells of its own under the same tasklet and key.
+        self._cells: dict[tuple[str, int, str | None], Any] = {}
         # Cells of one class are touched from every worker thread, and the
         # core's per-cell exclusivity does not extend to this dict: two
         # different cells of the same class run concurrently by design.
         self._lock = threading.Lock()
 
-    def state_of(self, node: TaskNode, cell_key: str | None) -> Any:
+    def state_of(self, cell: Cell) -> Any:
         """The cell's live state, created from the declaration on first touch."""
-        key = (node.index, cell_key)
         with self._lock:
-            if key not in self._cells:
-                self._cells[key] = node.task.build_initial_state(cell_key)
-            return self._cells[key]
+            if cell.address not in self._cells:
+                self._cells[cell.address] = cell.task.build_initial_state(cell.key)
+            return self._cells[cell.address]
 
-    def set_state(self, node: TaskNode, cell_key: str | None, state: Any) -> None:
+    def set_state(self, cell: Cell, state: Any) -> None:
         with self._lock:
-            self._cells[(node.index, cell_key)] = state
+            self._cells[cell.address] = state
 
     def has_cells(self) -> bool:
         """Whether any cell of this class has been materialised."""
         with self._lock:
             return bool(self._cells)
 
-    def cell(self, node: TaskNode, key: str | None) -> Cell:
+    def cell(self, node: TaskNode, operator: str, key: str | None) -> Cell:
         """The handle every activation kind operates through."""
-        return Cell(self, node, key)
+        return Cell(self, node, operator, key)
 
     def channel_at(self, index: int) -> ChannelSpec | None:
         """The channel an activation names, or ``None`` when it names none.
@@ -292,9 +300,9 @@ async def invoke(
     deps: DispatchDeps,
     now: int,
     replay: bool,
-    body: Callable[[Ctx[Any]], Any],
+    body: Callable[[Ctx[Any, Any]], Any],
     offset: int | None = None,
-) -> tuple[Ctx[Any], Any]:
+) -> tuple[Ctx[Any, Any], Any]:
     """Run user code against one cell, and keep the state it produced.
 
     Every activation kind that reaches a handler goes through here — an input, a
@@ -304,11 +312,11 @@ async def invoke(
     already journaled, and dropping it here would make the live cell disagree
     with its own log.
     """
-    ctx: Ctx[Any] = Ctx(
+    ctx: Ctx[Any, Any] = Ctx(
         spec=cell.registered.spec,
         node=cell.node,
         outgoing=cell.registered.outgoing[cell.node.index],
-        operator=activation.get("operator", ""),
+        operator=cell.operator,
         cell_key=cell.key,
         change_seq=activation.get("change_seq", 0),
         now=now,
@@ -351,7 +359,9 @@ async def answer(activation: dict[str, Any], deps: DispatchDeps) -> dict[str, An
                 f"class `{activation['factory']}` has no tasklet at index {index}",
                 non_retryable=True,
             )
-        cell = registered.cell(tasklets[index], activation.get("cell_key"))
+        cell = registered.cell(
+            tasklets[index], activation.get("operator", ""), activation.get("cell_key")
+        )
         return await _answer_kind(cell, activation, registered, deps)
     except Exception as error:  # noqa: BLE001 - every failure becomes a result
         return failed(token, error_message(error), non_retryable=is_non_retryable(error))
@@ -432,7 +442,7 @@ def _failure_of(error: BaseException) -> tuple[str, str]:
     return ("non_retryable" if is_non_retryable(error) else "retryable"), error_message(error)
 
 
-async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any]) -> None:
+async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any, Any]) -> None:
     task = cell.task
     if item["kind"] == "timer":
         if task.on_timer is None:
@@ -440,17 +450,11 @@ async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any]) -> None:
                 f"{task.name} registered a timer but declares no on_timer; registration is a "
                 f"runtime call, so this cannot be refused at declaration time"
             )
-        ctx.emit_returned(
-            await resolve(
-                task.on_timer(
-                    {
-                        "kind": item.get("timer_kind"),
-                        "scheduled_at": item.get("scheduled_at") or item.get("now") or 0,
-                    },
-                    ctx,
-                )
-            ),
-        )
+        timer = {
+            "kind": item.get("timer_kind"),
+            "scheduled_at": item.get("scheduled_at") or item.get("now") or 0,
+        }
+        ctx.settle_return(await resolve(task.on_timer(timer, ctx)), "on_timer")
         return
 
     channel = cell.registered.channel_at(item.get("channel") or 0)
@@ -478,7 +482,7 @@ async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any]) -> None:
     # its offset advances once and nothing is retried.
     for value in values:
         if edge is None or _routes_to(cell, edge, value):
-            ctx.emit_returned(await resolve(task(value, ctx)))
+            ctx.settle_return(await resolve(task(value, ctx)), "run")
 
 
 def _restore_fold(cell: Cell, activation: dict[str, Any]) -> dict[str, Any]:
@@ -575,7 +579,7 @@ async def _compensate(cell: Cell, activation: dict[str, Any], deps: DispatchDeps
         )
 
     outputs = [_codec.decode(payload) for payload in activation.get("outputs") or ()]
-    ctx, _ = await invoke(
+    ctx, returned = await invoke(
         cell,
         activation,
         deps,
@@ -583,6 +587,7 @@ async def _compensate(cell: Cell, activation: dict[str, Any], deps: DispatchDeps
         False,
         lambda c: task.compensate(outputs, c),  # type: ignore[misc]
     )
+    ctx.settle_return(returned, "compensate")
     return {"token": activation["token"], "outcome": "work", "effects": [ctx.effect(None)]}
 
 

@@ -13,8 +13,9 @@ A bounded operator is the same shape: a chain of tasklets over a graph. A
 channels body takes one parameter, annotated :class:`~flezha.builder.Channels` or
 not at all.
 
-Handed a tasklet body instead, a class with ``run`` or a function of any
-other shape, the same decorators declare the single-tasklet short form:
+Handed a tasklet body instead, the same decorators declare the single-tasklet
+short form: a function whose one parameter is the input and whose return value
+is emitted, or a tasklet class, which emits through its context:
 
 .. code-block:: python
 
@@ -236,13 +237,13 @@ def _short_form(
         )
     generated = Tasklet(body, name=factory_id, **settings)
     returned = output_type(generated)
-    # An unresolvable hint degrades to the raw annotation, where `-> None` is the string.
+    # An unresolvable hint degrades to the raw annotation, where `None` is the string.
     if sink is not None and (returned is None or returned is type(None) or returned == "None"):
         raise DeclarationError(
             factory_id,
             name,
             "SinkWithoutOutput: a `sink` requires an output type to feed the plugin; annotate "
-            "the body's return",
+            "the function's return, or name the output in a class's `Ctx[State, Output]`",
             refusals=["SinkWithoutOutput"],
         )
 

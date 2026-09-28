@@ -27,17 +27,19 @@ class Shipment:
     tracking: str
 
 
-@flezha.tasklet
-def bill(order: Order) -> Invoice:
-    return Invoice(order_id=order.id)
+@flezha.tasklet(name="bill")
+class Bill:
+    def run(self, order: Order, ctx: flezha.Ctx[None, Invoice]) -> None:
+        ctx.emit(Invoice(order_id=order.id))
 
 
-@flezha.tasklet
-def dispatch(shipment: Shipment) -> str:
-    return shipment.tracking
+@flezha.tasklet(name="dispatch")
+class Dispatch:
+    def run(self, shipment: Shipment, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(shipment.tracking)
 
 
 @flezha.unbounded_operator("mismatched")
 def mismatched(c: flezha.Channels) -> None:
-    # `bill` produces Invoice; `dispatch` accepts Shipment.
-    c.input("orders").into(bill).named("invoices").into(dispatch).sink()
+    # `Bill` produces Invoice; `Dispatch` accepts Shipment.
+    c.input("orders").into(Bill).named("invoices").into(Dispatch).sink()

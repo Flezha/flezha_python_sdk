@@ -50,13 +50,13 @@ class Bumped:
 
 
 class CountUp:
-    """A stateful tasklet in the class spelling."""
+    """A stateful tasklet: its state is the context's, built by `init_state`."""
 
-    def run(self, value: str, ctx: flezha.Ctx[Counter]) -> None:
+    def run(self, value: str, ctx: flezha.Ctx[Counter, dict[str, int]]) -> None:
         ctx.change(Bumped(by=len(value)))
         ctx.emit({"total": ctx.state.count})
 
-    def initial_state(self, key: str | None) -> Counter:
+    def init_state(self, key: str | None) -> Counter:
         return Counter()
 
     def apply_change(self, state: Counter, change: Bumped) -> None:
@@ -64,13 +64,17 @@ class CountUp:
         state.seen.append(str(change.by))
 
 
-count_up = flezha.tasklet(CountUp)
+count_up = flezha.tasklet(CountUp, name="count_up")
 
 
-@flezha.tasklet
-def echo(value: str) -> str:
-    """A stateless tasklet in the function spelling."""
-    return value
+class Echo:
+    """A stateless tasklet: what it is handed, it hands on."""
+
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        ctx.emit(value)
+
+
+echo = flezha.tasklet(Echo, name="echo")
 
 
 @flezha.unbounded_operator("demo")
@@ -280,6 +284,53 @@ def work_activation(
     }
 
 
+def wire_work(
+    token: int,
+    factory: str,
+    *items: tuple[int, bytes],
+    tasklet: int = 0,
+    cell: str | None = None,
+) -> dict[str, Any]:
+    """One work activation over wire payloads, ``(channel, payload)`` per item."""
+    activation = work_activation(token, *[None] * len(items), factory=factory, tasklet=tasklet)
+    activation["cell_key"] = cell
+    for item, (channel, payload) in zip(activation["items"], items, strict=True):
+        item.update(channel=channel, payload=payload)
+    return activation
+
+
+def key_request(
+    token: int,
+    factory: str,
+    *payloads: bytes,
+    channel: int = 0,
+    want_keys: bool = True,
+    want_event_time: bool = False,
+) -> dict[str, Any]:
+    """One key request over wire payloads, as the veneer produces it."""
+    return {
+        "token": token,
+        "operator": "op",
+        "tasklet": 0,
+        "change_seq": 0,
+        "factory": factory,
+        "kind": "key_request",
+        "key_request": {
+            "channel": channel,
+            "payloads": list(payloads),
+            "want_keys": want_keys,
+            "want_event_time": want_event_time,
+        },
+    }
+
+
+def answered(activation: dict[str, Any], deps: Any) -> dict[str, Any]:
+    """The answer for one activation, driven with no event loop."""
+    from flezha.dispatch import answer, run_now
+
+    return run_now(answer(activation, deps))
+
+
 def deps_for(operator: flezha.Operator, core: FakeCore) -> Any:
     """A validated, registered `DispatchDeps` over one operator.
 
@@ -303,23 +354,28 @@ def compensating(seen: list[Any]) -> Any:
     """
 
     class Compensating:
-        def run(self, value: str, ctx: flezha.Ctx[None]) -> None:
+        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
             ctx.emit(value)
 
-        def compensate(self, outputs: list[Any], ctx: flezha.Ctx[None]) -> None:
+        def compensate(self, outputs: list[Any], ctx: flezha.Ctx[None, str]) -> None:
             seen.extend(outputs)
 
-    return flezha.tasklet(Compensating)
+    return flezha.tasklet(Compensating, name="compensating")
 
 
-def solo_deps(task: flezha.Tasklet[Any, Any], core: FakeCore, factory: str = "solo") -> Any:
-    """The same, over a one-tasklet operator wrapped around `task`."""
+def solo(task: flezha.Tasklet[Any, Any], factory: str = "solo") -> flezha.Operator:
+    """A one-tasklet operator wrapped around `task`, its output on a sink."""
 
     @flezha.unbounded_operator(factory)
     def operator(c: flezha.Channels) -> None:
         c.input("in").into(task).sink()
 
-    return deps_for(operator, core)
+    return operator
+
+
+def solo_deps(task: flezha.Tasklet[Any, Any], core: FakeCore, factory: str = "solo") -> Any:
+    """`deps_for` over `solo(task)`."""
+    return deps_for(solo(task, factory), core)
 
 
 def pytest_configure(config: pytest.Config) -> None:
