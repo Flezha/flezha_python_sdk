@@ -33,8 +33,7 @@ def trade_watcher(c: flezha.Channels) -> None:
 
     Only the first stage is keyed: a plain `into` leaves its consumer
     single-cell, which is right for the second stage, since it keeps nothing
-    per symbol. `sealed()` states that the signals channel is where the desk's
-    output ends; a later `into` on it is a type error.
+    per symbol.
     """
     (
         c.input("trades")
@@ -45,5 +44,4 @@ def trade_watcher(c: flezha.Channels) -> None:
         .into(TrackPrices)
         .into(BuyAboveAverage)
         .sink("signals")
-        .sealed()
     )

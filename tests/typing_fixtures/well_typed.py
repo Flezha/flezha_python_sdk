@@ -32,4 +32,4 @@ class Render:
 
 @flezha.unbounded_operator("billing")
 def billing(c: flezha.Channels) -> None:
-    c.input("orders").into(Bill).named("invoices").into(Render).sink().sealed()
+    c.input("orders").into(Bill).named("invoices").into(Render).sink()

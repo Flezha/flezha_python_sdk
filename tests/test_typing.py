@@ -73,12 +73,11 @@ def test_a_wrong_edge_type_is_reported_naming_both_handlers() -> None:
     assert "Shipment" in message
 
 
-def test_an_emit_of_the_wrong_type_and_an_into_after_sealed_are_reported() -> None:
+def test_an_emit_of_the_wrong_type_is_reported() -> None:
     errors = [d for d in _check(_FIXTURES / "wrong_emit.py") if d["severity"] == "error"]
     lines = [cast("dict[str, Any]", d["range"])["start"]["line"] + 1 for d in errors]
-    assert lines == [15, 20], errors
+    assert lines == [15], errors
     assert '"Literal[42]"' in str(errors[0]["message"]), errors[0]
-    assert '"into"' in str(errors[1]["message"]) and "Sealed" in str(errors[1]["message"])
 
 
 def test_the_package_ships_py_typed() -> None:

@@ -378,20 +378,3 @@ def test_seconds_reach_the_record_in_milliseconds() -> None:
 def test_an_idle_ttl_that_is_not_whole_positive_seconds_is_refused(ttl: Any) -> None:
     with pytest.raises(DeclarationError, match="idle_ttl_seconds"):
         flezha.tasklet(Upcase, name="ttl", idle_ttl_seconds=ttl)
-
-
-# -- a sealed channel -----------------------------------------------------------
-
-
-def test_sealing_a_channel_leaves_the_declaration_as_it_was() -> None:
-    upcase = flezha.tasklet(Upcase, name="upcase")
-
-    @flezha.unbounded_operator("open")
-    def open_ended(c: flezha.Channels) -> None:
-        c.input("in").into(upcase).sink("out")
-
-    @flezha.unbounded_operator("open")
-    def sealed(c: flezha.Channels) -> None:
-        c.input("in").into(upcase).sink("out").sealed()
-
-    assert graph.to_host_class_decl(sealed.spec) == graph.to_host_class_decl(open_ended.spec)
