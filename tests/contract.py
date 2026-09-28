@@ -7,8 +7,10 @@ developed outside the core's repository vendors them at ``contract/`` instead
 of walking to a tree it has not got.
 
 This resolves the directory those repository-relative paths hang off, once, in
-the order every SDK uses: ``$FLEZHA_CONTRACT_DIR``, else ``contract/`` at the
-package root, else the nearest enclosing tree that carries the manifest.
+the order every SDK uses: ``$FLEZHA_CONTRACT_DIR``, else the nearest enclosing
+tree that carries the manifest, else ``contract/`` at the package root. The
+enclosing tree comes first so a stale copy fetched into a package inside the
+core's checkout never shadows the live files.
 Resolving nowhere raises, naming the three; it never skips.
 """
 
@@ -40,35 +42,39 @@ def ascend_to(frm: pathlib.Path, marker: str) -> pathlib.Path | None:
     return None
 
 
-def _candidates() -> list[pathlib.Path | None]:
-    configured = os.environ.get("FLEZHA_CONTRACT_DIR")
+def _candidates(package_root: pathlib.Path, configured: str | None) -> list[pathlib.Path | None]:
     return [
         pathlib.Path(configured) if configured else None,
-        PACKAGE_ROOT / "contract",
-        ascend_to(PACKAGE_ROOT, MANIFEST),
+        ascend_to(package_root, MANIFEST),
+        package_root / "contract",
     ]
 
 
-@functools.cache
-def root() -> pathlib.Path:
-    """The directory the contract set's repository-relative paths hang off."""
-    candidates = _candidates()
+def locate(package_root: pathlib.Path, configured: str | None) -> pathlib.Path:
+    """Where the contract set is for a package at ``package_root``."""
+    candidates = _candidates(package_root, configured)
     for candidate in candidates:
         if candidate is not None and (candidate / MANIFEST).is_file():
             return candidate
     unresolved = (
         "$FLEZHA_CONTRACT_DIR (unset)",
+        f"no directory above {package_root} carries {MANIFEST}",
         "",
-        f"no directory above {PACKAGE_ROOT} carries {MANIFEST}",
     )
     tried = "\n  ".join(
         str(candidate) if candidate else why for candidate, why in zip(candidates, unresolved)
     )
     raise FileNotFoundError(
         f"the contract set is nowhere this suite looked:\n  {tried}\n"
-        f"Unpack flezha-fixtures-<version>.tar.gz at {PACKAGE_ROOT}/contract, "
+        f"Unpack flezha-fixtures-<version>.tar.gz at {package_root}/contract, "
         "or set FLEZHA_CONTRACT_DIR."
     )
+
+
+@functools.cache
+def root() -> pathlib.Path:
+    """The directory the contract set's repository-relative paths hang off."""
+    return locate(PACKAGE_ROOT, os.environ.get("FLEZHA_CONTRACT_DIR"))
 
 
 def member(relative: str) -> pathlib.Path:
