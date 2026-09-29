@@ -17,7 +17,7 @@ from typing import Any, ClassVar
 
 import flezha
 from fixture_support import _as_int, _env_int, passthrough, prefix
-from fixtures_bounded import block_until_released, stateless_loop_bounded
+from fixtures_bounded import block_until_released, stateless_loop_bounded, stateless_step
 from fixtures_state import (
     bench_checkpoint_operator,
     bench_keyed_nopersist_operator,
@@ -628,6 +628,39 @@ def spawn_once_requester_operator(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(SpawnOnceRequester).sink("out")
 
 
+# -- call_response -----------------------------------------------------------
+#
+# Operators an outside caller calls and whose graph answers it through
+# `response()`: from the first tasklet, from a downstream one, and from
+# whichever of two filtered paths the input took. `call_turn` is the bounded
+# one, in fixtures_bounded.py.
+
+
+@flezha.unbounded_operator("call_echo")
+def call_echo_operator(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(passthrough("call_echo")).response()
+
+
+call_answer = stateless_step("call_answer", lambda value, ctx: ctx.emit(f"re:{value}"))
+
+
+@flezha.unbounded_operator("call_downstream")
+def call_downstream_operator(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(passthrough("call_parse")).into(call_answer).response()
+
+
+# An input starting `no` takes the refused path, every other the accepted one.
+call_accept = stateless_step("call_accept", lambda value, ctx: ctx.emit(f"accepted:{value}"))
+call_refuse = stateless_step("call_refuse", lambda value, ctx: ctx.emit(f"refused:{value}"))
+
+
+@flezha.unbounded_operator("call_split")
+def call_split_operator(c: flezha.Channels) -> None:
+    admitted = c.input("in", codec="text").into(passthrough("call_admit"))
+    admitted.filter(lambda value: not value.startswith("no")).into(call_accept).response()
+    admitted.filter(lambda value: value.startswith("no")).into(call_refuse).response()
+
+
 #: Every operator this app registers, in declaration order.
 ALL: list[flezha.Operator] = [
     do_nothing_operator,
@@ -671,4 +704,7 @@ ALL: list[flezha.Operator] = [
     spawn_requester_operator,
     spawn_hold_requester_operator,
     spawn_once_requester_operator,
+    call_echo_operator,
+    call_downstream_operator,
+    call_split_operator,
 ]

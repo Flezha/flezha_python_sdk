@@ -510,6 +510,21 @@ def test_a_structured_bounded_releases_one_untransformed_edge_output(
     assert effect["outputs"][0]["event_time"] is None
 
 
+@flezha.unbounded_operator("answering")
+def _answering(c: flezha.Channels) -> None:
+    c.input("in").into(echo).response()
+
+
+def test_an_emit_on_a_response_channel_leaves_as_a_sinks_plugin_output(
+    fake_core: FakeCore,
+) -> None:
+    deps = deps_for(_answering, fake_core)
+    (effect,) = answered(work_activation(41, 7, factory="answering"), deps)["effects"]
+    assert [(o["target"], o["plugin_channel"], _payload_of(o)) for o in effect["outputs"]] == [
+        ("plugin", "echo", 7)
+    ]
+
+
 def test_an_edge_payload_is_the_encoders_own_bytes(
     fake_core: FakeCore, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -47,6 +47,7 @@ SURFACES = (
     "sync_durability",
     "shorthand",
     "shorthand_typed_output",
+    "response",
 )
 
 # The two topologies the fixture cites rather than re-spells: this app's own
@@ -168,6 +169,8 @@ class Interpreter:
             return edge.on_full(arg)
         if verb == "sink":
             return edge.sink(arg) if arg else edge.sink()
+        if verb == "response":
+            return edge.response()
         if verb == "into":
             # The result is that tasklet's output channel, addressed by role.
             self._handles[arg] = edge.into(self._tasklet(arg))

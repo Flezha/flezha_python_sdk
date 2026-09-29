@@ -152,7 +152,8 @@ class ChannelSpec:
     retry_backoff_ms: int | None = None
     keyed: bool = False
     sink: str | None = None
-    """The plugin sink attached to this channel; ``None`` means none."""
+    """The channel's name once a plugin end, a sink or a response, is attached;
+    ``None`` means none. The core's answer names no sink for a response."""
     decode: Callable[[Any], Any] | None = None
     sink_encode: Callable[[Any], bytes] | None = None
     """The plugin sink's payload encoder, set with the sink by ``sink``.
@@ -536,17 +537,45 @@ class Edge(Generic[T]):
         string as UTF-8 and any other value as JSON, so a sink needs neither for
         a string, bytes or a JSON value.
         """
+        link: dict[str, Any] = {"link": "sink"}
+        if name is not None:
+            link["name"] = name
+        return self._plug_end(link, name, encode, codec)
+
+    def response(
+        self,
+        *,
+        encode: Callable[[Any], bytes] | None = None,
+        codec: ChannelCodec | None = None,
+    ) -> Edge[T]:
+        """Terminate this edge's channel on the answer to the outside call its
+        input carried, and answer the edge.
+
+        Each value emitted on it answers that caller and reaches no plugin. It
+        takes no name, so the channel keeps the one it would have without it,
+        and consumers may follow it exactly as after ``sink``. A channel ends
+        in one sink or one response. ``encode`` and ``codec`` are ``sink``'s.
+        """
+        return self._plug_end({"link": "response"}, None, encode, codec)
+
+    def _plug_end(
+        self,
+        link: Link,
+        name: str | None,
+        encode: Callable[[Any], bytes] | None,
+        codec: ChannelCodec | None,
+    ) -> Edge[T]:
+        """Attach a plugin end, a sink or a response: both leave as a plugin
+        output encoded the same way, and the core refuses a second end."""
         if self._from[0] != "tasklet":
             # Not a topology rule the core states: a record whose entry channel
             # carries a sink derives a plugin channel with no producer, and
             # there is nothing in it that says which end fed the plugin.
             raise FlezhaError("topology.sink_on_entry", {"channel": name or "<derived>"})
         channel = self._channel()
-        # A chain of its own: the sink terminates the channel rather than this
+        # A chain of its own: the end terminates the channel rather than this
         # edge, so ``into(...)`` still chains after it.
-        link: dict[str, Any] = {"link": "sink"}
         if name is not None:
-            link["name"] = name
             channel.name = name
         named = self._builder.channel_codec(channel, codec, encode)
         channel.chains.append([link])

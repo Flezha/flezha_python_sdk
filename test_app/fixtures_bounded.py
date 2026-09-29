@@ -949,6 +949,16 @@ def static_cell_bounded(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(static_cell_step).sink("out")
 
 
+# call_turn: a durable per-input loop whose turn answers the outside call
+# through `response()`.
+call_turn = stateless_step("call_turn", lambda value, ctx: ctx.emit(value))
+
+
+@flezha.bounded_operator("call_turn", **LOOP_KNOBS)
+def call_turn_bounded(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(call_turn).response()
+
+
 #: Every bounded operator this app registers, in the reference's order.
 ALL: list[flezha.Operator] = [
     echo_bounded,
@@ -981,4 +991,5 @@ ALL: list[flezha.Operator] = [
     static_cell_bounded,
     timer_loop_bounded,
     event_timer_bounded,
+    call_turn_bounded,
 ]

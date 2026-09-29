@@ -387,6 +387,35 @@ def test_two_channels_naming_one_sink_is_refused() -> None:
     assert codes(caught.value) == ["topology.duplicate_sink_name"]
 
 
+def test_response_records_its_link_and_ends_the_channel_as_a_sink_would() -> None:
+    @flezha.unbounded_operator("answers")
+    def terminal(c: flezha.Channels) -> None:
+        c.input("in").into(echo).response()
+
+    @flezha.unbounded_operator("answers_and_feeds")
+    def hybrid(c: flezha.Channels) -> None:
+        c.input("in").into(echo).response().into(count_up)
+
+    assert graph.to_host_class_decl(terminal.spec)["channels"][1]["chains"] == [
+        [{"link": "response"}]
+    ]
+    # A response takes no name, and is a plugin end but not a sink.
+    assert _derived(terminal) == [("in", "entry", None, [0]), ("echo", "plugin", 0, [])]
+    assert [channel["sink"] for channel in declare(terminal)["channels"]] == [None, None]
+    assert _derived(hybrid) == [("in", "entry", None, [0]), ("echo", "inter_task", 0, [1])]
+
+
+def test_a_sink_beside_a_response_on_one_channel_is_refused() -> None:
+    @flezha.unbounded_operator("ends_twice")
+    def ends_twice(c: flezha.Channels) -> None:
+        c.input("in").into(echo).sink("out").response()
+
+    with pytest.raises(FlezhaError) as caught:
+        declare(ends_twice)
+    assert codes(caught.value) == ["topology.channel_ends_twice"]
+    assert caught.value.details["channel"] == "out"
+
+
 def test_keyed_reaches_the_channel_of_an_edge_that_also_declares_a_sink() -> None:
     @flezha.unbounded_operator("keyed_hybrid")
     def keyed_hybrid(c: flezha.Channels) -> None:

@@ -28,7 +28,8 @@
     "bounded",
     "sync_durability",
     "shorthand",
-    "shorthand_typed_output"
+    "shorthand_typed_output",
+    "response"
   ],
   "dispatch": {
     "model": "thread-pool",
@@ -76,6 +77,12 @@
       "bounded_mailbox_drop_nothing",
       "bounded_mailbox_drop_newest",
       "bounded_mailbox_drop_oldest"
+    ],
+    "call_response": [
+      "call_echo",
+      "call_downstream",
+      "call_split",
+      "call_turn"
     ],
     "partitioned": [
       "partition_relay",
