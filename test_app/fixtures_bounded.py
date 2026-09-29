@@ -675,6 +675,69 @@ def chat_rewind_bounded(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(chat_turn).named("mid").into(chat_reply_undoable).sink("out")
 
 
+# failing_turn_loop_bounded: a session whose turn can fail after `note`
+# committed. `note` records each message and its undo moves the latest one to
+# `undone`; `answer` replies `re:<message>` on the sink `answer`, and fails on
+# `boom` always, on `boom-once` while the release env is unset (the first
+# runner of a crash drill), and on `boom-until-healed` until a `heal` turn set
+# its state. failing_turn_all_or_nothing_bounded is the same under
+# all-or-nothing.
+class Note:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
+        return {"notes": [], "undone": []}
+
+    def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
+        if "noted" in change:
+            state["notes"].append(change["noted"])
+        elif state["notes"]:
+            state["undone"].append(state["notes"].pop())
+
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
+        ctx.change({"noted": value})
+        ctx.emit(value)
+
+    def compensate(self, outputs: list[Any], ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
+        ctx.change({"undone": True})
+
+
+note = flezha.tasklet(Note, name="note")
+
+
+class Answer:
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
+        return {"healed": False}
+
+    def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
+        state["healed"] = True
+
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], Any]) -> None:
+        fails = (
+            value == "boom"
+            or (value == "boom-once" and RELEASE_ENV not in os.environ)
+            or (value == "boom-until-healed" and not ctx.state["healed"])
+        )
+        if fails:
+            raise RuntimeError(f"answer refused {value}")
+        if value == "heal":
+            ctx.change({"healed": True})
+        ctx.emit(f"re:{value}")
+
+
+answer = flezha.tasklet(Answer, name="answer")
+
+
+def failing_turn_chain(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(note).named("noted").into(answer).sink("answer")
+
+
+failing_turn_loop_bounded = flezha.bounded_operator(
+    "failing_turn_loop_bounded", rollback_mode="keep_progress", **LOOP_KNOBS
+)(failing_turn_chain)
+failing_turn_all_or_nothing_bounded = flezha.bounded_operator(
+    "failing_turn_all_or_nothing_bounded", rollback_mode="all_or_nothing", **LOOP_KNOBS
+)(failing_turn_chain)
+
+
 # The chat loop with the block moved AFTER the root's commit: TURN commits its
 # turn, REPLY blocks on the turn `reply-crash` while the release env is unset,
 # so a SIGKILL lands between a root's `task_committed` and the pass's
@@ -904,6 +967,8 @@ ALL: list[flezha.Operator] = [
     stateless_loop_bounded,
     keyed_loop_bounded,
     chat_rewind_bounded,
+    failing_turn_loop_bounded,
+    failing_turn_all_or_nothing_bounded,
     reply_block_loop_bounded,
     retry_bounded,
     branch_bounded,
