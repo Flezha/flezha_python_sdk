@@ -480,7 +480,10 @@ class AsyncioExecutor(_Host):
     def start(self) -> AsyncioExecutor:
         self._pool.spawn("flezha-loop", self._run_loop)
         if not self._ready.wait(timeout=10.0):
-            raise FlezhaError("the asyncio executor's event loop did not start")
+            raise FlezhaError(
+                "runtime.executor_unavailable",
+                {"executor": "asyncio", "reason": "its event loop did not start within 10 s"},
+            )
         for index in range(self.base):
             self._pool.spawn(f"flezha-fetcher-{index}", self._run_fetcher)
         self._start_supervisor()
@@ -559,5 +562,7 @@ def build(kind: str, core: Any, deps: DispatchDeps, **options: Any) -> Executor:
     """
     factory = EXECUTORS.get(kind)
     if factory is None:
-        raise FlezhaError(f"unknown executor `{kind}`; the seam has {', '.join(sorted(EXECUTORS))}")
+        raise FlezhaError(
+            "usage.unknown_word", {"noun": "executor", "value": kind, "allowed": sorted(EXECUTORS)}
+        )
     return factory(core, deps, **options)

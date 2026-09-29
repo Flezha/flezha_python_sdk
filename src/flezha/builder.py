@@ -20,7 +20,7 @@ from typing import Any, Generic, TypeVar
 from . import codec as _codec
 from . import route_latest as _latest_router
 from .codec import ChannelCodec
-from .errors import DeclarationError
+from .errors import FlezhaError
 from .tasklet import Tasklet
 
 __all__ = [
@@ -334,15 +334,11 @@ class Channels:
         if codec is None:
             return None
         if callable_ is not None:
-            raise DeclarationError(
-                self.factory_id, channel.name, "names both a codec and its own callable; give one"
-            )
+            raise FlezhaError("topology.codec_with_callable", {"channel": channel.name})
         if codec not in _codec.CHANNEL_CODECS:
-            raise DeclarationError(
-                self.factory_id,
-                channel.name,
-                f"unknown codec `{codec}`; a channel codec is one of "
-                f"{', '.join(_codec.CHANNEL_CODECS)}",
+            raise FlezhaError(
+                "topology.unknown_codec",
+                {"channel": channel.name, "codec": codec, "codecs": list(_codec.CHANNEL_CODECS)},
             )
         return codec
 
@@ -361,13 +357,7 @@ class Channels:
             # The node table is keyed by identity and physically cannot hold
             # two, so the record the core would judge is unwritable. The
             # refusal answers under the core's own name all the same.
-            raise DeclarationError(
-                self.factory_id,
-                identity,
-                "two different tasklets claim this node identity; name one of them on the "
-                "`into(...)` so each node has its own",
-                ["NodeIdentityCollision"],
-            )
+            raise FlezhaError("topology.node_identity_collision", {"name": identity})
         node = TaskNode(index=len(self.tasklets), name=identity, task=task)
         self.tasklets.append(node)
         return node
@@ -550,11 +540,7 @@ class Edge(Generic[T]):
             # Not a topology rule the core states: a record whose entry channel
             # carries a sink derives a plugin channel with no producer, and
             # there is nothing in it that says which end fed the plugin.
-            raise DeclarationError(
-                self._builder.factory_id,
-                name or "<derived>",
-                "a plugin sink is fed by a tasklet; wire the entry channel into one first",
-            )
+            raise FlezhaError("topology.sink_on_entry", {"channel": name or "<derived>"})
         channel = self._channel()
         # A chain of its own: the sink terminates the channel rather than this
         # edge, so ``into(...)`` still chains after it.

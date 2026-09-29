@@ -40,7 +40,7 @@ from typing import (
 
 from . import codec as _codec
 from .cell_state import runtime_mutation
-from .errors import DeclarationError
+from .errors import FlezhaError
 
 if TYPE_CHECKING:
     from .ctx import Ctx
@@ -278,31 +278,25 @@ class Tasklet(Generic[I, O]):
     # -- registration-time refusals owned by the tasklet ---------------
 
     def _refuse(self, defect: str) -> None:
-        raise DeclarationError("<tasklet>", self.name, defect)
+        raise _invalid(self.name, defect)
 
     def _clock(self, logical_clock: bool) -> Clock:
         """The clock the class writes: `event_time`, `logical_clock=True`, or the wall."""
         if logical_clock and self.event_time is not None:
-            self._refuse(
-                "declares `logical_clock=True` and writes `event_time`; a tasklet has one "
-                "clock, so keep the one it runs on"
-            )
+            raise FlezhaError("topology.two_clocks", {"tasklet": self.name})
         if self.event_time is not None:
             return "event_time"
         return "logical" if logical_clock else "wall"
 
     def _validate(self) -> None:
         if self.cell_keys is not None and not self.cell_keys:
-            self._refuse("declares an empty static key set; a static tasklet names its cells")
+            raise FlezhaError("topology.static_tasklet_without_cell_keys", {"tasklet": self.name})
         self._validate_idle_ttl()
         # State without a fold is legitimate: a value seeded at start and read
         # but never mutated has nothing to journal, and `ctx.change` already
         # refuses at the point of use. A fold with no state to fold into is not.
         if not self.stateful and self.apply_change is not None:
-            self._refuse(
-                "declares apply_change but no state to fold into; write `init_state`, pass "
-                "`state=`, or name the state in run's context hint, `Ctx[State, Output]`"
-            )
+            raise FlezhaError("topology.change_without_state", {"tasklet": self.name})
         _refuse_unannotated(self)
         if self.function_body:
             _refuse_context_parameter(self)
@@ -318,12 +312,9 @@ class Tasklet(Generic[I, O]):
         except TypeError as error:
             if self.init_state is not None or self._state_class is None:
                 raise
-            raise DeclarationError(
-                "<tasklet>",
-                self.name,
-                f"its state class `{self._state_class.__name__}` cannot be built with no "
-                f"arguments ({error}); write `init_state(self, cell_key)` returning the "
-                f"starting state",
+            raise FlezhaError(
+                "topology.state_not_constructible",
+                {"tasklet": self.name, "state": self._state_class.__name__},
             ) from error
         if self.state_codec is None:
             _codec.assert_representable(f"{self.name}.state", initial)
@@ -332,9 +323,14 @@ class Tasklet(Generic[I, O]):
         ttl = self.idle_ttl_seconds
         if ttl is None or (isinstance(ttl, int) and not isinstance(ttl, bool) and ttl > 0):
             return
-        self._refuse(
-            f"declares `idle_ttl_seconds={ttl!r}`; the idle TTL is a positive whole number of "
-            f"seconds, or unset for no eviction"
+        raise FlezhaError(
+            "topology.invalid_setting",
+            {
+                "declaration": f"tasklet '{self.name}'",
+                "setting": "idle_ttl_seconds",
+                "value": repr(ttl),
+                "expected": "a positive whole number of seconds",
+            },
         )
 
     def _validate_schema(self) -> None:
@@ -344,37 +340,37 @@ class Tasklet(Generic[I, O]):
             return
         running = self.schema_version or 1
         if floor > running:
-            self._refuse(
-                f"declares min_readable_schema_version {floor} above its schema_version {running}"
+            raise FlezhaError(
+                "topology.schema_floor_above_version",
+                {"tasklet": self.name, "floor": floor, "version": running},
             )
         if floor < running and self.migrate_state is None and self.migrate_change is None:
-            self._refuse(
-                f"declares it reads back to schema version {floor} but supplies no migration; "
-                f"a floor without one fails at the first old record instead of at startup"
+            raise FlezhaError(
+                "topology.schema_floor_without_migration", {"tasklet": self.name, "floor": floor}
             )
+
+
+def _invalid(tasklet: str, reason: str) -> FlezhaError:
+    return FlezhaError("topology.invalid_tasklet", {"tasklet": tasklet, "reason": reason})
 
 
 def _handler_of(target: Any, instance: Any) -> Callable[..., Any]:
     """A function body is its own handler; a class's is its `run` method."""
     handler = target if instance is None else getattr(instance, "run", None)
     if not callable(handler):
-        raise DeclarationError(
-            "<tasklet>",
-            getattr(target, "__name__", str(target)),
-            "declares no `run`; a class tasklet's body is its `run` method, which is what "
-            "runs against an input",
+        raise FlezhaError(
+            "topology.missing_body",
+            {"declaration": f"tasklet '{getattr(target, '__name__', target)}'", "body": "`run`"},
         )
     return handler
 
 
 def _required_name(target: Any, name: str | None) -> str:
     if not name:
-        raise DeclarationError(
-            "<tasklet>",
-            getattr(target, "__name__", str(target)),
-            'declares no `name`; write `@flezha.tasklet(name="...")`. The name is where '
-            "the tasklet's state is saved, so it is written rather than derived from the "
-            "class name, and a renamed class keeps its state",
+        # Written rather than derived from the class name, so a renamed
+        # class keeps its state.
+        raise FlezhaError(
+            "topology.tasklet_name_missing", {"tasklet": getattr(target, "__name__", str(target))}
         )
     return name
 
@@ -408,9 +404,13 @@ def _refuse_context_hooks(task: Tasklet[Any, Any]) -> None:
     :meth:`flezha.ctx.Ctx.settle_return`.
     """
     if hasattr(task._target, "initial_state"):
-        task._refuse(
-            "writes `initial_state`, which no longer declares anything; the hook is "
-            "`init_state(self, cell_key)`"
+        raise FlezhaError(
+            "topology.retired_callback",
+            {
+                "tasklet": task.name,
+                "callback": "`initial_state`",
+                "instead": "`init_state(self, cell_key)`",
+            },
         )
     hooks = {"run": task.handler, "on_timer": task.on_timer, "compensate": task.compensate}
     for hook, fn in hooks.items():
@@ -536,8 +536,7 @@ def _refuse_union_change(task: Tasklet[Any, Any], declared: type | None) -> None
     annotation = _parameter_annotation(task.apply_change, 1)
     if annotation is None or get_origin(annotation) not in (Union, types.UnionType):
         return
-    raise DeclarationError(
-        "<tasklet>",
+    raise _invalid(
         task.name,
         f"declares its change as the union `{annotation}`; a durable body carries no tag "
         f"saying which arm wrote it, so the restore would guess. Declare one change class "
@@ -555,14 +554,12 @@ def _refuse_unannotated(task: Tasklet[Any, Any]) -> None:
     """
     name = _first_parameter(task.handler)
     if not name:
-        raise DeclarationError(
-            "<tasklet>",
+        raise _invalid(
             task.name,
             "takes no input parameter; a tasklet is what runs against an input",
         )
     if name not in _codec.type_hints(task.handler):
-        raise DeclarationError(
-            "<tasklet>",
+        raise _invalid(
             task.name,
             f"parameter `{name}` has no type annotation; the graph is wired from the hints, "
             f"so an unannotated input cannot be checked against the edge that feeds it",
@@ -599,18 +596,18 @@ def tasklet(target: Any = None, /, **declarations: Any) -> Any:
     """
     written = [key for key in _OPERATOR_KEYWORDS if key in declarations]
     if written:
-        raise DeclarationError(
-            "<tasklet>",
-            declarations.get("name") or getattr(target, "__name__", None),
-            f"`{'`, `'.join(written)}` declare(s) an operator, not a tasklet; write the "
-            f"single-tasklet short form as `@flezha.unbounded_operator(id=...)` or "
-            f"`@flezha.bounded_operator(id=...)`",
+        raise FlezhaError(
+            "topology.operator_field_on_tasklet",
+            {
+                "tasklet": declarations.get("name") or getattr(target, "__name__", "<tasklet>"),
+                "fields": [f"`{key}`" for key in written],
+                "instead": "`@flezha.unbounded_operator(id=...)` or `@flezha.bounded_operator(id=...)`",
+            },
         )
 
     def declare(inner: Any) -> Tasklet[Any, Any]:
         if not inspect.isclass(inner):
-            raise DeclarationError(
-                "<tasklet>",
+            raise _invalid(
                 getattr(inner, "__name__", str(inner)),
                 "is a function; a tasklet is a class whose `run(self, value, ctx)` takes the "
                 "value and the context. A whole one-tasklet operator written as a function "

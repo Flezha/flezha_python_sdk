@@ -6,7 +6,7 @@ which is what keeps a sub-interpreter executor a later swap. This module adds no
 ABI surface: every method below forwards to exactly one veneer call through
 :meth:`Core._call`, which is the **one** site that touches the native object.
 What it adds is the fork guard, which is a host rule and not a core one, and the
-translation of the extension's errors into this SDK's one exception root.
+translation of the extension's error documents into :class:`FlezhaError`.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any
 
-from .errors import CoreError, FlezhaError, ForkError, SchemaMismatchError
+from .errors import FlezhaError
 
 if TYPE_CHECKING:
     from . import flz_core_ffi
@@ -28,11 +28,16 @@ ACTIVATION_SCHEMA_VERSION = 3
 
 
 def load_extension() -> Any:
-    """Import the compiled veneer, or say what to do about its absence."""
+    """Import the compiled veneer, or say what to do about its absence.
+
+    An absent extension is an installation defect rather than a refusal, and
+    nothing is left to render a catalogue message with, so it stays an
+    :class:`ImportError`.
+    """
     try:
         from . import flz_core_ffi as module
     except ImportError as error:  # pragma: no cover - exercised by a broken install
-        raise FlezhaError(
+        raise ImportError(
             f"the flezha native extension could not be loaded ({error}). Install a prebuilt "
             f"wheel, or build from a checkout of the flezha repository, where "
             f"scripts/build-python-sdk.sh produces it."
@@ -103,10 +108,8 @@ class Core:
         module = load_extension()
         try:
             native = module.Core(ACTIVATION_SCHEMA_VERSION)
-        except module.SchemaMismatch as error:
-            raise SchemaMismatchError(str(error)) from error
         except module.NativeError as error:
-            raise CoreError(str(error)) from error
+            raise FlezhaError.from_document(str(error)) from error
         return cls(native, module)
 
     # -- the one crossing --------------------------------------------------
@@ -114,18 +117,14 @@ class Core:
     def _call(self, entry: str, *args: Any) -> Any:
         """Guard, cross, and translate. The only site that touches the veneer."""
         if os.getpid() != self._owner_pid:
-            raise ForkError(
-                f"the flezha core was started in process {self._owner_pid} and this is "
-                f"{os.getpid()}: the core owns native threads that fork(2) does not carry, so "
-                f"a child cannot serve. Declare classes, fork, and start the core in each child."
+            raise FlezhaError(
+                "runtime.forked_process", {"owner": self._owner_pid, "pid": os.getpid()}
             )
         try:
             return getattr(self._native, entry)(*args)
         except self._module.NativeError as error:
-            # The engine's own detail, in this SDK's one exception root, with
-            # the extension's exception chained so nothing is lost. A refusal
-            # the core also answered as data carries that verdict across.
-            raise CoreError(str(error), getattr(error, "verdict", None)) from error
+            # The extension's message is the core's JSON error document.
+            raise FlezhaError.from_document(str(error)) from error
 
     # -- lifecycle ---------------------------------------------------------
 

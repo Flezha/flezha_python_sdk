@@ -21,7 +21,7 @@ from . import codec as _codec
 from .builder import Channels, ClassSpec
 from .cell_state import fold_restore
 from .dispatch import DispatchDeps, RegisteredClass, invoke, run_now
-from .errors import CoreError, FlezhaError
+from .errors import FlezhaError
 from .tasklet import Tasklet
 
 __all__ = ["TaskletTestHarness", "ReplayMismatch", "Outcome", "replay_equals"]
@@ -29,8 +29,9 @@ __all__ = ["TaskletTestHarness", "ReplayMismatch", "Outcome", "replay_equals"]
 S = TypeVar("S")
 
 
-class ReplayMismatch(FlezhaError):
-    """The recorded change log and the live state disagree."""
+class ReplayMismatch(AssertionError):
+    """The recorded change log and the live state disagree: the harness's own
+    assertion about the tasklet under test, not a refusal."""
 
     def __init__(self, tasklet: str, live: Any, replayed: Any) -> None:
         self.live = live
@@ -116,7 +117,7 @@ class TaskletTestHarness(Generic[S]):
     def fire_timer(self, kind: str, scheduled_at: int) -> Outcome:
         """Fire a per-cell timer. ``now`` IS the scheduled time, as it is live."""
         if self._task.on_timer is None:
-            raise FlezhaError(f"{self._task.name} declares no on_timer")
+            raise FlezhaError("runtime.timer_without_on_timer", {"tasklet": self._task.name})
         return self._run(
             scheduled_at,
             False,
@@ -141,7 +142,14 @@ class TaskletTestHarness(Generic[S]):
     def compensate(self, outputs: list[Any]) -> Outcome:
         """Run the declared compensation over recorded forward outputs."""
         if self._task.compensate is None:
-            raise FlezhaError(f"{self._task.name} declares no compensate hook")
+            raise FlezhaError(
+                "runtime.hook_missing",
+                {
+                    "tasklet": self._task.name,
+                    "action": "was asked to compensate",
+                    "hook": "compensate",
+                },
+            )
         return self._run(
             0,
             False,
@@ -220,7 +228,7 @@ class TaskletTestHarness(Generic[S]):
         del timeout_ms
         answer = self._spawns.get(handle)
         if answer is None:
-            raise CoreError(f"spawn handle {handle} was released")
+            raise FlezhaError("runtime.spawn_handle_released", {"handle": handle})
         return answer
 
     # -- internals -----------------------------------------------------------

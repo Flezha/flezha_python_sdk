@@ -20,6 +20,7 @@ import pytest
 
 import flezha
 from flezha import native
+from flezha.errors import FlezhaError
 
 #: The process context ``graph.validate`` submits a record through. One per test
 #: session: a check registers nothing, so every suite shares it.
@@ -114,9 +115,10 @@ class FakeCore:
         self.dispatch_threads: set[int] = set()
         self.stdin_watch_grace_ms: int | None = None
         self.spawns: list[dict[str, Any]] = []
-        #: What a spawn resolves to beside its id: an outcome, or an error and
-        #: its message. ``None`` spawns under the requested or a generated id.
-        self.spawn_answer: dict[str, str] | None = None
+        #: What a spawn resolves to beside its id: an outcome, or the error a
+        #: refused read raises. ``None`` spawns under the requested or a
+        #: generated id.
+        self.spawn_answer: dict[str, str] | FlezhaError | None = None
         #: How long after its request a spawn is answered, as a controller takes.
         self.spawn_answer_after_s = 0.0
 
@@ -229,8 +231,15 @@ class FakeCore:
             return None
         time.sleep(max(left, 0.0))
         answer = self.spawn_answer or {"outcome": "spawned"}
-        generated = "" if "error" in answer else f"{request['factory_id']}-k7m2qzxw4pd3fn2a"
+        if isinstance(answer, FlezhaError):
+            raise answer
+        generated = f"{request['factory_id']}-k7m2qzxw4pd3fn2a"
         return json.dumps({"id": request["id"] or generated, **answer})
+
+
+def codes(error: FlezhaError) -> list[str]:
+    """Every code a refusal carries: each issue's, or its own."""
+    return [issue["code"] for issue in error.details.get("issues", [])] or [error.code]
 
 
 def _unscripted(entry: str) -> Callable[..., None]:

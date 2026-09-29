@@ -16,6 +16,7 @@ import flezha
 from conftest import (
     FakeCore,
     answered,
+    codes,
     declare,
     deps_for,
     key_request,
@@ -26,7 +27,7 @@ from conftest import (
 )
 from flezha import graph
 from flezha.dispatch import DispatchDeps
-from flezha.errors import DeclarationError
+from flezha.errors import FlezhaError
 from flezha.testing import TaskletTestHarness
 
 
@@ -47,10 +48,11 @@ def test_a_function_tasklet_is_refused_pointing_at_the_short_form() -> None:
         return tick
 
     for declare_it in (flezha.tasklet(name="price"), lambda fn: flezha.tasklet(fn, name="price")):
-        with pytest.raises(DeclarationError) as caught:
+        with pytest.raises(FlezhaError) as caught:
             declare_it(price)  # type: ignore[arg-type]
         message = str(caught.value)
-        assert "price: is a function" in message
+        assert caught.value.code == "topology.invalid_tasklet"
+        assert "tasklet 'price' cannot be declared: is a function" in message
         assert "a tasklet is a class whose `run(self, value, ctx)`" in message
         assert "@flezha.unbounded_operator" in message
         assert "@flezha.bounded_operator" in message
@@ -63,9 +65,12 @@ class Upcase:
 
 @pytest.mark.parametrize("declared", [{}, {"name": ""}])
 def test_a_tasklet_without_a_name_is_refused_naming_the_class(declared: dict[str, Any]) -> None:
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         flezha.tasklet(Upcase, **declared)
-    assert "Upcase: declares no `name`" in str(caught.value)
+    assert (caught.value.code, caught.value.details) == (
+        "topology.tasklet_name_missing",
+        {"tasklet": "Upcase"},
+    )
 
 
 class Tally:
@@ -103,8 +108,9 @@ def test_an_annotated_return_is_refused_naming_the_hook_and_ctx_emit() -> None:
         def run(self, value: str, ctx: flezha.Ctx[None, str]) -> str:
             return value
 
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         flezha.tasklet(Returns, name="returns")  # type: ignore[arg-type]
+    assert caught.value.code == "topology.invalid_tasklet"
     assert "`run` is annotated to return `<class 'str'>`" in str(caught.value)
     assert "`ctx.emit`" in str(caught.value)
 
@@ -156,6 +162,15 @@ def _timer_activation(cell: str) -> dict[str, Any]:
     return activation
 
 
+def test_a_timer_for_a_tasklet_with_no_on_timer_fails_naming_the_hook(
+    fake_core: FakeCore,
+) -> None:
+    deps = solo_deps(flezha.tasklet(Upcase, name="no_timer"), fake_core)
+    (effect,) = answered(_timer_activation("any"), deps)["effects"]
+    assert effect["verdict"] == "retryable"
+    assert effect["message"].endswith("(runtime.timer_without_on_timer)")
+
+
 def test_a_timer_firing_emits_through_its_context_and_a_returned_value_fails_it(
     fake_core: FakeCore,
 ) -> None:
@@ -197,8 +212,9 @@ class CompensateWithoutContext:
     ],
 )
 def test_a_hook_without_a_context_is_refused(target: type, hook: str) -> None:
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         flezha.tasklet(target, name="no_context")
+    assert caught.value.code == "topology.invalid_tasklet"
     assert f"`{hook}` takes no context parameter" in str(caught.value)
 
 
@@ -229,9 +245,12 @@ def test_the_retired_initial_state_hook_is_refused_naming_init_state() -> None:
         def initial_state(self, cell_key: str | None) -> dict[str, int]:
             return {}
 
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         flezha.tasklet(Seeded, name="seeded")
-    assert "writes `initial_state`" in str(caught.value)
+    assert (caught.value.code, caught.value.details["callback"]) == (
+        "topology.retired_callback",
+        "`initial_state`",
+    )
     assert "`init_state(self, cell_key)`" in str(caught.value)
 
 
@@ -291,9 +310,9 @@ class BareContext:
 
 @pytest.mark.parametrize("body", [Drain, BareContext])
 def test_a_class_short_form_whose_context_names_no_output_refuses_a_sink(body: type) -> None:
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         flezha.unbounded_operator(id="drain", sink="out")(body)
-    assert caught.value.refusals == ["SinkWithoutOutput"]
+    assert caught.value.code == "topology.sink_without_output"
 
 
 # -- the clock follows from what the class writes -----------------------------------
@@ -339,15 +358,15 @@ def test_an_event_time_tasklet_answers_the_extracted_time_at_the_crossing(
 
 
 def test_two_clocks_are_refused_naming_both() -> None:
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         flezha.tasklet(EventTimed, name="both", logical_clock=True)
-    assert "`logical_clock=True` and writes `event_time`" in str(caught.value)
+    assert (caught.value.code, caught.value.details) == ("topology.two_clocks", {"tasklet": "both"})
 
 
 def test_a_logical_clock_with_no_changes_is_still_unservable() -> None:
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         declare(solo(flezha.tasklet(Upcase, name="seq", logical_clock=True)))
-    assert caught.value.refusals == ["UnservableClock"]
+    assert codes(caught.value) == ["topology.unservable_clock"]
 
 
 @pytest.mark.parametrize(
@@ -376,5 +395,9 @@ def test_seconds_reach_the_record_in_milliseconds() -> None:
 
 @pytest.mark.parametrize("ttl", [0.2, 0, -1, True])
 def test_an_idle_ttl_that_is_not_whole_positive_seconds_is_refused(ttl: Any) -> None:
-    with pytest.raises(DeclarationError, match="idle_ttl_seconds"):
+    with pytest.raises(FlezhaError) as caught:
         flezha.tasklet(Upcase, name="ttl", idle_ttl_seconds=ttl)
+    assert (caught.value.code, caught.value.details["setting"]) == (
+        "topology.invalid_setting",
+        "idle_ttl_seconds",
+    )

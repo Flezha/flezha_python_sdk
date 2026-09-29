@@ -66,11 +66,14 @@ def main() -> None:
 
     try:
         runner.run()
-    except flezha.DeclarationError as refusal:
-        # A refused declaration names itself: the verdict's own names ride the
-        # exception as data, and the drill reads them off this process's output.
+    except flezha.FlezhaError as refusal:
+        if not refusal.code.startswith("topology."):
+            raise
+        # A refused declaration names itself: its codes ride the error as
+        # data, and the drill reads them off this process's output.
         print(
-            f"[python_runner] declaration refused: {', '.join(refusal.refusals)}\n{refusal}",
+            f"[python_runner] declaration refused: "
+            f"{', '.join(conformance.codes_of(refusal))}\n{refusal}",
             file=sys.stderr,
             flush=True,
         )

@@ -16,7 +16,7 @@ import pytest
 import app
 import contract
 import flezha
-from conftest import declare, echo
+from conftest import codes, declare, echo
 from flezha import graph
 from flezha.builder import Link
 
@@ -389,6 +389,6 @@ def test_a_static_key_set_fed_by_key_by_is_refused_by_the_core() -> None:
         c.input("in").key_by(str).into(statics).sink()
 
     assert _modes(static_keyed) == {"statics": "static"}
-    with pytest.raises(flezha.DeclarationError) as caught:
+    with pytest.raises(flezha.FlezhaError) as caught:
         declare(static_keyed)
-    assert caught.value.refusals == ["KeyByOnUnkeyableTarget"]
+    assert codes(caught.value) == ["topology.key_by_on_unkeyable_target"]

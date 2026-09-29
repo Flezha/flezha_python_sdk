@@ -117,7 +117,7 @@ def test_a_failure_inside_complete_abandons_rather_than_retiring_the_cell(
             dispatch_now(work_activation(6, "x"), core, deps_for(demo, core))
     finally:
         core.free()
-    assert "unknown activation token 6" in caplog.text
+    assert "(runtime.unknown_activation_token)" in caplog.text
     assert "abandoning activation 6 failed" in caplog.text
 
 
@@ -405,7 +405,8 @@ def test_a_timer_call_inside_a_compensate_hook_is_refused(fake_core: FakeCore) -
     }
     result = answered(activation, deps)
     assert result["outcome"] == "failed"
-    assert "TimersUnavailable: arms_on_undo" in result["error"]
+    assert result["error"].startswith("FlezhaError: ")
+    assert result["error"].endswith("(runtime.timers_unavailable)")
 
 
 def test_an_unbounded_tasklet_still_registers_its_timer(fake_core: FakeCore) -> None:
@@ -782,10 +783,9 @@ def test_a_spawn_returns_before_the_controller_answers_and_its_refusal_stays_in_
     into the tasklet: the handle is pending until the answer arrives, and a
     read is what raises it."""
     fake_core.spawn_answer_after_s = 0.5
-    fake_core.spawn_answer = {
-        "error": "refused",
-        "message": "the controller refused the spawn: quota_exceeded",
-    }
+    fake_core.spawn_answer = flezha.FlezhaError(
+        "quota.exceeded", {"kind": "max_operators", "current": 3, "limit": 3}
+    )
     seen: dict[str, Any] = {}
 
     @flezha.tasklet(name="spawner")
@@ -797,7 +797,7 @@ def test_a_spawn_returns_before_the_controller_answers_and_its_refusal_stays_in_
             seen["pending"] = handle.try_result()
             try:
                 handle.wait()
-            except flezha.SpawnRefusedError as refusal:
+            except flezha.FlezhaError as refusal:
                 seen["refusal"] = refusal
             ctx.emit(value)
 
@@ -806,7 +806,10 @@ def test_a_spawn_returns_before_the_controller_answers_and_its_refusal_stays_in_
     ]
     assert seen["returned_after_s"] < fake_core.spawn_answer_after_s / 5
     assert seen["pending"] is None
-    assert "quota_exceeded" in str(seen["refusal"])
+    assert (seen["refusal"].code, seen["refusal"].details["kind"]) == (
+        "quota.exceeded",
+        "max_operators",
+    )
     assert (effect["verdict"], effect["outputs"][0]["payload"]) == ("ok", b"p")
 
 
@@ -863,21 +866,21 @@ def test_a_spawn_payload_is_what_a_text_or_json_entry_reads(fake_core: FakeCore)
 
 
 @pytest.mark.parametrize(
-    ("reason", "kind"),
+    ("code", "details"),
     [
-        ("already_running", flezha.SpawnAlreadyRunningError),
-        ("factory_unknown", flezha.SpawnFactoryUnknownError),
-        ("factory_not_bounded", flezha.SpawnFactoryNotBoundedError),
-        ("refused", flezha.SpawnRefusedError),
-        ("timeout", flezha.SpawnTimeoutError),
-        ("unavailable", flezha.SpawnUnavailableError),
+        ("operator.already_running", {"operator": "w1"}),
+        ("operator.factory_unknown", {"namespace": "default", "factory": "worker"}),
+        ("operator.factory_not_bounded", {"namespace": "default", "factory": "worker"}),
+        ("authz.no_role_binding", {}),
+        ("spawn.timeout", {"seconds": 30}),
+        ("spawn.unavailable", {}),
     ],
 )
-def test_each_failure_a_read_meets_is_its_own_spawn_error(
-    fake_core: FakeCore, reason: str, kind: type[flezha.SpawnError]
+def test_each_failure_a_read_meets_is_the_one_error_with_its_code(
+    fake_core: FakeCore, code: str, details: dict[str, Any]
 ) -> None:
-    fake_core.spawn_answer = {"error": reason, "message": f"the spawn failed: {reason}"}
-    raised: list[flezha.SpawnError] = []
+    fake_core.spawn_answer = flezha.FlezhaError(code, details)
+    raised: list[flezha.FlezhaError] = []
 
     @flezha.tasklet(name="spawner")
     class Spawner:
@@ -885,16 +888,14 @@ def test_each_failure_a_read_meets_is_its_own_spawn_error(
             handle = ctx.spawn_bounded("worker", value, id="w1", if_running="error")
             try:
                 handle.wait()
-            except flezha.SpawnError as error:
+            except flezha.FlezhaError as error:
                 raised.append(error)
 
     (effect,) = answered(work_activation(92, "p", factory="solo"), solo_deps(Spawner, fake_core))[
         "effects"
     ]
     (error,) = raised
-    assert type(error) is kind
-    assert isinstance(error, flezha.FlezhaError)
-    assert (error.reason, error.id, str(error)) == (reason, "w1", f"the spawn failed: {reason}")
+    assert (error.code, error.details) == (code, details)
     assert fake_core.spawns[0]["if_running"] == "error"
     assert effect["verdict"] == "ok"
 

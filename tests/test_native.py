@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from flezha import native
-from flezha.errors import CoreError, FlezhaError, ForkError, SchemaMismatchError
+from flezha.errors import FlezhaError
 
 ffi = native.load_extension()
 
@@ -75,30 +75,32 @@ def test_every_export_names_a_c_abi_entry_point() -> None:
 def test_a_schema_mismatch_refuses_before_connecting() -> None:
     with pytest.raises(ffi.SchemaMismatch) as caught:
         ffi.Core(native.ACTIVATION_SCHEMA_VERSION + 1)
-    message = str(caught.value)
-    assert str(native.ACTIVATION_SCHEMA_VERSION) in message
-    assert str(native.ACTIVATION_SCHEMA_VERSION + 1) in message
+    error = FlezhaError.from_document(str(caught.value))
+    assert (error.code, error.details) == (
+        "runtime.schema_mismatch",
+        {"shim": native.ACTIVATION_SCHEMA_VERSION + 1, "core": native.ACTIVATION_SCHEMA_VERSION},
+    )
 
 
 def test_a_schema_mismatch_reaches_the_package_as_its_own_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(native, "ACTIVATION_SCHEMA_VERSION", ffi.schema_version() + 1)
-    with pytest.raises(SchemaMismatchError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         native.Core.create()
-    assert isinstance(caught.value, CoreError)
-    assert str(ffi.schema_version()) in str(caught.value)
+    assert (caught.value.code, caught.value.class_) == ("runtime.schema_mismatch", "invalid")
+    assert caught.value.details["core"] == ffi.schema_version()
 
 
 def test_a_context_is_created_used_and_freed_through_the_object() -> None:
     core = native.Core.create()
     try:
         assert core.last_error() is None
-        with pytest.raises(CoreError) as caught:
+        with pytest.raises(FlezhaError) as caught:
             core.declare_class(b'{"factory_id":"x"}')
-        # The engine's own detail survives the translation into this SDK's root.
-        assert "sdk_lang" in str(caught.value)
-        assert isinstance(caught.value, FlezhaError)
+        # The engine's own detail survives the translation into the one error.
+        assert caught.value.code == "topology.declaration_unreadable"
+        assert "sdk_lang" in caught.value.details["reason"]
         assert caught.value.__cause__ is not None
         assert core.last_error() is not None
     finally:
@@ -147,8 +149,9 @@ def test_a_freed_context_refuses_rather_than_dereferencing() -> None:
     core = native.Core.create()
     core.free()
     core.free()
-    with pytest.raises(CoreError):
+    with pytest.raises(FlezhaError) as caught:
         core.declare_class(b"{}")
+    assert caught.value.code == "internal.uncatalogued"
 
 
 def test_the_fork_guard_names_the_rule() -> None:
@@ -156,12 +159,15 @@ def test_the_fork_guard_names_the_rule() -> None:
     core = native.Core.create()
     try:
         core._owner_pid = os.getpid() + 1
-        with pytest.raises(ForkError) as caught:
+        with pytest.raises(FlezhaError) as caught:
             core.poll(0)
-        assert "fork(2)" in str(caught.value)
+        assert (caught.value.code, caught.value.details) == (
+            "runtime.forked_process",
+            {"owner": os.getpid() + 1, "pid": os.getpid()},
+        )
         # A second entry point, to prove the guard is generated rather than
         # written at one call site.
-        with pytest.raises(ForkError):
+        with pytest.raises(FlezhaError, match="runtime.forked_process"):
             core.shutdown()
         core._owner_pid = os.getpid()
     finally:
@@ -171,7 +177,7 @@ def test_the_fork_guard_names_the_rule() -> None:
 def test_a_context_free_call_is_guarded_too() -> None:
     core = native.Core.create()
     core._owner_pid = os.getpid() + 1
-    with pytest.raises(ForkError):
+    with pytest.raises(FlezhaError, match="runtime.forked_process"):
         core.free()
     core._owner_pid = os.getpid()
     core.free()
@@ -214,7 +220,7 @@ def test_a_spawn_with_no_control_plane_answers_unavailable_until_its_invocation_
     answers the same, and a read after it raises released."""
     import flezha
 
-    reads: list[tuple[str, str, str]] = []
+    reads: list[tuple[str, str]] = []
     unread: list[flezha.SpawnHandle] = []
 
     @flezha.tasklet(name="spawner")
@@ -224,8 +230,8 @@ def test_a_spawn_with_no_control_plane_answers_unavailable_until_its_invocation_
             for read in (handle.try_result, handle.wait):
                 try:
                     read()
-                except flezha.SpawnUnavailableError as error:
-                    reads.append((error.reason, error.id, str(error)))
+                except flezha.FlezhaError as error:
+                    reads.append((error.code, error.class_))
             unread.append(ctx.spawn_bounded("worker", value))
 
     @flezha.unbounded_operator("spawn_without_control_plane")
@@ -235,9 +241,10 @@ def test_a_spawn_with_no_control_plane_answers_unavailable_until_its_invocation_
     with flezha.LocalOperator.start(operator) as run:
         run.feed("in", "p")
         run.run_until_idle(10_000)
-        with pytest.raises(CoreError, match="released"):
+        with pytest.raises(FlezhaError) as released:
             unread[0].wait()
-    assert reads == [("unavailable", "w1", reads[0][2])] * 2
+    assert released.value.code == "runtime.spawn_handle_released"
+    assert reads == [("spawn.unavailable", "unavailable")] * 2
 
 
 def test_the_clock_needs_no_context() -> None:

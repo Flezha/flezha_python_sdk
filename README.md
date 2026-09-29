@@ -44,6 +44,10 @@ flezha.create_runner("default").register_factory(echo_operator).run()
   declared with no decoder hands over the binary instead.
 - **Never `pickle`.** Durable state is MessagePack from author-declared
   dataclasses, Pydantic models or attrs classes.
+- **One error type.** Anything Flezha refuses raises `flezha.FlezhaError`: a
+  program branches on its `code` (such as `topology.duplicate_factory_id` or
+  `operator.already_running`) or `class_`, and reads its `message`, `details`
+  and `hint`.
 
 Full documentation:
 [`docs/sdk/python_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/python_sdk.md).

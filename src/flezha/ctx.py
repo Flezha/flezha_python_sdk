@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 from . import codec as _codec
 from .builder import DROPPED, ChannelSpec, ClassSpec, ConsumerEdge, TaskNode, apply_transforms
-from .errors import EmitError, NonRetryableError, SpawnError
+from .errors import FlezhaError, NonRetryableError
 from .identity import cell_identity, stable_id
 
 if TYPE_CHECKING:
@@ -77,10 +77,12 @@ class SpawnHandle:
     made it.
 
     ``wait()`` blocks for the answer; ``try_result()`` never waits and answers
-    ``None`` while it is pending. Either raises a :class:`~flezha.errors.SpawnError`
-    subclass when the spawn reached no instance. A resolved handle answers every
-    read the same until the invocation ends, which releases it: a later read
-    raises :class:`~flezha.errors.CoreError`, and a failure no read collected is
+    ``None`` while it is pending. Either raises :class:`~flezha.errors.FlezhaError`
+    when the spawn reached no instance, its ``code`` the controller's (such as
+    ``operator.already_running``) or the core's (``spawn.timeout``,
+    ``spawn.unavailable``). A resolved handle answers every read the same until
+    the invocation ends, which releases it: a later read raises
+    ``runtime.spawn_handle_released``, and a failure no read collected is
     logged once by the core. In an ``async def`` handler, ``await handle`` waits
     on the event loop's default executor, so the loop keeps serving.
     """
@@ -109,8 +111,6 @@ class SpawnHandle:
         if answer is None:
             return None
         fields = json.loads(answer)
-        if "error" in fields:
-            raise SpawnError.of(fields)
         return SpawnResult(fields["id"], fields["outcome"])
 
 
@@ -215,10 +215,7 @@ class Ctx(Generic[S, O_contra]):
         """Record one declared change: journaled, then folded into the state."""
         task = self._node.task
         if task.apply_change is None:
-            raise EmitError(
-                f"{self._node.name}: recorded a change but declares no apply_change; a change "
-                f"that cannot be folded cannot rebuild the state it describes"
-            )
+            raise FlezhaError("runtime.change_without_apply_change", {"tasklet": self._node.name})
         self.changes.append(task.encode_change(change))
         # Fold it live through the same path the restore fold uses, so the live
         # path and the replay path cannot drift.
@@ -238,11 +235,12 @@ class Ctx(Generic[S, O_contra]):
         """
         targets = [c for c in self._outgoing if c.name == channel] if channel else self._outgoing
         if not targets:
-            raise EmitError(
-                f"{self._node.name}: emits on channel `{channel}`, which it does not produce on"
+            raise (
+                FlezhaError(
+                    "runtime.channel_not_produced", {"tasklet": self._node.name, "channel": channel}
+                )
                 if channel
-                else f"{self._node.name}: emits but declares no output channel; wire its edge "
-                f"with into(...) or sink(...)"
+                else FlezhaError("runtime.no_output_channel", {"tasklet": self._node.name})
             )
         for target in targets:
             self._release(target, value, key, metadata)
@@ -252,7 +250,7 @@ class Ctx(Generic[S, O_contra]):
 
         Anchored on ``now`` and never on an ambient read: that is what makes a
         replayed invocation register the timestamp the live one did. Inside a
-        ``compensate`` hook each timer call raises naming ``TimersUnavailable``.
+        ``compensate`` hook each timer call raises ``runtime.timers_unavailable``.
         """
         at = self._now + int(milliseconds)
         self._timer({"kind": "processing_time", "scheduled_at": at, "register": True})
@@ -285,7 +283,9 @@ class Ctx(Generic[S, O_contra]):
         A stream never completes: an unbounded tasklet calling this fails its
         input, without a retry, with an error naming ``CompleteOutsideBounded``.
         """
-        self.completion = b"" if result is None else _codec.plain_payload(result, self._node.name)
+        self.completion = (
+            b"" if result is None else _codec.plain_payload(result, f"tasklet '{self._node.name}'")
+        )
 
     def spawn_bounded(
         self,
@@ -310,8 +310,8 @@ class Ctx(Generic[S, O_contra]):
         an empty id. A caller who needs at most one instance, or the id on
         replay, passes its own ``id``. With one, ``if_running`` decides what a
         running instance under it gets: ``"deliver"`` (the default) feeds it
-        ``payload``, ``"error"`` resolves the handle to
-        :class:`~flezha.errors.SpawnAlreadyRunningError`.
+        ``payload``, ``"error"`` resolves the handle to a
+        :class:`~flezha.errors.FlezhaError` coded ``operator.already_running``.
 
         Never waits and never raises a controller refusal: every answer comes
         through the handle. A replayed invocation sends nothing and resolves to
@@ -329,7 +329,7 @@ class Ctx(Generic[S, O_contra]):
                 self._token,
                 factory_id,
                 id or "",
-                _codec.plain_payload(payload, self._node.name),
+                _codec.plain_payload(payload, f"tasklet '{self._node.name}'"),
                 if_running or "",
                 self.replay,
                 self._offset,
@@ -377,10 +377,7 @@ class Ctx(Generic[S, O_contra]):
     def _timer(self, operation: dict[str, Any]) -> None:
         # A rollback is no place to arm a deadline.
         if self._compensating:
-            raise EmitError(
-                f"TimersUnavailable: {self._node.name}: timers are not available inside "
-                f"compensate; only a tasklet's run / on_timer may register or cancel them"
-            )
+            raise FlezhaError("runtime.timers_unavailable")
         self.timers.append(operation)
 
     def _release(
@@ -467,10 +464,7 @@ class Ctx(Generic[S, O_contra]):
         """
         resolved = key if key is not None else self.cell_key
         if channel.keyed and resolved is None:
-            raise EmitError(
-                f"{self._node.name}: emits on keyed channel `{channel.name}` with no key, and "
-                f"has no cell key of its own to fall back on; pass `key=` on the emit"
-            )
+            raise FlezhaError("runtime.key_required_on_keyed_channel", {"channel": channel.name})
         resolved = None if resolved is None else str(resolved)
         # `sink` sets the encoder with the sink, so a plugin channel has one.
         assert channel.sink_encode is not None
@@ -512,10 +506,6 @@ class Ctx(Generic[S, O_contra]):
         out: list[tuple[str, str]] = []
         for key, value in pairs:
             if str(key).startswith(RESERVED_PREFIX):
-                raise EmitError(
-                    f"{self._node.name}: metadata key `{key}` is inside the reserved "
-                    f"`{RESERVED_PREFIX}` namespace, which the runtime stamps itself (cell "
-                    f"identity, sequence, key and offset); choose a key outside it"
-                )
+                raise FlezhaError("runtime.reserved_metadata_key", {"key": str(key)})
             out.append((str(key), str(value)))
         return out

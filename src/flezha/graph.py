@@ -3,7 +3,7 @@
 Every rule a declared topology can be refused under is one function in
 ``flz_core::host::register::check``, and :func:`validate` is the call that
 submits to it: this SDK records what the author declared, hands it over, and
-renders the answer as its own exception. Nothing here restates a rule the core
+raises the answer as :class:`~flezha.errors.FlezhaError`. Nothing here restates a rule the core
 holds — a refusal added there reaches Python with no edit to this file.
 
 What a type checker *can* see — a wrong value type on a wired edge — is caught
@@ -18,7 +18,6 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from .builder import ChannelSpec, ClassSpec, TaskNode
-from .errors import CoreError, DeclarationError
 from .version import __version__
 
 if TYPE_CHECKING:
@@ -50,15 +49,13 @@ def declare(spec: ClassSpec, core: Core, registry: Registry) -> None:
 def validate(spec: ClassSpec, core: Core) -> dict[str, Any]:
     """Submit the record and answer what the core derived from it.
 
-    On a refusal this raises the verdict — every name the core returned, in one
-    :class:`~flezha.errors.DeclarationError`. On success the derived channel
-    names are written back, so the name this host addresses a channel by is the
-    one the core registered.
+    On a refusal this raises the core's :class:`~flezha.errors.FlezhaError`:
+    its code is the first issue's, and ``details["issues"]`` lists every issue
+    as ``{code, message, details}``. On success the derived channel names are
+    written back, so the name this host addresses a channel by is the one the
+    core registered.
     """
-    try:
-        answer = core.check_class(json.dumps(to_host_class_decl(spec)).encode())
-    except CoreError as refusal:
-        raise _refusal_of(spec, refusal) from refusal
+    answer = core.check_class(json.dumps(to_host_class_decl(spec)).encode())
     derived: dict[str, Any] = json.loads(answer)
     for channel in derived["channels"]:
         declared = spec.channels[channel["index"]]
@@ -68,18 +65,6 @@ def validate(spec: ClassSpec, core: Core) -> dict[str, Any]:
         # closures that chain declared.
         declared.consumers = [declared.chain_edges[edge["chain"]] for edge in channel["consumers"]]
     return derived
-
-
-def _refusal_of(spec: ClassSpec, refusal: CoreError) -> DeclarationError:
-    """The core's verdict as this SDK's own exception.
-
-    The names are read off the verdict the core answered with — data, not the
-    rendered prose — and kept apart on ``refusals``.
-    """
-    issues = json.loads(refusal.verdict)["issues"] if refusal.verdict else []
-    return DeclarationError(
-        spec.factory_id, None, str(refusal), [issue["name"] for issue in issues]
-    )
 
 
 # ---------------------------------------------------------------------------

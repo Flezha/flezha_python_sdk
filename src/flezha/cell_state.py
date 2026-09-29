@@ -81,12 +81,9 @@ def state(cls: type[T]) -> type[T]:
 
     def __setattr__(self: Any, name: str, value: Any) -> None:
         if getattr(self, "__flz_sealed__", False) and not _mutation_permitted():
-            raise FlezhaError(
-                f"{cls.__name__}.{name} was assigned directly. Declared state is rebuilt from "
-                f"its change log, so an assignment outside that log is live in this process and "
-                f"gone after a restart. Express it as a change: `ctx.change(...)`, folded by the "
-                f"tasklet's apply_change."
-            )
+            # Declared state is rebuilt from its change log, so an assignment
+            # outside that log would be gone after a restart.
+            raise FlezhaError("runtime.state_mutated", {"tasklet": cls.__name__, "path": name})
         original_setattr(self, name, value)
 
     cls.__init__ = __init__  # type: ignore[method-assign]
@@ -121,9 +118,13 @@ def decode_body(
         )
         if migration is None:
             raise FlezhaError(
-                f"{tasklet} was handed a {which} record written at schema version "
-                f"{from_version} and declares no migrate_{which}; declare one, or raise "
-                f"min_readable_schema_version so the record is refused rather than misread"
+                "runtime.hook_missing",
+                {
+                    "tasklet": tasklet,
+                    "action": f"was handed a {which} record written at schema version "
+                    f"{from_version}",
+                    "hook": f"migrate_{which}",
+                },
             )
         return migration(from_version, payload)
 
@@ -152,10 +153,7 @@ def fold_restore(
 
     for body in payload.get("changes") or ():
         if definition.apply_change is None:
-            raise FlezhaError(
-                f"{tasklet} was handed a change log but declares no apply_change; a "
-                f"tasklet that records no changes should have no durable records to fold"
-            )
+            raise FlezhaError("runtime.change_without_apply_change", {"tasklet": tasklet})
         with runtime_mutation():
             definition.apply_change(state_value, decode_body(definition, "change", body, tasklet))
     return state_value

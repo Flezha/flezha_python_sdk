@@ -21,7 +21,7 @@ from collections.abc import Callable, Iterable
 import pytest
 
 import app
-from flezha import CoreError, LocalOperator, Operator, SinkOutput
+from flezha import FlezhaError, LocalOperator, Operator, SinkOutput
 
 fixtures = app.module("fixtures")
 fixtures_state = app.module("fixtures_state")
@@ -179,8 +179,8 @@ def test_a_controller_capability_is_refused_by_name_not_approximated() -> None:
     # The line `sdk-local-mode` draws: the ten the controller owns stay refused.
     # `tier_store` is effectively-once, which needs a durable store to release
     # from, so a local run says so instead of running the graph.
-    with pytest.raises(CoreError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         LocalOperator.start(fixtures_state.tier_store_operator)
 
-    message = str(caught.value)
-    assert "effectively_once" in message and "requires a controller" in message, message
+    assert caught.value.code == "runtime.local_needs_controller"
+    assert caught.value.details["capability"] == "effectively_once", caught.value.details

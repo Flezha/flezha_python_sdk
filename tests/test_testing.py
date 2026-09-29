@@ -11,6 +11,8 @@ import pytest
 import flezha
 from conftest import Bumped, Counter, compensating, count_up, echo
 from flezha.builder import apply_transforms
+from flezha.cell_state import fold_restore
+from flezha.identity import cell_identity
 from flezha.testing import ReplayMismatch, TaskletTestHarness, replay_equals
 
 
@@ -206,12 +208,67 @@ def test_the_context_clock_and_identity_are_stable_within_an_invocation() -> Non
     assert replayed == ids_backup
 
 
+@flezha.tasklet(name="misuses")
+class Misuses:
+    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
+        if value == "channel":
+            ctx.emit(value, channel="elsewhere")
+        elif value == "metadata":
+            ctx.emit(value, metadata={"flz.cell": "forged"})
+        else:
+            ctx.change({"n": 1})
+
+
+@pytest.mark.parametrize(
+    ("misuse", "code", "details"),
+    [
+        ("channel", "runtime.channel_not_produced", {"tasklet": "misuses", "channel": "elsewhere"}),
+        ("metadata", "runtime.reserved_metadata_key", {"key": "flz.cell"}),
+        ("change", "runtime.change_without_apply_change", {"tasklet": "misuses"}),
+    ],
+)
+def test_a_runtime_misuse_raises_the_one_error_with_its_code(
+    misuse: str, code: str, details: dict[str, str]
+) -> None:
+    with pytest.raises(flezha.FlezhaError) as caught:
+        TaskletTestHarness(Misuses).feed(misuse)
+    assert (caught.value.code, caught.value.details) == (code, details)
+
+
+def test_an_identity_part_over_its_length_is_refused_naming_it() -> None:
+    with pytest.raises(flezha.FlezhaError) as caught:
+        cell_identity("op", "t" * 256, None)
+    assert (caught.value.code, caught.value.details["part"], caught.value.details["limit"]) == (
+        "runtime.identity_too_long",
+        "tasklet name",
+        255,
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload", "code"),
+    [
+        ({"changes": [{"bytes": b""}]}, "runtime.change_without_apply_change"),
+        ({"snapshot": {"from_version": 1, "bytes": b""}}, "runtime.hook_missing"),
+    ],
+)
+def test_a_restore_the_tasklet_cannot_fold_names_the_hook(
+    payload: dict[str, Any], code: str
+) -> None:
+    with pytest.raises(flezha.FlezhaError) as caught:
+        fold_restore(echo, payload, None, "echo")
+    assert caught.value.code == code
+
+
 def test_a_missing_hook_is_refused_by_name() -> None:
     harness: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
-    with pytest.raises(flezha.FlezhaError, match="on_timer"):
-        harness.fire_timer("processing_time", 1)
-    with pytest.raises(flezha.FlezhaError, match="compensate"):
-        harness.compensate([])
+    for fire, code in (
+        (lambda: harness.fire_timer("processing_time", 1), "runtime.timer_without_on_timer"),
+        (lambda: harness.compensate([]), "runtime.hook_missing"),
+    ):
+        with pytest.raises(flezha.FlezhaError) as caught:
+            fire()
+        assert caught.value.code == code
 
 
 def test_the_harness_reports_a_string_and_a_dict_exactly_as_emitted() -> None:
@@ -283,5 +340,5 @@ def test_the_harness_answers_a_spawn_already_resolved() -> None:
     )
     assert again == [named, replayed_named]
     # As live: a handle is read inside the invocation that made it.
-    with pytest.raises(flezha.CoreError, match="released"):
+    with pytest.raises(flezha.FlezhaError, match="runtime.spawn_handle_released"):
         unread[0].wait()

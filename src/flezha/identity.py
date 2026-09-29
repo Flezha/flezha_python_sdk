@@ -36,10 +36,15 @@ def cell_identity(instance_id: str, tasklet_name: str, cell_key: str | None) -> 
     instance = instance_id.encode()
     tasklet = tasklet_name.encode()
     key = (cell_key or "").encode()
-    if len(instance) > 255 or len(tasklet) > 255:
-        raise FlezhaError("operator class / tasklet id must be at most 255 bytes")
-    if len(key) > 0xFFFF:
-        raise FlezhaError("cell key must be at most 65535 bytes")
+    for part, value, limit in (
+        ("operator id", instance_id, 255),
+        ("tasklet name", tasklet_name, 255),
+        ("cell key", cell_key or "", 0xFFFF),
+    ):
+        if len(value.encode()) > limit:
+            raise FlezhaError(
+                "runtime.identity_too_long", {"part": part, "value": value, "limit": limit}
+            )
     return (
         struct.pack("B", len(instance))
         + instance

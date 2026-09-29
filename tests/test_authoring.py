@@ -21,10 +21,10 @@ import pytest
 import app
 import contract
 import flezha
-from conftest import Bumped, Counter, count_up, declare, demo, echo
+from conftest import Bumped, Counter, codes, count_up, declare, demo, echo
 from flezha import codec, graph
 from flezha.builder import apply_transforms
-from flezha.errors import DeclarationError, EmitError, UnrepresentableValueError
+from flezha.errors import FlezhaError
 from flezha.testing import TaskletTestHarness
 
 if TYPE_CHECKING:
@@ -124,13 +124,14 @@ def test_two_unnamed_mentions_of_one_tasklet_are_one_node() -> None:
 
 
 def test_an_unannotated_parameter_is_refused_naming_it() -> None:
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
 
         @flezha.tasklet(name="handle")
         class Handle:
             def run(self, order, ctx: flezha.Ctx[None, Any]) -> None:
                 ctx.emit(order)
 
+    assert caught.value.code == "topology.invalid_tasklet"
     assert "order" in str(caught.value)
     assert "annotation" in str(caught.value)
 
@@ -152,12 +153,12 @@ def test_a_node_identity_collision_is_refused() -> None:
         entry.into(First).sink()
         entry.into(Second).sink()
 
-    with pytest.raises(DeclarationError, match="node identity") as caught:
+    with pytest.raises(FlezhaError) as caught:
         declare(collision)
-    # The one refusal this builder raises under a core name reads the way the core's do.
-    assert caught.value.refusals == ["NodeIdentityCollision"]
-    assert str(caught.value).startswith(
-        "collision: shared: topology rejected [NodeIdentityCollision]:\n  - two different"
+    # The one refusal this builder raises under a core code.
+    assert (caught.value.code, caught.value.details) == (
+        "topology.node_identity_collision",
+        {"name": "shared"},
     )
 
 
@@ -195,13 +196,10 @@ def test_a_refusal_reaches_the_author_under_the_cores_own_names() -> None:
         edge.into(echo)
         edge.map(lambda value: f"{value}!").into(echo)
 
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         declare(already_wired)
-    assert caught.value.refusals == ["EdgeAlreadyWired"]
-    assert str(caught.value).startswith(
-        "edge_already_wired: topology rejected [EdgeAlreadyWired]:\n  - "
-    )
-    assert "already feeds tasklet `echo`" in str(caught.value)
+    assert codes(caught.value) == ["topology.edge_already_wired"]
+    assert caught.value.details["tasklet"] == "echo"
 
 
 # The record carries ``change_is_nochange`` per tasklet: a handler that folds
@@ -236,11 +234,12 @@ def test_apply_change_without_state_is_refused_naming_where_state_is_declared() 
         def apply_change(self, state: dict[str, int], change: dict[str, int]) -> None:
             return None
 
-    with pytest.raises(DeclarationError, match="no state to fold into") as caught:
+    with pytest.raises(FlezhaError) as caught:
         flezha.tasklet(Folding, name="folding")
-    assert "`init_state`" in str(caught.value)
-    assert "`state=`" in str(caught.value)
-    assert "Ctx[State, Output]" in str(caught.value)
+    assert (caught.value.code, caught.value.details) == (
+        "topology.change_without_state",
+        {"tasklet": "folding"},
+    )
 
 
 def test_an_unrepresentable_state_field_is_refused_naming_it() -> None:
@@ -256,8 +255,10 @@ def test_an_unrepresentable_state_field_is_refused_naming_it() -> None:
         def init_state(self, key: str | None) -> WithSocket:
             return WithSocket()
 
-    with pytest.raises(UnrepresentableValueError, match="conn"):
+    with pytest.raises(FlezhaError) as caught:
         flezha.tasklet(Holder, name="holder")
+    assert caught.value.code == "topology.state_unrepresentable"
+    assert caught.value.details["path"] == "holder.state.conn"
 
 
 def test_a_bounded_that_declares_no_tasklet_is_refused() -> None:
@@ -265,8 +266,9 @@ def test_a_bounded_that_declares_no_tasklet_is_refused() -> None:
     def empty(c: flezha.Channels) -> None:
         return None
 
-    with pytest.raises(DeclarationError, match="at least one tasklet"):
+    with pytest.raises(FlezhaError) as caught:
         declare(empty)
+    assert "topology.no_tasklets" in codes(caught.value)
 
 
 def test_a_valid_graph_passes() -> None:
@@ -354,8 +356,10 @@ def test_a_channel_named_twice_is_refused_naming_both() -> None:
     def named_twice(c: flezha.Channels) -> None:
         c.input("in").into(echo).named("a").sink("b")
 
-    with pytest.raises(DeclarationError, match="ChannelNamedTwice"):
+    with pytest.raises(FlezhaError) as caught:
         declare(named_twice)
+    assert codes(caught.value) == ["topology.channel_named_twice"]
+    assert (caught.value.details["named"], caught.value.details["sink"]) == ("a", "b")
 
 
 def test_a_channel_option_with_nothing_wired_after_it_still_reaches_the_channel() -> None:
@@ -368,8 +372,9 @@ def test_a_channel_option_with_nothing_wired_after_it_still_reaches_the_channel(
         c.input("in").into(echo).keyed()
 
     assert [row[0] for row in _derived(renamed)] == ["in", "renamed"]
-    with pytest.raises(DeclarationError, match="KeyedChannelWithoutPluginWire"):
+    with pytest.raises(FlezhaError) as caught:
         declare(keyed)
+    assert codes(caught.value) == ["topology.keyed_channel_without_plugin_wire"]
 
 
 def test_two_channels_naming_one_sink_is_refused() -> None:
@@ -377,8 +382,9 @@ def test_two_channels_naming_one_sink_is_refused() -> None:
     def one_sink(c: flezha.Channels) -> None:
         c.input("in").into(echo).sink("shared").into(count_up).sink("shared")
 
-    with pytest.raises(DeclarationError, match="DuplicateSinkName"):
+    with pytest.raises(FlezhaError) as caught:
         declare(one_sink)
+    assert codes(caught.value) == ["topology.duplicate_sink_name"]
 
 
 def test_keyed_reaches_the_channel_of_an_edge_that_also_declares_a_sink() -> None:
@@ -427,9 +433,9 @@ def test_a_bare_re_declared_edge_is_a_no_op_not_a_second_edge() -> None:
 @pytest.mark.parametrize(
     ("write", "refusal"),
     [
-        (lambda c: c.effectively_once(), "EffectivelyOnceOnBounded"),
-        (lambda c: c.checkpoint_every(500), "CheckpointOnBounded"),
-        (lambda c: c.correction_window(60_000), "CorrectionWindowOnBounded"),
+        (lambda c: c.effectively_once(), "topology.effectively_once_on_bounded"),
+        (lambda c: c.checkpoint_every(500), "topology.checkpoint_on_bounded"),
+        (lambda c: c.correction_window(60_000), "topology.correction_window_on_bounded"),
     ],
 )
 def test_a_stream_setting_on_a_bounded_is_refused_by_name(
@@ -440,9 +446,9 @@ def test_a_stream_setting_on_a_bounded_is_refused_by_name(
         write(c)
         c.input("in").into(echo)
 
-    with pytest.raises(DeclarationError) as refused:
+    with pytest.raises(FlezhaError) as refused:
         declare(bounded)
-    assert refused.value.refusals == [refusal]
+    assert codes(refused.value) == [refusal]
 
 
 def test_sync_durability_on_a_stream_is_refused_by_name() -> None:
@@ -450,9 +456,9 @@ def test_sync_durability_on_a_stream_is_refused_by_name() -> None:
     def stream(c: flezha.Channels) -> None:
         c.input("in").into(echo).sink("out")
 
-    with pytest.raises(DeclarationError) as refused:
+    with pytest.raises(FlezhaError) as refused:
         declare(stream)
-    assert refused.value.refusals == ["SyncDurabilityOnUnbounded"]
+    assert codes(refused.value) == ["topology.sync_durability_on_unbounded"]
 
 
 @pytest.mark.parametrize(
@@ -479,8 +485,9 @@ def test_sleeping_without_persistence_is_refused_by_name(decorator: Callable[...
     def operator(c: flezha.Channels) -> None:
         c.input("in").into(echo)
 
-    with pytest.raises(DeclarationError, match="SleepWithoutPersistence"):
+    with pytest.raises(FlezhaError) as caught:
         declare(operator)
+    assert codes(caught.value) == ["topology.sleep_without_persistence"]
 
 
 @pytest.mark.parametrize(
@@ -490,8 +497,12 @@ def test_a_mode_outside_its_declared_values_is_refused_at_decoration(
     keyword: str, value: str
 ) -> None:
     written: dict[str, Any] = {keyword: value}
-    with pytest.raises(DeclarationError, match=f"`{keyword}='{value}'`"):
+    with pytest.raises(FlezhaError) as caught:
         flezha.bounded_operator(id="w", **written)
+    assert (caught.value.code, caught.value.details) == (
+        "topology.invalid_mode",
+        {"factory_id": "w", "knob": keyword, "value": value},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -515,7 +526,7 @@ def test_two_sources_merge_into_one_node_each_edge_under_its_own_mapping() -> No
         assert edge.key_by is not None and edge.key_by(value) == "AAPL"
 
 
-def _merge_refusal(sources: int) -> DeclarationError:
+def _merge_refusal(sources: int) -> FlezhaError:
     """The verdict on a merge naming one entry edge ``sources`` times."""
 
     @flezha.unbounded_operator("merge_refused")
@@ -525,19 +536,21 @@ def _merge_refusal(sources: int) -> DeclarationError:
             merge.from_(entry, fixtures.tagged("in"))
         merge.into(echo)
 
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         declare(refused)
     return caught.value
 
 
 def test_a_merge_of_one_source_is_refused_by_the_reference_name() -> None:
-    assert _merge_refusal(1).refusals == ["MergeTooFewSources"]
+    assert codes(_merge_refusal(1)) == ["topology.merge_too_few_sources"]
 
 
 def test_a_merge_naming_one_source_twice_is_refused_naming_the_channel() -> None:
     refusal = _merge_refusal(2)
-    assert "DuplicateMergeSource" in refusal.refusals
-    assert "merge subscribes channel `in` twice" in str(refusal)
+    (issue,) = [
+        i for i in refusal.details["issues"] if i["code"] == "topology.duplicate_merge_source"
+    ]
+    assert issue["details"]["channel"] == "in"
 
 
 def test_a_merge_source_already_wired_into_the_tasklet_is_refused() -> None:
@@ -547,9 +560,9 @@ def test_a_merge_source_already_wired_into_the_tasklet_is_refused() -> None:
         entry.map(str.upper).into(echo)
         c.merge().from_(entry, str.lower).from_(c.input("other"), str.lower).into(echo)
 
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         declare(rewired)
-    assert caught.value.refusals == ["EdgeAlreadyWired"]
+    assert codes(caught.value) == ["topology.edge_already_wired"]
 
 
 @flezha.tasklet(name="routed_document")
@@ -585,9 +598,9 @@ def test_two_unnamed_routers_are_one_node_so_a_shared_traffic_edge_is_refused() 
         for documents in ("config", "feature_flags"):
             c.route_latest(c.input(documents), trades, lambda trade: trade["symbol"])
 
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         declare(routers)
-    assert caught.value.refusals == ["EdgeAlreadyWired"]
+    assert codes(caught.value) == ["topology.edge_already_wired"]
     assert [node.name for node in routers.spec.tasklets] == ["route_latest"]
 
 
@@ -657,8 +670,12 @@ def test_a_json_entry_reads_a_dict_and_a_sink_takes_every_bytes_type() -> None:
     decode, encode = _codec_slots()
     assert decode(b'{"a":1}') == {"a": 1}
     assert encode(bytearray(b"\xff")) == b"\xff"
-    with pytest.raises(EmitError, match="channel `out`: a object cannot be sent as JSON"):
+    with pytest.raises(FlezhaError) as caught:
         encode(object())
+    assert (caught.value.code, caught.value.details) == (
+        "runtime.value_not_json",
+        {"owner": "channel 'out'", "type": "object", "reason": caught.value.details["reason"]},
+    )
 
 
 def test_msgpack_is_the_class_codec() -> None:
@@ -670,16 +687,14 @@ def test_msgpack_is_the_class_codec() -> None:
 def test_a_refusal_names_the_channel_and_a_bytes_sink_refuses_a_string() -> None:
     """A Python ``str`` is not bytes, so a ``bytes`` sink refuses one, where Ruby
     and PHP take a string there."""
-    text = _codec_slots(sink_options={"codec": "text"})[1]
-    with pytest.raises(EmitError, match="channel `out` names the text codec"):
-        text(42)
-    raw = _codec_slots(sink_options={"codec": "bytes"})[1]
-    with pytest.raises(EmitError, match="channel `out` names the bytes codec"):
-        raw(42)
-    with pytest.raises(
-        EmitError, match="channel `out` names the bytes codec and cannot send a str"
-    ):
-        raw("hello")
+    for codec_name, value in (("text", 42), ("bytes", 42), ("bytes", "hello")):
+        encode = _codec_slots(sink_options={"codec": codec_name})[1]
+        with pytest.raises(FlezhaError) as caught:
+            encode(value)
+        assert (caught.value.code, caught.value.details) == (
+            "runtime.value_wrong_for_codec",
+            {"channel": "out", "codec": codec_name, "type": type(value).__name__},
+        )
 
 
 def test_an_unknown_codec_name_is_refused_naming_the_operator_the_channel_and_the_names() -> None:
@@ -687,11 +702,12 @@ def test_an_unknown_codec_name_is_refused_naming_the_operator_the_channel_and_th
         ({"codec": "yaml"}, {}, "in"),
         ({}, {"codec": "yaml"}, "out"),
     ):
-        with pytest.raises(DeclarationError) as caught:
+        with pytest.raises(FlezhaError) as caught:
             _codec_slots(input_options, sink_options)
-        message = str(caught.value)
-        assert f"codecs: {channel}: unknown codec `yaml`" in message
-        assert "bytes, text, json, msgpack" in message
+        assert (caught.value.code, caught.value.details) == (
+            "topology.unknown_codec",
+            {"channel": channel, "codec": "yaml", "codecs": ["bytes", "text", "json", "msgpack"]},
+        )
 
 
 def test_a_codec_and_a_callable_together_are_refused() -> None:
@@ -699,8 +715,12 @@ def test_a_codec_and_a_callable_together_are_refused() -> None:
         ({"codec": "text", "decode": bytes}, {}, "in"),
         ({}, {"codec": "text", "encode": bytes}, "out"),
     ):
-        with pytest.raises(DeclarationError, match=f"codecs: {channel}: names both a codec"):
+        with pytest.raises(FlezhaError) as caught:
             _codec_slots(input_options, sink_options)
+        assert (caught.value.code, caught.value.details) == (
+            "topology.codec_with_callable",
+            {"channel": channel},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -779,12 +799,13 @@ def test_a_channels_body_annotated_or_not_is_still_the_full_form() -> None:
 
 
 def test_a_function_short_form_taking_a_context_is_refused() -> None:
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
 
         @flezha.unbounded_operator(id="stamp", sink="out")
         def stamp(value: str, ctx: flezha.Ctx[None, str]) -> str:
             return value
 
+    assert caught.value.code == "topology.invalid_tasklet"
     assert "`ctx`" in str(caught.value)
     assert "class whose `run(self, value, ctx)`" in str(caught.value)
 
@@ -814,11 +835,14 @@ def test_a_tasklet_body_beside_a_topology_body_is_refused() -> None:
         def channels(self, c: flezha.Channels) -> None:
             return None
 
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         flezha.unbounded_operator(id="both", sink="out")(Both)
 
-    assert caught.value.refusals == ["ShortFormWithTopology"]
-    assert caught.value.defect.startswith("ShortFormWithTopology")
+    assert (caught.value.code, caught.value.details) == (
+        "topology.short_form_with_topology",
+        {"factory_id": "both"},
+    )
+    assert "(topology.short_form_with_topology)" in str(caught.value)
 
 
 def _returns_none(value: str) -> None:
@@ -839,38 +863,47 @@ def _returns_none_under_an_unresolvable_hint(value: Decimal) -> None:
     "body", [_returns_none, _returns_unannotated, _returns_none_under_an_unresolvable_hint]
 )
 def test_a_sink_on_a_body_with_no_output_is_refused(body: Callable[[str], Any]) -> None:
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
         flezha.unbounded_operator(id="drain", sink="out")(body)
 
-    assert caught.value.refusals == ["SinkWithoutOutput"]
-    assert caught.value.defect.startswith("SinkWithoutOutput")
+    assert (caught.value.code, caught.value.details) == (
+        "topology.sink_without_output",
+        {"factory_id": "drain"},
+    )
 
 
 def test_an_absent_id_is_refused_rather_than_derived() -> None:
-    with pytest.raises(DeclarationError, match="`id`"):
+    with pytest.raises(FlezhaError) as short:
 
         @flezha.unbounded_operator(sink="out")
         def upcase(value: str) -> str:
             return value
 
-    with pytest.raises(DeclarationError, match="`id`"):
+    with pytest.raises(FlezhaError) as full_form:
 
         @flezha.bounded_operator()
         def full(c: flezha.Channels) -> None:
             c.input("in").into(echo).sink("out")
 
+    for caught, name in ((short, "upcase"), (full_form, "full")):
+        assert (caught.value.code, caught.value.details) == (
+            "topology.missing_factory_id",
+            {"operator": name},
+        )
+
 
 @pytest.mark.parametrize("keyword", ["kind", "sink", "input", "codec"])
 def test_an_operator_keyword_on_a_tasklet_is_refused(keyword: str) -> None:
     declarations: dict[str, Any] = {keyword: "text"}
-    with pytest.raises(DeclarationError) as caught:
+    with pytest.raises(FlezhaError) as caught:
 
         @flezha.tasklet(name="upcase", **declarations)
         class Upcase:
             def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
                 ctx.emit(value)
 
-    assert f"`{keyword}`" in str(caught.value)
+    assert caught.value.code == "topology.operator_field_on_tasklet"
+    assert caught.value.details["fields"] == [f"`{keyword}`"]
     assert "flezha.unbounded_operator" in str(caught.value)
 
 
@@ -900,11 +933,16 @@ def test_a_short_form_carries_its_tasklets_own_settings() -> None:
 
 @pytest.mark.parametrize("keyword", [{"sink": "out"}, {"mailbox_capacity": 8}])
 def test_a_short_form_keyword_on_a_channels_body_is_refused(keyword: dict[str, Any]) -> None:
-    with pytest.raises(DeclarationError, match=f"`{next(iter(keyword))}`"):
+    with pytest.raises(FlezhaError) as caught:
 
         @flezha.unbounded_operator(id="full", **keyword)
         def full(c: flezha.Channels) -> None:
             c.input("input").into(echo).sink("out")
+
+    assert (caught.value.code, caught.value.details) == (
+        "topology.short_form_field_on_full_form",
+        {"factory_id": "full", "fields": [f"`{next(iter(keyword))}`"]},
+    )
 
 
 @pytest.mark.parametrize(
@@ -940,8 +978,12 @@ def test_a_class_setting_on_a_short_form_is_refused(
     def place(order: str) -> str:
         return order
 
-    with pytest.raises(DeclarationError, match=f"`{next(iter(setting))}`"):
+    with pytest.raises(FlezhaError) as caught:
         declare_operator(id="place", sink="placed", **setting)(place)
+    assert (caught.value.code, caught.value.details) == (
+        "topology.setting_on_short_form",
+        {"factory_id": "place", "fields": [f"`{next(iter(setting))}`"]},
+    )
 
 
 def test_a_class_tasklet_body_is_its_run_method() -> None:
@@ -954,9 +996,14 @@ def test_a_class_tasklet_body_is_its_run_method() -> None:
 
 
 def test_a_class_with_a_process_body_and_no_run_is_refused_naming_run() -> None:
-    with pytest.raises(DeclarationError, match="`run`"):
+    with pytest.raises(FlezhaError) as caught:
 
         @flezha.tasklet(name="upcase")  # type: ignore[arg-type]
         class Upcase:
             def process(self, value: str) -> str:
                 return value.upper()
+
+    assert (caught.value.code, caught.value.details) == (
+        "topology.missing_body",
+        {"declaration": "tasklet 'Upcase'", "body": "`run`"},
+    )

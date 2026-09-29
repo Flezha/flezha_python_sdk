@@ -100,7 +100,7 @@ def test_a_second_start_on_the_same_runner_is_refused(runner: Any) -> None:
     core = FakeCore()
     r = runner().register_factory(demo).start(core=core)
     try:
-        with pytest.raises(FlezhaError, match="already started"):
+        with pytest.raises(FlezhaError, match="runtime.runner_already_running"):
             r.start(core=FakeCore())
     finally:
         r.stop()
@@ -111,7 +111,7 @@ def test_only_one_runner_may_be_started_per_process(runner: Any) -> None:
     first = runner().register_factory(demo).start(core=FakeCore())
     try:
         second = runner()
-        with pytest.raises(FlezhaError, match="already started in this process"):
+        with pytest.raises(FlezhaError, match="runtime.runner_already_running"):
             second.start(core=FakeCore())
     finally:
         first.stop()
@@ -148,8 +148,12 @@ def test_a_post_start_define_reaches_the_core(runner: Any) -> None:
 
 def test_removing_an_undeclared_type_is_refused_naming_it(runner: Any) -> None:
     r = runner().register_factory(demo)
-    with pytest.raises(FlezhaError, match="other"):
+    with pytest.raises(FlezhaError) as caught:
         r.unregister_factory(other_op)
+    assert (caught.value.code, caught.value.details) == (
+        "runtime.class_not_registered",
+        {"factory": "other"},
+    )
 
 
 def test_removing_a_type_with_live_instances_is_refused(runner: Any) -> None:
@@ -160,8 +164,12 @@ def test_removing_a_type_with_live_instances_is_refused(runner: Any) -> None:
     try:
         deps = r._executor._deps  # type: ignore[attr-defined]
         dispatch_now(work_activation(1, "abc"), core, deps)
-        with pytest.raises(FlezhaError, match="live instances"):
+        with pytest.raises(FlezhaError) as caught:
             r.unregister_factory(demo)
+        assert (caught.value.code, caught.value.details) == (
+            "runtime.operator_type_in_use",
+            {"factory_id": "demo", "live_instances": 1},
+        )
         assert r.operators() == ["demo"]
     finally:
         r.stop()
@@ -181,8 +189,12 @@ def test_removing_a_type_with_no_instances_succeeds(runner: Any) -> None:
 
 def test_a_duplicate_factory_id_is_refused(runner: Any) -> None:
     r = runner().register_factory(demo)
-    with pytest.raises(FlezhaError, match="DuplicateFactoryId"):
+    with pytest.raises(FlezhaError) as caught:
         r.register_factory(demo)
+    assert (caught.value.code, caught.value.details) == (
+        "topology.duplicate_factory_id",
+        {"factory_id": "demo"},
+    )
 
 
 def test_register_modules_imports_and_registers(runner: Any) -> None:
@@ -195,11 +207,10 @@ def test_register_modules_imports_and_registers(runner: Any) -> None:
         r.drain()
 
 
-def test_an_unimportable_module_names_it_and_chains_the_original(runner: Any) -> None:
-    with pytest.raises(FlezhaError) as caught:
+def test_an_unimportable_module_raises_its_own_import_error(runner: Any) -> None:
+    with pytest.raises(ImportError) as caught:
         runner().register_modules("no_such_module_anywhere")
     assert "no_such_module_anywhere" in str(caught.value)
-    assert isinstance(caught.value.__cause__, ImportError)
 
 
 def test_the_context_manager_drains_on_exit(runner: Any) -> None:
@@ -239,8 +250,12 @@ def test_the_executor_is_an_axis_of_the_run(monkeypatch: pytest.MonkeyPatch, run
 
 def test_an_unknown_executor_is_refused(monkeypatch: pytest.MonkeyPatch, runner: Any) -> None:
     monkeypatch.setenv("FLEZHA_PYTHON_EXECUTOR", "goroutines")
-    with pytest.raises(FlezhaError, match="unknown executor"):
+    with pytest.raises(FlezhaError) as caught:
         runner().register_factory(demo).start(core=FakeCore())
+    assert (caught.value.code, caught.value.details["value"]) == (
+        "usage.unknown_word",
+        "goroutines",
+    )
 
 
 def test_a_controller_initiated_shutdown_ends_the_runners_own_wait(runner: Any) -> None:
@@ -312,7 +327,7 @@ def test_a_start_takes_the_factory_first_and_answers_the_id_and_the_outcome(
 
 
 def test_admin_before_start_is_refused(runner: Any) -> None:
-    with pytest.raises(FlezhaError, match="call start"):
+    with pytest.raises(FlezhaError, match="runtime.runner_not_started"):
         runner().admin()
 
 
@@ -389,10 +404,16 @@ def test_a_short_form_collides_with_one_of_the_other_kind(runner: Any) -> None:
         return value
 
     r = runner().register_factory(short_unbounded)
-    with pytest.raises(FlezhaError, match="DuplicateFactoryId: `short_unbounded`"):
+    with pytest.raises(FlezhaError) as caught:
         r.register_factory(twin)
+    assert (caught.value.code, caught.value.details) == (
+        "topology.duplicate_factory_id",
+        {"factory_id": "short_unbounded"},
+    )
+    assert "short_unbounded" in str(caught.value)
 
 
 def test_registering_a_tasklet_is_refused(runner: Any) -> None:
-    with pytest.raises(FlezhaError, match="declares no operator"):
+    with pytest.raises(FlezhaError) as caught:
         runner().register_factory(Other)  # type: ignore[arg-type]
+    assert caught.value.code == "topology.unknown_operator_kind"

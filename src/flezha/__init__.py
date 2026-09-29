@@ -29,24 +29,7 @@ from .builder import DROPPED, Channels, Edge, Merge
 from .cell_state import state
 from .codec import ChannelCodec, TypeCodec, ValueCodec
 from .ctx import Ctx, SpawnHandle, SpawnResult
-from .errors import (
-    CoreError,
-    DeclarationError,
-    DeterminismWarning,
-    EmitError,
-    FlezhaError,
-    ForkError,
-    NonRetryableError,
-    SchemaMismatchError,
-    SpawnAlreadyRunningError,
-    SpawnError,
-    SpawnFactoryNotBoundedError,
-    SpawnFactoryUnknownError,
-    SpawnRefusedError,
-    SpawnTimeoutError,
-    SpawnUnavailableError,
-    UnrepresentableValueError,
-)
+from .errors import DeterminismWarning, FlezhaError, NonRetryableError
 from .local import LocalOperator, SinkOutput
 from .logger import configure as configure_logging
 from .operator import Operator, bounded_operator, unbounded_operator
@@ -83,20 +66,7 @@ __all__ = [
     "ValueCodec",
     # errors
     "FlezhaError",
-    "CoreError",
-    "SchemaMismatchError",
-    "DeclarationError",
-    "EmitError",
-    "UnrepresentableValueError",
     "NonRetryableError",
-    "ForkError",
-    "SpawnError",
-    "SpawnAlreadyRunningError",
-    "SpawnFactoryUnknownError",
-    "SpawnFactoryNotBoundedError",
-    "SpawnRefusedError",
-    "SpawnTimeoutError",
-    "SpawnUnavailableError",
     "DeterminismWarning",
     # versions
     "__version__",

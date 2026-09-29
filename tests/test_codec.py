@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from flezha import codec
-from flezha.errors import UnrepresentableValueError
+from flezha.errors import FlezhaError
 
 # Every module of the package: the persistence and wire paths are all of it,
 # because there is no part of this SDK a durable body does not pass through.
@@ -166,25 +166,36 @@ def test_a_type_with_no_adapter_is_refused_naming_it() -> None:
     class Bare:
         pass
 
-    with pytest.raises(UnrepresentableValueError, match="Bare"):
+    with pytest.raises(FlezhaError) as caught:
         codec.codec_for(Bare, "state")
+    assert (caught.value.code, caught.value.details["path"]) == (
+        "topology.state_unrepresentable",
+        "Bare.<root>",
+    )
 
 
 def test_a_set_is_refused_with_its_reason() -> None:
-    with pytest.raises(UnrepresentableValueError, match="set"):
+    with pytest.raises(FlezhaError) as caught:
         codec.assert_representable("s", {"tags": {"a"}})
+    assert caught.value.code == "topology.state_unrepresentable"
+    assert caught.value.details["path"] == "s.tags"
+    assert "set" in caught.value.details["reason"]
 
 
 def test_a_cycle_is_refused() -> None:
     looped: dict[str, object] = {}
     looped["self"] = looped
-    with pytest.raises(UnrepresentableValueError, match="refers back to itself"):
+    with pytest.raises(FlezhaError) as caught:
         codec.assert_representable("s", looped)
+    assert caught.value.code == "topology.state_unrepresentable"
+    assert "refers back to itself" in caught.value.details["reason"]
 
 
 def test_a_callable_field_is_refused() -> None:
-    with pytest.raises(UnrepresentableValueError, match="callable"):
+    with pytest.raises(FlezhaError) as caught:
         codec.assert_representable("s", {"fn": lambda: None})
+    assert caught.value.code == "topology.state_unrepresentable"
+    assert "callable" in caught.value.details["reason"]
 
 
 # ---------------------------------------------------------------------------

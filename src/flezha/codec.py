@@ -50,7 +50,7 @@ from typing import (
 
 import msgpack
 
-from .errors import EmitError, UnrepresentableValueError
+from .errors import FlezhaError
 
 if TYPE_CHECKING:
     from .builder import ChannelSpec
@@ -143,7 +143,7 @@ def channel_encoder(codec: ChannelCodec | None, channel: ChannelSpec) -> Callabl
     if codec == "msgpack":
         return encode
     if codec == "json":
-        return lambda value: _json_payload(f"channel `{channel.name}`", value)
+        return lambda value: _json_payload(f"channel '{channel.name}'", value)
     if codec == "bytes":
         return lambda value: (
             bytes(value) if isinstance(value, _BYTES) else _refuse_payload(channel, codec, value)
@@ -152,14 +152,14 @@ def channel_encoder(codec: ChannelCodec | None, channel: ChannelSpec) -> Callabl
         return lambda value: (
             value.encode() if isinstance(value, str) else _refuse_payload(channel, codec, value)
         )
-    return lambda value: plain_payload(value, f"channel `{channel.name}`")
+    return lambda value: plain_payload(value, f"channel '{channel.name}'")
 
 
 def plain_payload(value: Any, owner: str) -> bytes:
     """Bytes as they are, a string as UTF-8 and anything else as JSON.
 
     What a sink naming no codec sends, and what a bounded completion carries.
-    ``owner`` is what a refusal names.
+    ``owner`` is the channel or tasklet a refusal names.
     """
     if isinstance(value, _BYTES):
         return bytes(value)
@@ -174,14 +174,22 @@ def _json_payload(owner: str, value: Any) -> bytes:
             value, separators=(",", ":"), ensure_ascii=False, allow_nan=False
         ).encode()
     except (TypeError, ValueError) as error:
-        raise EmitError(
-            f"{owner}: a {type(value).__name__} cannot be sent as JSON: {error}"
+        raise FlezhaError(
+            "runtime.value_not_json",
+            {"owner": owner, "type": type(value).__name__, "reason": str(error)},
         ) from error
 
 
 def _refuse_payload(channel: ChannelSpec, codec: str, value: Any) -> NoReturn:
-    raise EmitError(
-        f"channel `{channel.name}` names the {codec} codec and cannot send a {type(value).__name__}"
+    raise FlezhaError(
+        "runtime.value_wrong_for_codec",
+        {"channel": channel.name, "codec": codec, "type": type(value).__name__},
+    )
+
+
+def _unrepresentable(type_name: str, path: str, reason: str) -> FlezhaError:
+    return FlezhaError(
+        "topology.state_unrepresentable", {"path": f"{type_name}.{path}", "reason": reason}
     )
 
 
@@ -255,7 +263,7 @@ def _to_plain(value: Any) -> Any:
         return {f.name: _to_plain(getattr(value, f.name)) for f in cls.__attrs_attrs__}
     if _is_escape(cls):
         return _to_plain(value.to_dict())
-    raise UnrepresentableValueError(
+    raise _unrepresentable(
         cls.__name__,
         "<value>",
         "no codec adapter fits this type; declare it as a dataclass, a Pydantic "
@@ -343,7 +351,7 @@ class TypeCodec:
             # A declared class whose durable form is not a mapping came from a
             # `to_dict` that answered something else; say so here rather than
             # in the constructor's argument list.
-            raise UnrepresentableValueError(
+            raise _unrepresentable(
                 self.type.__name__,
                 "<root>",
                 f"a durable {self._which} decodes as {type(plain).__name__}, not a mapping",
@@ -373,7 +381,7 @@ def codec_for(type_: type | None, which: str) -> ValueCodec | None:
         or _is_escape(type_)
     ):
         return TypeCodec(type_, which)
-    raise UnrepresentableValueError(
+    raise _unrepresentable(
         type_.__name__,
         "<root>",
         f"declared as the {which} type but is not a dataclass, a Pydantic model, an "
@@ -399,13 +407,13 @@ def _walk(type_name: str, value: Any, path: str, seen: set[int]) -> None:
     where = path or "<root>"
     reason = _unrepresentable_reason(value)
     if reason:
-        raise UnrepresentableValueError(type_name, where, reason)
+        raise _unrepresentable(type_name, where, reason)
 
     children = _children(value)
     if children is None:
         return
     if id(value) in seen:
-        raise UnrepresentableValueError(
+        raise _unrepresentable(
             type_name,
             where,
             "the value refers back to itself; MessagePack has no representation for a cycle",

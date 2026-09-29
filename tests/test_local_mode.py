@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 import contract
-from flezha import Channels, CoreError, Ctx, LocalOperator, state, tasklet, unbounded_operator
+from flezha import Channels, Ctx, FlezhaError, LocalOperator, state, tasklet, unbounded_operator
 
 FIXTURE = contract.member("test/fixtures/local_mode_word_count.txt")
 
@@ -97,11 +97,12 @@ def test_a_declared_graph_runs_locally_and_releases_the_recorded_output() -> Non
 
 
 def test_a_channel_the_class_does_not_declare_is_refused_by_name() -> None:
-    with LocalOperator.start(word_count) as run, pytest.raises(CoreError) as caught:
+    with LocalOperator.start(word_count) as run, pytest.raises(FlezhaError) as caught:
         run.feed("nope", "1")
-    message = str(caught.value)
-    assert "nope" in message and "lines" in message, (
-        f"the refusal names the channel and what is declared: {message}"
+    assert caught.value.code == "runtime.channel_undeclared"
+    details = caught.value.details
+    assert details["channel"] == "nope" and "lines" in details["channels"], (
+        f"the refusal names the channel and what is declared: {details}"
     )
 
 

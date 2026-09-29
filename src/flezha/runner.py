@@ -54,9 +54,7 @@ def _operator_of(value: object) -> Operator:
     """
     if not isinstance(value, Operator):
         raise FlezhaError(
-            f"`{getattr(value, '__name__', value)}` declares no operator; register the "
-            f"operator that wires it, or declare a single tasklet as a whole operator with "
-            f"`@flezha.unbounded_operator(id=...)` or `@flezha.bounded_operator(id=...)`"
+            "topology.unknown_operator_kind", {"module": str(getattr(value, "__name__", value))}
         )
     return value
 
@@ -101,17 +99,11 @@ class Runner:
 
         Every :class:`~flezha.operator.Operator` the module holds, short form
         or full. No implicit package scanning and no filesystem discovery: the
-        modules are named, and one that cannot be imported says so with the
-        original error chained.
+        modules are named, and one that cannot be imported raises its own
+        :class:`ImportError`.
         """
         for name in modules:
-            try:
-                module = importlib.import_module(name)
-            except ImportError as error:
-                raise FlezhaError(
-                    f"the module `{name}` names operator declarations but could not be "
-                    f"imported: {error}"
-                ) from error
+            module = importlib.import_module(name)
             for value in vars(module).values():
                 if isinstance(value, Operator):
                     self._define(value)
@@ -124,13 +116,14 @@ class Runner:
         """
         factory_id = _operator_of(operator).factory_id
         if not any(o.factory_id == factory_id for o in self._operators):
-            raise FlezhaError(f"no operator type `{factory_id}` is declared on this runner")
+            raise FlezhaError("runtime.class_not_registered", {"factory": factory_id})
         if self._started:
             registered = self._registry.get(factory_id)
-            if registered is not None and registered.has_cells():
+            live = 0 if registered is None else registered.live_instances()
+            if live:
                 raise FlezhaError(
-                    f"`{factory_id}` has live instances on this runner; stop them before "
-                    f"removing the type"
+                    "runtime.operator_type_in_use",
+                    {"factory_id": factory_id, "live_instances": live},
                 )
             if registered is not None:
                 self._registry.remove(factory_id)
@@ -164,7 +157,7 @@ class Runner:
         the controller judges.
         """
         if self._core is None:
-            raise FlezhaError("administration needs a started runner: call start() first")
+            raise FlezhaError("runtime.runner_not_started")
         return Admin(self._core)
 
     # -- lifecycle ---------------------------------------------------------
@@ -207,12 +200,10 @@ class Runner:
     def _claim_slot(self) -> None:
         """One runner per process: a runner is one transport connection."""
         if self._started:
-            raise FlezhaError("this runner is already started")
+            raise FlezhaError("runtime.runner_already_running")
+        # A runner is one transport connection, so N processes are N runners.
         if not _started_slot.acquire(blocking=False):
-            raise FlezhaError(
-                "a runner is already started in this process; a runner is one transport "
-                "connection, so N processes are N runners"
-            )
+            raise FlezhaError("runtime.runner_already_running")
         self._holds_slot = True
 
     def _build_executor(self) -> Executor:
@@ -296,10 +287,7 @@ class Runner:
 
     def _define(self, operator: Operator) -> Runner:
         if any(o.factory_id == operator.factory_id for o in self._operators):
-            raise FlezhaError(
-                f"DuplicateFactoryId: `{operator.factory_id}` is already declared on this "
-                f"runner; a runner declares each factory id once"
-            )
+            raise FlezhaError("topology.duplicate_factory_id", {"factory_id": operator.factory_id})
         self._operators.append(operator)
         if self._started:
             # Declaring on a live core appends to the set its connect frame is

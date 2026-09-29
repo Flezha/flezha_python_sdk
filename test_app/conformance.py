@@ -386,36 +386,34 @@ def drive_shorthand(declarations: list[dict[str, Any]]) -> None:
         runner.register_factory(declare_shorthand(declaration, declare))
 
 
-def refusal_name(message: str) -> str:
-    """The leading refusal name of a message the contract requires to begin with one."""
-    return message.split(":", 1)[0].strip()
+def codes_of(refusal: flezha.FlezhaError) -> list[str]:
+    """Every code a refusal carries: each issue's, or its own."""
+    issues = refusal.details.get("issues") or []
+    return [issue["code"] for issue in issues] or [refusal.code]
+
+
+def refused(row: dict[str, str], refusal: flezha.FlezhaError) -> dict[str, Any]:
+    return {
+        "topology": row["topology"],
+        "outcome": "refused",
+        "names": codes_of(refusal),
+        "defect": str(refusal),
+    }
 
 
 def judge_shorthand(row: dict[str, str], declarations: list[dict[str, Any]]) -> dict[str, Any]:
     """A short-form row's verdict: what declaring and registering it answered."""
     try:
         drive_shorthand(declarations)
-    except flezha.DeclarationError as refusal:
-        return {
-            "topology": row["topology"],
-            "outcome": "refused",
-            "names": list(refusal.refusals),
-            "defect": str(refusal),
-        }
     except flezha.FlezhaError as refusal:
-        return {
-            "topology": row["topology"],
-            "outcome": "refused",
-            "names": [refusal_name(str(refusal))],
-            "defect": str(refusal),
-        }
+        return refused(row, refusal)
     return {"topology": row["topology"], "outcome": "accepted"}
 
 
 def judge(row: dict[str, str], core: Core) -> dict[str, Any]:
     """One row's verdict, in the report's shape.
 
-    The refusal NAMES are the core's own, carried on the refusal this SDK
+    The refusal codes are the core's own, carried on the error this SDK
     raises; nothing here re-derives one.
     """
     if row["needs"] != "-" and row["needs"] not in SURFACES:
@@ -425,13 +423,8 @@ def judge(row: dict[str, str], core: Core) -> dict[str, Any]:
         return judge_shorthand(row, declarations)
     try:
         derived = graph.validate(operator_for(row).spec, core)
-    except flezha.DeclarationError as refusal:
-        return {
-            "topology": row["topology"],
-            "outcome": "refused",
-            "names": list(refusal.refusals),
-            "defect": str(refusal),
-        }
+    except flezha.FlezhaError as refusal:
+        return refused(row, refusal)
     return {"topology": row["topology"], "outcome": "accepted", "derived": channels_of(derived)}
 
 

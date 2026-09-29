@@ -108,10 +108,10 @@ class RegisteredClass:
         with self._lock:
             self._cells[cell.address] = state
 
-    def has_cells(self) -> bool:
-        """Whether any cell of this class has been materialised."""
+    def live_instances(self) -> int:
+        """How many operators of this class have a materialised cell here."""
         with self._lock:
-            return bool(self._cells)
+            return len({operator for operator, _node, _key in self._cells})
 
     def cell(self, node: TaskNode, operator: str, key: str | None) -> Cell:
         """The handle every activation kind operates through."""
@@ -140,15 +140,13 @@ class Registry:
     def add(self, spec: ClassSpec) -> None:
         with self._lock:
             if spec.factory_id in self._classes:
-                raise FlezhaError(
-                    f"duplicate factory id `{spec.factory_id}`: a runner declares each factory once"
-                )
+                raise FlezhaError("topology.duplicate_factory_id", {"factory_id": spec.factory_id})
             self._classes[spec.factory_id] = RegisteredClass(spec)
 
     def remove(self, factory_id: str) -> RegisteredClass:
         with self._lock:
             if factory_id not in self._classes:
-                raise FlezhaError(f"no operator type `{factory_id}` is declared on this runner")
+                raise FlezhaError("runtime.class_not_registered", {"factory": factory_id})
             return self._classes.pop(factory_id)
 
     def get(self, factory_id: str) -> RegisteredClass | None:
@@ -272,7 +270,7 @@ def run_now(coroutine: Any) -> Any:
     except StopIteration as stop:
         return stop.value
     coroutine.close()
-    raise FlezhaError(
+    raise RuntimeError(
         "the dispatch suspended off an event loop; this is a defect in the SDK's coroutine "
         "seam rather than in the handler"
     )
@@ -446,10 +444,9 @@ async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any, Any]) -> Non
     task = cell.task
     if item["kind"] == "timer":
         if task.on_timer is None:
-            raise FlezhaError(
-                f"{task.name} registered a timer but declares no on_timer; registration is a "
-                f"runtime call, so this cannot be refused at declaration time"
-            )
+            # Registration is a runtime call, so this cannot be refused at
+            # declaration time.
+            raise FlezhaError("runtime.timer_without_on_timer", {"tasklet": task.name})
         timer = {
             "kind": item.get("timer_kind"),
             "scheduled_at": item.get("scheduled_at") or item.get("now") or 0,

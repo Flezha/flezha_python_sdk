@@ -22,7 +22,7 @@ from typing import Any, Self
 
 from . import graph
 from .dispatch import DispatchDeps, Registry
-from .errors import CoreError
+from .errors import FlezhaError
 from .executor import build as build_executor
 from .native import Core
 from .operator import Operator
@@ -141,9 +141,11 @@ class LocalOperator:
         while not self._closed.is_set():
             try:
                 output = self._core.local_next_output(_OUTPUT_POLL_MS)
-            except CoreError:
-                # The run ended under us; the close path owns the teardown.
-                # Narrow on purpose: a `ForkError` is a defect, not a stop.
+            except FlezhaError as error:
+                # The run ended under us; the close path owns the teardown. A
+                # forked process is a defect, not a stop.
+                if error.code == "runtime.forked_process":
+                    raise
                 return
             if output is not None:
                 self._deliver(output)

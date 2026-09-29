@@ -181,8 +181,12 @@ def test_a_block_policy_wedge_recovers_on_a_base_pool_of_one() -> None:
 def test_the_supervisor_cannot_be_configured_away() -> None:
     """There is no executor without one; an unknown name is refused by name."""
     core = FakeCore()
-    with pytest.raises(FlezhaError, match="unknown executor"):
+    with pytest.raises(FlezhaError) as caught:
         build("single-threaded", core, _deps(core))
+    assert (caught.value.code, caught.value.details["allowed"]) == (
+        "usage.unknown_word",
+        ["asyncio", "thread"],
+    )
     assert sorted(executor_module.EXECUTORS) == ["asyncio", "thread"]
 
 

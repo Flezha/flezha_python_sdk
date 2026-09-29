@@ -32,7 +32,7 @@ from typing import Any, Literal, Unpack, get_args, get_origin
 
 from . import codec as _codec
 from .builder import Channels, ClassSpec
-from .errors import DeclarationError
+from .errors import FlezhaError
 from .tasklet import Tasklet, TaskletSettings, output_type, positional_parameters
 
 __all__ = ["LoopMode", "Operator", "RollbackMode", "unbounded_operator", "bounded_operator"]
@@ -162,10 +162,9 @@ def _operator(
         # A keyword annotated with a `Literal` takes only the values it spells.
         annotation = parameters[key].annotation
         if get_origin(annotation) is Literal and value not in get_args(annotation):
-            raise DeclarationError(
-                factory_id or "<operator>",
-                None,
-                f"`{key}={value!r}` is not one of `{'`, `'.join(get_args(annotation))}`",
+            raise FlezhaError(
+                "topology.invalid_mode",
+                {"factory_id": factory_id or "<operator>", "knob": key, "value": str(value)},
             )
     class_settings = [
         key
@@ -176,12 +175,9 @@ def _operator(
     def decorate(declaration: Any) -> Operator:
         name = getattr(declaration, "__name__", "<declaration>")
         if factory_id is None:
-            raise DeclarationError(
-                "<operator>",
-                name,
-                "declares no `id`; a factory id is an address a user types, so it is "
-                "written rather than derived from the declaration's name",
-            )
+            # A factory id is an address a user types, so it is written
+            # rather than derived from the declaration's name.
+            raise FlezhaError("topology.missing_factory_id", {"operator": name})
         if not _declares_channels(declaration):
             return _short_form(
                 factory_id, kind, declaration, options, class_settings, settings, **short_form
@@ -189,13 +185,9 @@ def _operator(
         written = [key for key, value in short_form.items() if value is not None]
         written += list(settings)
         if written:
-            raise DeclarationError(
-                factory_id,
-                name,
-                f"`{'`, `'.join(written)}` describe(s) what a short form generates, and a "
-                f"`flezha.Channels` body declares its own channels and tasklets. A function "
-                f"whose one parameter is annotated `flezha.Channels`, or not at all, is a "
-                f"channels body",
+            raise FlezhaError(
+                "topology.short_form_field_on_full_form",
+                {"factory_id": factory_id, "fields": [f"`{key}`" for key in written]},
             )
         return Operator(factory_id, kind, declaration, options)
 
@@ -219,33 +211,17 @@ def _short_form(
     the sink when one is written."""
     name = body.__name__
     if inspect.isclass(body) and hasattr(body, "run") and hasattr(body, "channels"):
-        raise DeclarationError(
-            factory_id,
-            name,
-            "ShortFormWithTopology: `run` declares this operator's one tasklet, whose "
-            "topology is generated, and `channels` declares a topology of its own; keep "
-            "one of the two bodies",
-            refusals=["ShortFormWithTopology"],
-        )
+        raise FlezhaError("topology.short_form_with_topology", {"factory_id": factory_id})
     if class_settings:
-        raise DeclarationError(
-            factory_id,
-            name,
-            f"writes `{'`, `'.join(class_settings)}`; a short form keeps every class setting "
-            f"but the loop mode at its default, so a class setting is declared in the full "
-            f"form, with a `flezha.Channels` body",
+        raise FlezhaError(
+            "topology.setting_on_short_form",
+            {"factory_id": factory_id, "fields": [f"`{key}`" for key in class_settings]},
         )
     generated = Tasklet(body, name=factory_id, **settings)
     returned = output_type(generated)
     # An unresolvable hint degrades to the raw annotation, where `None` is the string.
     if sink is not None and (returned is None or returned is type(None) or returned == "None"):
-        raise DeclarationError(
-            factory_id,
-            name,
-            "SinkWithoutOutput: a `sink` requires an output type to feed the plugin; annotate "
-            "the function's return, or name the output in a class's `Ctx[State, Output]`",
-            refusals=["SinkWithoutOutput"],
-        )
+        raise FlezhaError("topology.sink_without_output", {"factory_id": factory_id})
 
     def channels(c: Channels) -> None:
         edge = c.input(input or "input", codec=codec).into(generated)

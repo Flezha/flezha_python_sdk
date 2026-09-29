@@ -19,9 +19,10 @@ def test_direct_assignment_is_refused_naming_the_field_and_the_path() -> None:
     counter = Counter()
     with pytest.raises(FlezhaError) as caught:
         counter.count = 5
-    message = str(caught.value)
-    assert "count" in message
-    assert "ctx.change" in message
+    assert (caught.value.code, caught.value.details) == (
+        "runtime.state_mutated",
+        {"tasklet": "Counter", "path": "count"},
+    )
 
 
 def test_construction_is_not_mutation() -> None:
@@ -84,7 +85,7 @@ class Frozen:
 
 def test_the_guard_refuses_before_the_class_it_wraps_can() -> None:
     """A frozen dataclass gains our refusal; its own never runs while sealed."""
-    with pytest.raises(FlezhaError):
+    with pytest.raises(FlezhaError, match="runtime.state_mutated"):
         Frozen().value = 1  # type: ignore[misc]
 
 
@@ -199,10 +200,12 @@ def test_a_parameterised_builtin_starts_empty() -> None:
 
 
 def test_an_unbuildable_state_class_is_refused_naming_it_and_init_state() -> None:
-    with pytest.raises(flezha.DeclarationError) as caught:
+    with pytest.raises(flezha.FlezhaError) as caught:
         flezha.tasklet(NeedsSeed, name="needs_seed")
-    assert "state class `Needs` cannot be built with no arguments" in str(caught.value)
-    assert "`init_state(self, cell_key)`" in str(caught.value)
+    assert (caught.value.code, caught.value.details) == (
+        "topology.state_not_constructible",
+        {"tasklet": "needs_seed", "state": "Needs"},
+    )
 
 
 def test_a_restore_folds_from_the_state_class_default() -> None:

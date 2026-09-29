@@ -567,8 +567,8 @@ def _report(label: str, handle: Any) -> None:
     try:
         result = handle.wait()
         print(f"spawn_result {label} {result.id} {result.outcome}", flush=True)
-    except flezha.SpawnError as error:
-        print(f"spawn_result {label} error {error}", flush=True)
+    except flezha.FlezhaError as error:
+        print(f"spawn_result {label} error {error.code}", flush=True)
 
 
 @flezha.tasklet(name="spawn_requester")
