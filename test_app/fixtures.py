@@ -17,7 +17,12 @@ from typing import Any, ClassVar
 
 import flezha
 from fixture_support import _as_int, _env_int, passthrough, prefix
-from fixtures_bounded import block_until_released, stateless_loop_bounded, stateless_step
+from fixtures_bounded import (
+    LOOP_KNOBS,
+    block_until_released,
+    stateless_loop_bounded,
+    stateless_step,
+)
 from fixtures_state import (
     bench_checkpoint_operator,
     bench_keyed_nopersist_operator,
@@ -661,6 +666,43 @@ def call_split_operator(c: flezha.Channels) -> None:
     admitted.filter(lambda value: value.startswith("no")).into(call_refuse).response()
 
 
+# -- parts ----------------------------------------------------------------
+#
+# For an input `n` the tasklet sends the parts `1` .. `n` and then emits
+# `done:<n>` on its sink `answer`, in an unbounded operator and in a
+# `per_input` bounded one. `retry:<n>` sends its parts and then fails
+# retryably the first time this process sees it, so the retry's parts number
+# from 0 again under the next attempt.
+
+_FAILED_ONCE: set[str] = set()
+
+
+def _send_parts(value: str, ctx: flezha.Ctx[None, str]) -> None:
+    count = value.removeprefix("retry:")
+    if not count.isdigit():
+        raise flezha.NonRetryableError(f"not a part count: {value}")
+    for part in range(1, int(count) + 1):
+        ctx.part(str(part))
+    if value.startswith("retry:") and value not in _FAILED_ONCE:
+        _FAILED_ONCE.add(value)
+        raise RuntimeError(f"first attempt of {value}")
+    ctx.emit(f"done:{count}")
+
+
+@flezha.unbounded_operator("part_echo")
+def part_echo_operator(c: flezha.Channels) -> None:
+    c.input("in", codec="text").retry_backoff_ms(25).into(
+        stateless_step("part_echo", _send_parts)
+    ).sink("answer")
+
+
+@flezha.bounded_operator("part_echo_bounded", **LOOP_KNOBS)
+def part_echo_bounded(c: flezha.Channels) -> None:
+    c.input("in", codec="text").retry_backoff_ms(25).into(
+        stateless_step("part_echo_turn", _send_parts)
+    ).sink("answer")
+
+
 #: Every operator this app registers, in declaration order.
 ALL: list[flezha.Operator] = [
     do_nothing_operator,
@@ -707,4 +749,6 @@ ALL: list[flezha.Operator] = [
     call_echo_operator,
     call_downstream_operator,
     call_split_operator,
+    part_echo_operator,
+    part_echo_bounded,
 ]

@@ -198,7 +198,7 @@ class TaskletTestHarness(Generic[S]):
             raise ReplayMismatch(self._task.name, live, replayed)
         return True
 
-    # -- the spawn bridge a `Ctx` asks ---------------------------------------
+    # -- the core bridge a `Ctx` asks ----------------------------------------
 
     def spawn_request(
         self,
@@ -230,6 +230,11 @@ class TaskletTestHarness(Generic[S]):
         if answer is None:
             raise FlezhaError("runtime.spawn_handle_released", {"handle": handle})
         return answer
+
+    def part(self, token: int, item: int, payload: bytes) -> None:
+        """A harness has no controller, so no listener: the part, already
+        encoded by the context, is dropped."""
+        del token, item, payload
 
     # -- internals -----------------------------------------------------------
 

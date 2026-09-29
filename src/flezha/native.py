@@ -89,6 +89,7 @@ class Core:
         "watch_stdin_eof",
         "spawn_request",
         "spawn_result",
+        "part",
         "admin_call",
         "last_error",
     )
@@ -221,6 +222,10 @@ class Core:
         """A handle's answer as JSON, or ``None`` while it is pending."""
         answer = self._call("spawn_result", handle, timeout_ms)
         return None if answer is None else str(answer)
+
+    def part(self, token: int, item: int, payload: bytes) -> None:
+        """Send a part of work item ``item`` of the activation ``token``. Never waits."""
+        self._call("part", token, item, payload)
 
     def admin_call(self, verb: str, args: str) -> str:
         return str(self._call("admin_call", verb, args))

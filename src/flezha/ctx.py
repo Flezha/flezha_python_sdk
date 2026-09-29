@@ -51,6 +51,10 @@ CELL_STAMP = "flz.cell"
 SEQ_STAMP = "flz.seq"
 KEY_STAMP = "flz.key"
 
+#: The item index of an invocation that runs no work item; the core refuses its
+#: part.
+NO_ITEM = 2**32 - 1
+
 #: What a spawn with an id does when that id is already running.
 IfRunning = Literal["deliver", "error"]
 
@@ -129,6 +133,7 @@ class Ctx(Generic[S, O_contra]):
         "_now",
         "_bridge",
         "_token",
+        "_item",
         "_offset",
         "_identity",
         "_ordinal",
@@ -158,6 +163,7 @@ class Ctx(Generic[S, O_contra]):
         state: S,
         bridge: Core | Any,
         token: int,
+        item: int = NO_ITEM,
         offset: int | None = None,
         compensating: bool = False,
     ) -> None:
@@ -169,6 +175,9 @@ class Ctx(Generic[S, O_contra]):
         self._now = now
         self._bridge = bridge
         self._token = token
+        # The index of this invocation's work item in its activation, which a
+        # part names.
+        self._item = item
         # The input-log offset of the item this invocation runs: a spawn
         # carries it so a crash re-run of the same input resolves to the worker
         # the first run spawned.
@@ -244,6 +253,30 @@ class Ctx(Generic[S, O_contra]):
             )
         for target in targets:
             self._release(target, value, key, metadata)
+
+    def part(self, value: O_contra) -> None:
+        """Send a part: a preview of the output this invocation is producing,
+        which leaves now rather than when the handler returns.
+
+        It previews the tasklet's own output channel and is encoded as
+        :meth:`emit` would encode ``value`` there. It never waits: a part that
+        cannot leave at once is dropped, and a replayed input sends none. A
+        listener receives it, numbered from 0 within each attempt; a sink never
+        does, and nothing about it is durable. Raises
+        :class:`~flezha.errors.FlezhaError` coded ``part.no_sink`` when the
+        output channel does not end in a sink (a ``response()`` end is not one),
+        and ``part.outside_invocation`` through a context kept past its
+        invocation.
+        """
+        # The core previews the tasklet's first output channel and refuses one
+        # that ends in no sink, so a channel with no plugin end sends no bytes.
+        channel = self._outgoing[0] if self._outgoing else None
+        payload = (
+            channel.sink_encode(value)
+            if channel is not None and channel.sink_encode is not None
+            else b""
+        )
+        self._bridge.part(self._token, self._item, payload)
 
     def timer_after(self, milliseconds: int) -> int:
         """Register a processing-time timer ``milliseconds`` from ``now``.

@@ -26,6 +26,9 @@ def echo_operator(c: flezha.Channels) -> None:
 flezha.create_runner("default").register_factory(echo_operator).run()
 ```
 
+- **Preview an output while it is produced.** `ctx.part(value)` sends a
+  listener a preview of the tasklet's output while `run` is still working; a
+  sink never sees it.
 - **Run a graph with no controller.** `LocalOperator.start` takes the same
   operator and runs its declared graph in this process — for trying Flezha out
   and for developing an operator. State is held in memory and nothing is

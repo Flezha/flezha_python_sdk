@@ -21,7 +21,7 @@ from . import codec as _codec
 from . import determinism
 from .builder import ChannelSpec, ClassSpec, ConsumerEdge, TaskNode, apply_transforms
 from .cell_state import fold_restore
-from .ctx import Ctx
+from .ctx import NO_ITEM, Ctx
 from .errors import FlezhaError
 from .logger import log
 from .tasklet import Tasklet
@@ -300,6 +300,7 @@ async def invoke(
     replay: bool,
     body: Callable[[Ctx[Any, Any]], Any],
     offset: int | None = None,
+    item: int = NO_ITEM,
 ) -> tuple[Ctx[Any, Any], Any]:
     """Run user code against one cell, and keep the state it produced.
 
@@ -322,6 +323,7 @@ async def invoke(
         state=cell.state,
         bridge=deps.bridge,
         token=activation["token"],
+        item=item,
         offset=offset,
         compensating=activation.get("kind") == "compensate_run",
     )
@@ -400,7 +402,7 @@ async def _answer_kind(
 async def _run_work(cell: Cell, activation: dict[str, Any], deps: DispatchDeps) -> dict[str, Any]:
     effects: list[dict[str, Any]] = []
 
-    for item in activation.get("items") or ():
+    for index, item in enumerate(activation.get("items") or ()):
         now = item.get("now") or 0
         try:
             ctx, _ = await invoke(
@@ -411,6 +413,7 @@ async def _run_work(cell: Cell, activation: dict[str, Any], deps: DispatchDeps) 
                 bool(item.get("replay")),
                 lambda c, item=item: _run_item(cell, item, c),
                 item.get("consumed_offset"),
+                index,
             )
             effects.append(ctx.effect(item.get("consumed_offset")))
         except Exception as error:  # noqa: BLE001 - the verdict is the report
