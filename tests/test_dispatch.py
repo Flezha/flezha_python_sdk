@@ -173,6 +173,25 @@ def test_a_key_request_answers_one_entry_per_payload(fake_core: FakeCore) -> Non
     assert [answer["keys"] for answer in result["prepared"]] == [["a"], ["b"]]
 
 
+def test_a_key_request_answers_the_keyed_consumer_behind_an_unkeyed_one(
+    fake_core: FakeCore,
+) -> None:
+    """The keys are the keyed consumer's, whatever an unkeyed consumer declared
+    before it filters out."""
+
+    @flezha.unbounded_operator("split_keyed")
+    def split_keyed(c: flezha.Channels) -> None:
+        entry = c.input("in", codec="text")
+        entry.filter(lambda value: value == "drop").into(echo).sink("dropped")
+        entry.filter(lambda value: value != "drop").key_by(fixture_support.prefix).into(
+            fixtures.transform_label
+        ).sink("out")
+
+    crossing = key_request(11, "split_keyed", b"a:1", b"drop")
+    prepared = answered(crossing, deps_for(split_keyed, fake_core))["prepared"]
+    assert [answer["keys"] for answer in prepared] == [["a"], []]
+
+
 def test_a_per_payload_refusal_does_not_fail_the_whole_crossing(fake_core: FakeCore) -> None:
     @flezha.tasklet(name="routed")
     class Routed:

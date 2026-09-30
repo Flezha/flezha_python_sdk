@@ -501,10 +501,20 @@ def _prepare(activation: dict[str, Any], registered: RegisteredClass) -> dict[st
         return failed(activation["token"], "a key request carried no payloads", non_retryable=True)
 
     channel = registered.channel_at(request["channel"])
-    # The crossing answers one key set for the whole payload, so it reads the
-    # first consumer edge — the one the core routes the answer to.
-    edge = channel.consumers[0] if channel and channel.consumers else None
-    task = registered.spec.tasklets[edge.tasklet].task if edge is not None else None
+    # The crossing answers one key set for the whole payload, which the core
+    # hands every keyed consumer, so it reads the first keyed consumer's edge:
+    # an unkeyed one's filter must not drop the key.
+    edges = channel.consumers if channel else []
+    tasklets = registered.spec.tasklets
+    edge = next(
+        (
+            e
+            for e in edges
+            if e.key_by is not None or tasklets[e.tasklet].task.cells_for is not None
+        ),
+        edges[0] if edges else None,
+    )
+    task = tasklets[edge.tasklet].task if edge is not None else None
 
     answers: list[dict[str, Any]] = []
     for payload in request["payloads"]:
