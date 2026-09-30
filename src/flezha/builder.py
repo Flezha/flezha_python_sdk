@@ -19,6 +19,7 @@ from typing import Any, Generic, TypeVar
 
 from . import codec as _codec
 from . import route_latest as _latest_router
+from .call import Response, call_link, response_decoder
 from .codec import ChannelCodec
 from .errors import FlezhaError
 from .tasklet import Tasklet
@@ -152,8 +153,8 @@ class ChannelSpec:
     retry_backoff_ms: int | None = None
     keyed: bool = False
     sink: str | None = None
-    """The channel's name once a plugin end, a sink or a response, is attached;
-    ``None`` means none. The core's answer names no sink for a response."""
+    """The channel's name once a plugin end, a sink, a response or a call, is
+    attached; ``None`` means none. The core's answer names no sink for the last two."""
     decode: Callable[[Any], Any] | None = None
     sink_encode: Callable[[Any], bytes] | None = None
     """The plugin sink's payload encoder, set with the sink by ``sink``.
@@ -162,6 +163,9 @@ class ChannelSpec:
     with the class codec, so encoding one with this hands the consuming
     tasklet bytes it cannot read.
     """
+    call_end: ConsumerEdge | None = None
+    """A ``call(...)`` end's chain, applied to each value before it becomes a
+    request; its ``tasklet`` is -1, since a call feeds none."""
 
 
 @dataclass(slots=True)
@@ -558,6 +562,49 @@ class Edge(Generic[T]):
         """
         return self._plug_end({"link": "response"}, None, encode, codec)
 
+    def call(
+        self,
+        target: str | None = None,
+        *,
+        factory: str | None = None,
+        deadline_ms: int,
+        create: bool = True,
+        channel: str | None = None,
+        codec: ChannelCodec | None = None,
+    ) -> Edge[Response[T, Any]]:
+        """End this edge's chain in a call to another operator, and answer the
+        edge of its Response channel.
+
+        Each value that reaches the end, after this chain's transforms and key,
+        is one request to ``target`` (an instance, or a partition group) or to
+        an instance of ``factory`` (after a ``key_by``, the one the key names,
+        started unless ``create`` is false). ``channel`` names the callee's entry
+        channel. One ``codec`` writes the request as ``sink`` writes and reads
+        the answer as ``input`` reads, JSON when none is named. The outcome
+        arrives later as a :class:`~flezha.call.Response` on the entry channel
+        ``<this channel>.response``, which must feed a tasklet, the calling one
+        included. A channel ends in one sink, one response or one call.
+        """
+        spec = self._plug_channel(None)
+        named = self._builder.channel_codec(spec, codec, None) or "json"
+        response = f"{spec.name}.response"
+        # The call closes this edge's chain: its transforms and key are the end's.
+        self._record(spec, call_link(target, factory, deadline_ms, create, channel, response))
+        spec.call_end = ConsumerEdge(-1, list(self._transforms), self._pending.get("key_by"))
+        if spec.sink is None:
+            spec.sink = spec.name
+            spec.sink_encode = _codec.channel_encoder(named, spec)
+        return self._builder.input(response, decode=response_decoder(_codec.channel_decoder(named)))
+
+    def _plug_channel(self, name: str | None) -> ChannelSpec:
+        """The channel a plugin end attaches to; an entry channel has none."""
+        if self._from[0] != "tasklet":
+            # Not a topology rule the core states: a record whose entry channel
+            # carries a sink derives a plugin channel with no producer, and
+            # there is nothing in it that says which end fed the plugin.
+            raise FlezhaError("topology.sink_on_entry", {"channel": name or "<derived>"})
+        return self._channel()
+
     def _plug_end(
         self,
         link: Link,
@@ -567,12 +614,7 @@ class Edge(Generic[T]):
     ) -> Edge[T]:
         """Attach a plugin end, a sink or a response: both leave as a plugin
         output encoded the same way, and the core refuses a second end."""
-        if self._from[0] != "tasklet":
-            # Not a topology rule the core states: a record whose entry channel
-            # carries a sink derives a plugin channel with no producer, and
-            # there is nothing in it that says which end fed the plugin.
-            raise FlezhaError("topology.sink_on_entry", {"channel": name or "<derived>"})
-        channel = self._channel()
+        channel = self._plug_channel(name)
         # A chain of its own: the end terminates the channel rather than this
         # edge, so ``into(...)`` still chains after it.
         if name is not None:

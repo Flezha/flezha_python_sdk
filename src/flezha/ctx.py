@@ -429,8 +429,16 @@ class Ctx(Generic[S, O_contra]):
         else:
             for edge in channel.consumers:
                 self.outputs.extend(self._edge_outputs(channel, edge, value, key, metadata))
-        if channel.sink is not None:
-            self.outputs.append(self._plugin_output(channel, value, key, metadata))
+        if channel.call_end is not None:
+            # A call end's requests: the value through the call chain, each
+            # keyed by the chain alone. The core stamps them as calls at settle.
+            end = channel.call_end
+            for request in apply_transforms(end.transforms, value):
+                chain_key = None if end.key_by is None else end.key_by(request)
+                self.outputs.append(self._plugin_output(channel, request, chain_key, metadata))
+        elif channel.sink is not None:
+            resolved = key if key is not None else self.cell_key
+            self.outputs.append(self._plugin_output(channel, value, resolved, metadata))
 
     def _bounded_output(
         self, channel: ChannelSpec, edge: ConsumerEdge, value: Any
@@ -495,10 +503,9 @@ class Ctx(Generic[S, O_contra]):
 
         An edge's transforms belong to that edge, so they never reach the sink.
         """
-        resolved = key if key is not None else self.cell_key
-        if channel.keyed and resolved is None:
+        if channel.keyed and key is None:
             raise FlezhaError("runtime.key_required_on_keyed_channel", {"channel": channel.name})
-        resolved = None if resolved is None else str(resolved)
+        resolved = None if key is None else str(key)
         # `sink` sets the encoder with the sink, so a plugin channel has one.
         assert channel.sink_encode is not None
         stamps = self._meta_list(metadata) + self._identity_stamps(channel, resolved)

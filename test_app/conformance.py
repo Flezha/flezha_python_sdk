@@ -31,6 +31,7 @@ from typing import Any
 import flezha
 from fixtures import hybrid_channel_operator
 from fixtures_bounded import tier_commit_block_bounded
+from fixtures_call import render
 from flezha import graph
 from flezha.native import Core
 
@@ -48,6 +49,7 @@ SURFACES = (
     "shorthand",
     "shorthand_typed_output",
     "response",
+    "call",
 )
 
 # The two topologies the fixture cites rather than re-spells: this app's own
@@ -147,10 +149,12 @@ class Interpreter:
             return
         edge = self._handle(head)
         for link in rest.split("."):
-            edge = self._apply_link(edge, link)
+            edge = self._apply_link(edge, link, head)
 
-    def _apply_link(self, edge: Any, link: str) -> Any:
+    def _apply_link(self, edge: Any, link: str, role: str) -> Any:
         verb, arg = split_call(link)
+        if verb.startswith("call"):
+            return self._call(edge, verb, arg, role)
         if verb == "map":
             return edge.map(lambda value: value)
         if verb == "filter":
@@ -180,6 +184,22 @@ class Interpreter:
             # was built — one step earlier than the step that names it.
             return edge
         raise AssertionError(f"the fixture spells a link this interpreter does not map: {verb}")
+
+    def _call(self, edge: Any, verb: str, arg: str, role: str) -> Any:
+        """``<x>.call…(<arg>)`` — a 500 ms call whose Response channel feeds
+        ``role``, the tasklet that produces ``x``, unless the step leaves it unread."""
+        target: dict[str, Any] = {
+            "call": {"target": arg},
+            "call_unread": {"target": arg},
+            "call_factory": {"factory": arg},
+            "call_factory_nocreate": {"factory": arg, "create": False},
+            "call_deadline": {"target": "pricing"},
+        }[verb]
+        deadline_ms = int(arg) if verb == "call_deadline" else 500
+        response = edge.call(**target, deadline_ms=deadline_ms, codec="text")
+        if verb != "call_unread":
+            response.map(render).into(self._tasklet(role))
+        return response
 
     def _merge(self, builder: flezha.Channels, arg: str) -> None:
         """``merge(<task>, <x>, <x>…)`` — every listed source under the identity mapping."""

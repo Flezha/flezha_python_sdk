@@ -29,6 +29,26 @@ flezha.create_runner("default").register_factory(echo_operator).run()
 - **Preview an output while it is produced.** `ctx.part(value)` sends a
   listener a preview of the tasklet's output while `run` is still working; a
   sink never sees it.
+- **Answer a caller, or call another operator.** A channel ends in one `sink`,
+  one `response()` or one `call(...)`. `response()` answers the outside caller
+  whose input caused the value. `call("pricing", deadline_ms=500)` or
+  `call(factory="agent", deadline_ms=60_000, create=False, channel="turn")`
+  sends each value, after the chain's transforms and key, to another operator
+  (a factory call reaches the instance the chain's `key_by` names); one `codec=`
+  writes the request and reads the answer, JSON when none is named. The outcome
+  arrives later as a `flezha.Response` on the entry channel
+  `<channel>.response`, which must feed a tasklet, the calling one included:
+  `request`, `ok`, then `value` or `error` (a `FlezhaError`, `call.timeout`
+  once the deadline passes), `target` (the callee's instance id) and `created`.
+
+  ```python
+  (
+      c.input("in", codec="text").into(Account).named("gateway")
+      .key_by(lambda line: line.split(":", 1)[0])
+      .call(factory="agent", deadline_ms=30_000, codec="text")
+      .into(Outcome)  # Outcome.run takes a flezha.Response[str, str]
+  )
+  ```
 - **Run a graph with no controller.** `LocalOperator.start` takes the same
   operator and runs its declared graph in this process — for trying Flezha out
   and for developing an operator. State is held in memory and nothing is
