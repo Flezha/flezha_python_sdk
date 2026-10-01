@@ -476,14 +476,13 @@ def test_a_misplaced_setting_is_refused_naming_it_and_its_parent(
     assert field in str(refused.value) and f"'{parent}'" in str(refused.value)
 
 
-def test_a_remote_flow_class_is_refused_by_name() -> None:
+def test_a_flow_class_may_keep_its_work_remote() -> None:
     @flezha.operator("remote_flow", durable="remote")
     def stream(c: flezha.Channels) -> None:
         c.input("in").into(echo).sink("out")
 
-    with pytest.raises(FlezhaError) as refused:
-        declare(stream)
-    assert codes(refused.value) == ["topology.remote_on_flow"]
+    declare(stream)
+    assert graph.to_host_class_decl(stream.spec).get("durable") == "remote"
 
 
 @pytest.mark.parametrize(

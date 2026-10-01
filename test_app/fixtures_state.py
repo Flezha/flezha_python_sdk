@@ -310,6 +310,15 @@ def tier_store_operator(c: flezha.Channels) -> None:
     ).keyed().sink("sink")
 
 
+@flezha.operator(
+    "remote_tier_store", run={"flow": {"exactly": "effectively_once"}}, durable="remote"
+)
+def remote_tier_store_operator(c: flezha.Channels) -> None:
+    """``tier_store`` kept ``durable: remote``: an input is acknowledged only once
+    the durability backend holds the records it produced."""
+    tier_store_operator.declaration(c)
+
+
 # -- tier_chain --------------------------------------------------------------
 #
 # An effectively-once stream of two tasklets. `tier_relay` counts what it
