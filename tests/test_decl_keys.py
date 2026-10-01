@@ -142,6 +142,16 @@ def every_steps_key(c: flezha.Channels) -> None:
     c.input("in").into(echo).sink()
 
 
+@flezha.operator("every_embedded_key", run={"steps": {"each": "per_input"}})
+def every_embedded_key(c: flezha.Channels) -> None:
+    c.input("in").into(echo)
+
+
+@flezha.operator("every_embedding_key")
+def every_embedding_key(c: flezha.Channels) -> None:
+    c.input("in").into(every_embedded_key, input="in").sink()
+
+
 def _emitted() -> dict[str, set[str]]:
     """Every key the Python builder can produce, over the fixtures above."""
     emitted: dict[str, set[str]] = {
@@ -149,8 +159,12 @@ def _emitted() -> dict[str, set[str]]:
         "channel": set(),
         "tasklet": set(),
     }
-    for operator in (every_key, static_key, every_steps_key):
-        decl = graph.to_host_class_decl(operator.spec)
+    declarations = [
+        graph.to_host_class_decl(operator.spec)
+        for operator in (every_key, static_key, every_steps_key, every_embedding_key)
+    ]
+    declarations.append(graph.to_host_class_decl(every_embedded_key.spec, embedded=True))
+    for decl in declarations:
         emitted["class"] |= set(decl)
         for channel in decl.get("channels", []):
             emitted["channel"] |= set(channel)

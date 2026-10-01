@@ -118,6 +118,14 @@ class TaskNode:
     task: Tasklet[Any, Any]
     output: ChannelSpec | None = None
     """The one channel this node produces on, created on first wiring."""
+    embeds: Any = None
+    """The steps :class:`~flezha.operator.Operator` this node runs one stepped
+    instance of per edge key, holding no cells of its own; ``None`` for a tasklet."""
+    input: str | None = None
+    """The embedded class's entry channel the edge feeds, when it declares several."""
+    encode: Callable[[Any], bytes] | None = None
+    """How a value on an edge into this node is written: the embedded class's
+    entry reads it, so its codec; ``None`` for a tasklet, which reads the class codec."""
 
 
 @dataclass(slots=True)
@@ -156,6 +164,9 @@ class ChannelSpec:
     """The channel's name once a plugin end, a sink, a response or a call, is
     attached; ``None`` means none. The core's answer names no sink for the last two."""
     decode: Callable[[Any], Any] | None = None
+    entry_encode: Callable[[Any], bytes] | None = None
+    """An entry channel's writer, its codec's, JSON when it names none: what a
+    tasklet of a class embedding this one writes a value into it with."""
     sink_encode: Callable[[Any], bytes] | None = None
     """The plugin sink's payload encoder, set with the sink by ``sink``.
 
@@ -177,6 +188,11 @@ def _branch(tree: Any) -> str | None:
     if isinstance(tree, dict) and len(tree) == 1:
         return next(iter(tree))
     return None
+
+
+def runs_in_steps(run: Any) -> bool:
+    """Whether a class whose ``run`` setting is ``run`` runs in steps."""
+    return _branch(run) == "steps"
 
 
 @dataclass(slots=True)
@@ -205,7 +221,7 @@ class ClassSpec:
         this one predicate, so they cannot disagree about which side applies
         the edge.
         """
-        return _branch(self.run) == "steps"
+        return runs_in_steps(self.run)
 
     @property
     def keeps_work(self) -> bool:
@@ -231,6 +247,10 @@ class Channels:
         self.channels: list[ChannelSpec] = []
         self.compact_after_bytes_value: int | None = None
         self.merge_groups = 0
+        # The flow classes being inlined, the innermost last.
+        self._inlining: list[_Inline] = []
+        # One node per embedded steps class and name, so two unnamed mentions unify.
+        self._embedding_tasks: dict[tuple[str, str | None], Tasklet[Any, Any]] = {}
 
     # -- class-level declarations ----------------------------------------
 
@@ -252,10 +272,17 @@ class Channels:
         ``decode`` turns the wire bytes into the value a handler sees, ``codec``
         names a format from :data:`~flezha.codec.ChannelCodec` instead, and with
         neither the bytes are JSON.
+
+        Inside a flow class being inlined, it answers the edge that feeds it.
         """
+        if self._inlining:
+            inline = self._inlining[-1]
+            inline.entries.append(name)
+            return inline.feed
         channel = ChannelSpec(index=len(self.channels), name=name, kind="entry")
         named = self.channel_codec(channel, codec, decode)
         channel.decode = decode or _codec.channel_decoder(named)
+        channel.entry_encode = _codec.channel_encoder(named or "json", channel)
         self.channels.append(channel)
         return Edge(self, ("entry", channel), {})
 
@@ -322,7 +349,7 @@ class Channels:
         convention every SDK mirrors — so a diamond that fans out and back in
         has one instance, not two.
         """
-        identity = name or task.name
+        identity = self._prefixed(name or task.name)
         for node in self.tasklets:
             if node.name == identity and node.task is task:
                 return node
@@ -334,6 +361,69 @@ class Channels:
         node = TaskNode(index=len(self.tasklets), name=identity, task=task)
         self.tasklets.append(node)
         return node
+
+    def embed(
+        self,
+        feed: Edge[Any],
+        operator: Any,
+        name: str | None,
+        input: str | None,
+        max_cells: int | None,
+    ) -> Edge[Any]:
+        """``feed`` into an operator class: a steps class becomes a node that
+        runs one stepped instance of it per key of the edge, its exit output
+        continuing on the edge answered; a flow class is inlined."""
+        if not operator.runs_in_steps:
+            return self._inline(feed, operator, name, input)
+        cache = (operator.factory_id, name)
+        if cache not in self._embedding_tasks:
+            self._embedding_tasks[cache] = Tasklet(
+                _embedding_body, name=operator.factory_id, max_cells=max_cells
+            )
+        node = self.node_for(self._embedding_tasks[cache], name)
+        node.embeds = operator
+        node.input = input
+        entries = [c for c in operator.spec.channels if c.kind == "entry"]
+        entry = next((c for c in entries if c.name == input), entries[0] if entries else None)
+        node.encode = None if entry is None else entry.entry_encode
+        feed._close(node, {"link": "into", "tasklet": node.index})
+        return Edge(self, ("tasklet", node), {})
+
+    def _inline(
+        self, feed: Edge[Any], operator: Any, name: str | None, input: str | None
+    ) -> Edge[Any]:
+        """Run a flow class's declaration on this builder: its entry is
+        ``feed`` and every node it names carries its prefix. The edge answered
+        is its exit's, the one node it added that nothing consumes (its last
+        when every node feeds another or a sink)."""
+        first = len(self.tasklets)
+        self._inlining.append(_Inline(self._prefixed(name or operator.factory_id), feed))
+        try:
+            operator.declaration(self)
+        finally:
+            inline = self._inlining.pop()
+        entries = sorted(set(inline.entries))
+        if entries != [input] if input is not None else len(entries) != 1:
+            raise FlezhaError(
+                "topology.embedded_entry_ambiguous",
+                {"inner": operator.factory_id, "channels": ", ".join(entries)},
+            )
+        added = self.tasklets[first:]
+        exits = [node for node in added if node.output is None]
+        if len(exits) > 1:
+            raise FlezhaError(
+                "topology.embedded_exit_ambiguous",
+                {
+                    "inner": operator.factory_id,
+                    "channels": ", ".join(sorted(n.name for n in exits)),
+                },
+            )
+        exit = exits[0] if exits else added[-1] if added else None
+        return feed if exit is None else Edge(self, ("tasklet", exit), {})
+
+    def _prefixed(self, name: str) -> str:
+        """A node's identity inside the class being inlined: ``<prefix>.<name>``."""
+        return f"{self._inlining[-1].prefix}.{name}" if self._inlining else name
 
     def output_channel_for(self, node: TaskNode) -> ChannelSpec:
         """The channel this node produces on, created on first use.
@@ -355,6 +445,19 @@ class Channels:
         self.channels.append(channel)
         node.output = channel
         return channel
+
+
+@dataclass(slots=True)
+class _Inline:
+    """A flow class whose declaration runs on the outer builder."""
+
+    prefix: str
+    feed: Edge[Any]
+    entries: list[str] = field(default_factory=list)
+
+
+def _embedding_body(value: Any) -> None:
+    """The handler of a node that embeds a steps class, which the core never runs."""
 
 
 class Merge:
@@ -482,8 +585,29 @@ class Edge(Generic[T]):
             arm(self)
         return self
 
-    def into(self, task: Tasklet[T, O], name: str | None = None) -> Edge[O]:
-        """Wire this edge into a tasklet."""
+    def into(
+        self,
+        task: Tasklet[T, O] | Any,
+        name: str | None = None,
+        *,
+        input: str | None = None,
+        max_cells: int | None = None,
+    ) -> Edge[O]:
+        """Wire this edge into a tasklet, or into an operator class.
+
+        A class that runs in steps becomes a node that runs one stepped
+        instance of it per key of this edge (one on an unkeyed edge), named by
+        its factory id, with its own state and journal; the edge answered
+        carries its exit tasklet's output. ``max_cells`` caps the instances a
+        keyed edge keeps at once. A class that runs in flow is inlined: its
+        graph joins this one, fed by this edge, its nodes named
+        ``<factory_id>.<node>``, and the edge answered is its exit's.
+        ``input`` names the class's entry channel when it declares several.
+        """
+        from .operator import Operator
+
+        if isinstance(task, Operator):
+            return self._builder.embed(self, task, name, input, max_cells)
         node = self._builder.node_for(task, name)
         self._close(node, {"link": "into", "tasklet": node.index})
         return Edge(self._builder, ("tasklet", node), {})
