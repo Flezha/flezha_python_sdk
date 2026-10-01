@@ -1,5 +1,5 @@
-"""Twins of the reference's durable structured bounded fixtures
-(``test/apps/rust_runner/src/bounded.rs`` and ``bounded_loop.rs``) under the
+"""Twins of the reference's durable structured steps fixtures
+(``test/apps/rust_runner/src/steps.rs`` and ``steps_loop.rs``) under the
 same factory ids, tasklet names, channel names and output bytes.
 
 Entry payloads and plugin frames are UTF-8 text on the wire, as in the
@@ -24,11 +24,11 @@ from collections.abc import Callable
 from typing import Any
 
 import flezha
-from fixture_support import prefix
+from fixture_support import FIXTURE_DURABLE, prefix
 
 # -- the release gate --------------------------------------------------------
 
-RELEASE_ENV = "FLEZHA_BOUNDED_E2E_RELEASE"
+RELEASE_ENV = "FLEZHA_STEPS_E2E_RELEASE"
 
 
 async def block_until_released() -> None:
@@ -165,7 +165,7 @@ def undoing(record: str) -> Callable[[list[Any], flezha.Ctx[Any, Any]], None]:
     return compensate
 
 
-# -- echo_bounded -----------------------------------------------------------
+# -- echo_steps -----------------------------------------------------------
 #
 # One tasklet, run once: emits its first message back, so the pass ends and
 # the controller deregisters the instance.
@@ -178,14 +178,14 @@ def _echo(value: str, ctx: flezha.Ctx[None, Any]) -> None:
 echo = stateless_step("echo", _echo)
 
 
-@flezha.bounded_operator("echo_bounded")
-def echo_bounded(c: flezha.Channels) -> None:
+@flezha.operator("echo_steps", run="steps", durable=FIXTURE_DURABLE)
+def echo_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(echo).sink("out")
 
 
-# -- typed_once_bounded -----------------------------------------------------
+# -- typed_once_steps -----------------------------------------------------
 #
-# A `once` bounded operator whose entry decodes JSON: its one pass runs over the
+# A `once` steps operator whose entry decodes JSON: its one pass runs over the
 # message it was spawned or sent with, prints what it read, emits it to the
 # `placed` sink and completes with it.
 
@@ -200,16 +200,16 @@ def _once_placed(value: dict[str, Any], ctx: flezha.Ctx[None, Any]) -> None:
 once_placed = stateless_step("once_placed", _once_placed)
 
 
-@flezha.bounded_operator("typed_once_bounded")
-def typed_once_bounded(c: flezha.Channels) -> None:
+@flezha.operator("typed_once_steps", run="steps", durable=FIXTURE_DURABLE)
+def typed_once_steps(c: flezha.Channels) -> None:
     c.input("order", codec="json").into(once_placed).sink("placed")
 
 
-# -- commit_block_bounded / sync_durable_bounded ---------------------------
+# -- commit_block_steps / sync_durable_steps ---------------------------
 #
 # Task A commits durable state, task B blocks until the resumed runner sets the
 # release variable — so a SIGKILL lands with A's state already on the WAL and B
-# never finished. `sync_durable_bounded` is the same chain declaring
+# never finished. `sync_durable_steps` is the same chain declaring
 # SYNCHRONOUS remote durability, which is what lets the kill-the-disk drill
 # destroy the state directory and still resume with A committed.
 
@@ -227,9 +227,11 @@ def commit_block_chain(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(commit_a).named("mid").into(block_b)
 
 
-commit_block_bounded = flezha.bounded_operator("commit_block_bounded")(commit_block_chain)
+commit_block_steps = flezha.operator("commit_block_steps", run="steps", durable=FIXTURE_DURABLE)(
+    commit_block_chain
+)
 
-sync_durable_bounded = flezha.bounded_operator("sync_durable_bounded", sync_durability=True)(
+sync_durable_steps = flezha.operator("sync_durable_steps", run="steps", durable="remote")(
     commit_block_chain
 )
 
@@ -242,14 +244,14 @@ sync_durable_bounded = flezha.bounded_operator("sync_durable_bounded", sync_dura
 # marker once per run and no journal file exists.
 
 
-@flezha.bounded_operator("optout_commit_block", persistent=False)
+@flezha.operator("optout_commit_block", run="steps", durable=False)
 def optout_commit_block(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(commit_a).sink(
         "mid", encode=lambda value: f"a-ran:{value}".encode()
     ).into(block_b)
 
 
-# -- tier_commit_block_bounded ----------------------------------------------
+# -- tier_commit_block_steps ----------------------------------------------
 #
 # The keyed hybrid twin. Task A commits durable state AND emits
 # `committed:<input>` under a stable key on a keyed hybrid channel; task B
@@ -262,12 +264,12 @@ tier_commit_a = durable_step(
 )
 
 
-@flezha.bounded_operator("tier_commit_block_bounded")
-def tier_commit_block_bounded(c: flezha.Channels) -> None:
+@flezha.operator("tier_commit_block_steps", run="steps", durable=FIXTURE_DURABLE)
+def tier_commit_block_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(tier_commit_a).keyed().sink("mid").into(block_b)
 
 
-# -- saga_block_bounded -----------------------------------------------------
+# -- saga_block_steps -----------------------------------------------------
 #
 # SA and SB commit durable state and compensate; SC fails, triggering
 # reverse-order rollback (SB then SA). SA's compensation BLOCKS, so a SIGKILL
@@ -284,12 +286,12 @@ saga_b = durable_step("saga_b", compensate=lambda outputs, ctx: None)
 saga_c = failing_step("saga_c")
 
 
-@flezha.bounded_operator("saga_block_bounded")
-def saga_block_bounded(c: flezha.Channels) -> None:
+@flezha.operator("saga_block_steps", run="steps", durable=FIXTURE_DURABLE)
+def saga_block_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(saga_a).named("s1").into(saga_b).named("s2").into(saga_c)
 
 
-# -- keyed_block_bounded / keyed_saga_bounded -----------------------------
+# -- keyed_block_steps / keyed_saga_steps -----------------------------
 #
 # The entry's comma-separated key list is split into one value per key, and a
 # `key_by` on that value mints one Cell per key of a durable compensable
@@ -319,19 +321,19 @@ def keyed_commits(c: flezha.Channels) -> Any:
     )
 
 
-@flezha.bounded_operator("keyed_block_bounded")
-def keyed_block_bounded(c: flezha.Channels) -> None:
+@flezha.operator("keyed_block_steps", run="steps", durable=FIXTURE_DURABLE)
+def keyed_block_steps(c: flezha.Channels) -> None:
     keyed_commits(c).into(block_b)
 
 
-@flezha.bounded_operator("keyed_saga_bounded")
-def keyed_saga_bounded(c: flezha.Channels) -> None:
+@flezha.operator("keyed_saga_steps", run="steps", durable=FIXTURE_DURABLE)
+def keyed_saga_steps(c: flezha.Channels) -> None:
     keyed_commits(c).into(keyed_fail)
 
 
-# -- outbox_block_bounded ---------------------------------------------------
+# -- outbox_block_steps ---------------------------------------------------
 #
-# A bounded output's identity. Task A commits durable state AND emits once,
+# A steps output's identity. Task A commits durable state AND emits once,
 # keyed `k` with one metadata pair, on a keyed hybrid channel; the output rides
 # A's Cell record and reaches the sink once A's stage commits. Task B blocks, so
 # a SIGKILL lands with A committed and B unfinished.
@@ -342,14 +344,14 @@ outbox_a = durable_step(
 )
 
 
-@flezha.bounded_operator("outbox_block_bounded")
-def outbox_block_bounded(c: flezha.Channels) -> None:
+@flezha.operator("outbox_block_steps", run="steps", durable=FIXTURE_DURABLE)
+def outbox_block_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(outbox_a).keyed().sink(
         "mid", encode=lambda value: f"a-out:{value}".encode()
     ).into(block_b)
 
 
-# -- undo_outbox_bounded ----------------------------------------------------
+# -- undo_outbox_steps ----------------------------------------------------
 #
 # A compensation's undo output. Task UA commits, emits its forward output on a
 # hybrid plugin channel, and compensates by EMITTING an undo record, which rides
@@ -369,14 +371,14 @@ undo_outbox_a = durable_step("undo_outbox_a", compensate=_undo_after_release)
 undo_outbox_c = failing_step("undo_outbox_c")
 
 
-@flezha.bounded_operator("undo_outbox_bounded")
-def undo_outbox_bounded(c: flezha.Channels) -> None:
+@flezha.operator("undo_outbox_steps", run="steps", durable=FIXTURE_DURABLE)
+def undo_outbox_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(undo_outbox_a).sink(
         "mid", encode=lambda value: f"out:{value}".encode()
     ).into(undo_outbox_c)
 
 
-# -- failed_stage_bounded ---------------------------------------------------
+# -- failed_stage_steps ---------------------------------------------------
 #
 # A failed stage delivers nothing. The entry's two values reach one
 # `failed_stage` Cell in order: the first emits on a plugin channel, so the
@@ -393,14 +395,14 @@ def _fail_on_b(value: str, ctx: flezha.Ctx[None, Any]) -> None:
 failed_stage = stateless_step("failed_stage", _fail_on_b)
 
 
-@flezha.bounded_operator("failed_stage_bounded")
-def failed_stage_bounded(c: flezha.Channels) -> None:
+@flezha.operator("failed_stage_steps", run="steps", durable=FIXTURE_DURABLE)
+def failed_stage_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(key_split).into(failed_stage).sink(
         "mid", encode=lambda value: f"lost:{value}".encode()
     )
 
 
-# -- branch_bounded ---------------------------------------------------------
+# -- branch_steps ---------------------------------------------------------
 #
 #     BranchA ─┬─▶ BranchB ─▶ BranchD
 #              └─▶ BranchC
@@ -443,8 +445,8 @@ async def _branch_leaf(value: str, ctx: flezha.Ctx[None, Any]) -> None:
 branch_d = stateless_step("branch_d", _branch_leaf)
 
 
-@flezha.bounded_operator("branch_bounded")
-def branch_bounded(c: flezha.Channels) -> None:
+@flezha.operator("branch_steps", run="steps", durable=FIXTURE_DURABLE)
+def branch_steps(c: flezha.Channels) -> None:
     # One channel, two consumers: THE fan-out. Both branches read exactly what
     # BranchA released on it (held edge, wired twice).
     mid = (
@@ -459,7 +461,7 @@ def branch_bounded(c: flezha.Channels) -> None:
     mid.into(branch_c).sink("c_out")
 
 
-# -- diamond_bounded --------------------------------------------------------
+# -- diamond_steps --------------------------------------------------------
 #
 #     DiamA ─┬─▶ DiamB1 ─▶ DiamB2(blocks) ─┬─▶ DiamJoin
 #            └─▶ DiamC ────────────────────┘
@@ -492,8 +494,8 @@ def _join(value: str, ctx: flezha.Ctx[None, Any]) -> None:
 diam_join = stateless_step("diam_join", _join)
 
 
-@flezha.bounded_operator("diamond_bounded")
-def diamond_bounded(c: flezha.Channels) -> None:
+@flezha.operator("diamond_steps", run="steps", durable=FIXTURE_DURABLE)
+def diamond_steps(c: flezha.Channels) -> None:
     # Held edge wired twice = the fan-out; two arms naming diam_join with no
     # node name = the fan-in, since two unnamed mentions are one node.
     fan = (
@@ -505,17 +507,17 @@ def diamond_bounded(c: flezha.Channels) -> None:
     fan.into(diam_c).sink("dc").into(diam_join).sink("j_out")
 
 
-# -- retry_bounded ----------------------------------------------------------
+# -- retry_steps ----------------------------------------------------------
 #
 # The per-cell retry ladder. Task RA commits durable state, forwards on a
 # hybrid channel, and compensates by emitting an undo record; `retry_flaky`
-# fails its first FLEZHA_BOUNDED_RETRY_FAILS attempts (none by default — each
+# fails its first FLEZHA_STEPS_RETRY_FAILS attempts (none by default — each
 # scenario arms it) and then emits `attempt:<n>:<input>`. One armed failure is
 # absorbed by the ladder, so the run completes and the sink sees attempt 2;
 # arming more failures than the ladder has attempts exhausts it, RA rolls back
 # and the run reports an error.
 
-RETRY_FAILS_ENV = "FLEZHA_BOUNDED_RETRY_FAILS"
+RETRY_FAILS_ENV = "FLEZHA_STEPS_RETRY_FAILS"
 
 # Attempts made in this process. A retry re-runs the tasklet of the same
 # instance in place and dispatch is cell-affine, so one counter is the whole
@@ -541,8 +543,8 @@ def _flaky(value: str, ctx: flezha.Ctx[None, Any]) -> None:
 retry_flaky = stateless_step("retry_flaky", _flaky)
 
 
-@flezha.bounded_operator("retry_bounded")
-def retry_bounded(c: flezha.Channels) -> None:
+@flezha.operator("retry_steps", run="steps", durable=FIXTURE_DURABLE)
+def retry_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(retry_a).sink(
         "mid", encode=lambda value: f"res:{value}".encode()
     ).into(retry_flaky).sink("out")
@@ -550,7 +552,7 @@ def retry_bounded(c: flezha.Channels) -> None:
 
 # -- the durable loop family -------------------------------------------------
 #
-# chat_loop_bounded is the durable-loop + suspension shape. One iteration per
+# chat_loop_steps is the durable-loop + suspension shape. One iteration per
 # inbox item: TURN commits the turn to Cell state, so a resumed iteration is
 # visible in the WAL, and REPLY emits the answer to the sink. Between turns the
 # loop finds an empty inbox at a committed boundary and PARKS — the instance is
@@ -563,12 +565,12 @@ def retry_bounded(c: flezha.Channels) -> None:
 # the number of turns TURN holds, so the session ends once that iteration
 # commits.
 #
-# stateless_loop_bounded is the same loop MINUS its stateful first tasklet:
+# stateless_loop_steps is the same loop MINUS its stateful first tasklet:
 # chat_reply alone holds no per-Cell state, so nothing writes a Cell WAL
 # and the instance's task-journal reaches the driver only if it rides the bind
 # itself.
 #
-# chat_rewind_bounded is the loop whose replying tasklet can be undone. The
+# chat_rewind_steps is the loop whose replying tasklet can be undone. The
 # undo handle lives in Cell state, because a rewind's compensation is rebuilt
 # from the journal and is handed NO retained outputs, so the hook reads the last
 # thing it said, retracts it and pops it.
@@ -628,24 +630,28 @@ chat_reply_undoable = flezha.tasklet(ChatReplyUndoable, name="chat_reply_undoabl
 
 # A loop here ends on an external stop, or on `bye` where TURN runs; the duration
 # backstop keeps a stray instance from outliving the test run.
-LOOP_KNOBS: dict[str, Any] = {"loop_mode": "per_input", "max_duration_ms": 600_000}
+LOOP_KNOBS: dict[str, Any] = {
+    "run": {"steps": {"each": "per_input"}},
+    "durable": FIXTURE_DURABLE,
+    "max_duration_ms": 600_000,
+}
 
 
 def chat_chain(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(chat_turn).named("mid").into(chat_reply).sink("out")
 
 
-chat_loop_bounded = flezha.bounded_operator("chat_loop_bounded", **LOOP_KNOBS)(chat_chain)
+chat_loop_steps = flezha.operator("chat_loop_steps", **LOOP_KNOBS)(chat_chain)
 
 
-@flezha.bounded_operator("stateless_loop_bounded", **LOOP_KNOBS)
-def stateless_loop_bounded(c: flezha.Channels) -> None:
+@flezha.operator("stateless_loop_steps", **LOOP_KNOBS)
+def stateless_loop_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(chat_reply).sink("out")
 
 
-# keyed_loop_bounded is a durable per-input loop keyed on its entry edge by
+# keyed_loop_steps is a durable per-input loop keyed on its entry edge by
 # the text before the first `:`, so one Cell counts one symbol's messages and
-# emits `<symbol>:<count>`: the shape a partition group of bounded operator members
+# emits `<symbol>:<count>`: the shape a partition group of steps operator members
 # takes.
 class KeyedLoopCount:
     def init_state(self, cell_key: str | None) -> dict[str, Any]:
@@ -663,24 +669,24 @@ class KeyedLoopCount:
 keyed_loop_count = flezha.tasklet(KeyedLoopCount, name="keyed_loop_count")
 
 
-@flezha.bounded_operator("keyed_loop_bounded", **LOOP_KNOBS)
-def keyed_loop_bounded(c: flezha.Channels) -> None:
+@flezha.operator("keyed_loop_steps", **LOOP_KNOBS)
+def keyed_loop_steps(c: flezha.Channels) -> None:
     c.input("trades", codec="text").key_by(prefix).into(keyed_loop_count).sink(
-        "keyed_loop_bounded_out"
+        "keyed_loop_steps_out"
     )
 
 
-@flezha.bounded_operator("chat_rewind_bounded", **LOOP_KNOBS)
-def chat_rewind_bounded(c: flezha.Channels) -> None:
+@flezha.operator("chat_rewind_steps", **LOOP_KNOBS)
+def chat_rewind_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(chat_turn).named("mid").into(chat_reply_undoable).sink("out")
 
 
-# failing_turn_loop_bounded: a session whose turn can fail after `note`
+# failing_turn_loop_steps: a session whose turn can fail after `note`
 # committed. `note` records each message and its undo moves the latest one to
 # `undone`; `answer` replies `re:<message>` on the sink `answer`, and fails on
 # `boom` always, on `boom-once` while the release env is unset (the first
 # runner of a crash drill), and on `boom-until-healed` until a `heal` turn set
-# its state. failing_turn_all_or_nothing_bounded is the same under
+# its state. failing_turn_undo_all_steps is the same under
 # all-or-nothing.
 class Note:
     def init_state(self, cell_key: str | None) -> dict[str, Any]:
@@ -730,11 +736,13 @@ def failing_turn_chain(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(note).named("noted").into(answer).sink("answer")
 
 
-failing_turn_loop_bounded = flezha.bounded_operator(
-    "failing_turn_loop_bounded", rollback_mode="keep_progress", **LOOP_KNOBS
+failing_turn_loop_steps = flezha.operator(
+    "failing_turn_loop_steps",
+    **{**LOOP_KNOBS, "run": {"steps": {"each": "per_input", "on_failure": "keep_progress"}}},
 )(failing_turn_chain)
-failing_turn_all_or_nothing_bounded = flezha.bounded_operator(
-    "failing_turn_all_or_nothing_bounded", rollback_mode="all_or_nothing", **LOOP_KNOBS
+failing_turn_undo_all_steps = flezha.operator(
+    "failing_turn_undo_all_steps",
+    **{**LOOP_KNOBS, "run": {"steps": {"each": "per_input", "on_failure": "undo_all"}}},
 )(failing_turn_chain)
 
 
@@ -754,14 +762,14 @@ async def _blocking_reply(value: str, ctx: flezha.Ctx[None, Any]) -> None:
 blocking_reply = stateless_step("blocking_reply", _blocking_reply)
 
 
-@flezha.bounded_operator("reply_block_loop_bounded", **LOOP_KNOBS)
-def reply_block_loop_bounded(c: flezha.Channels) -> None:
+@flezha.operator("reply_block_loop_steps", **LOOP_KNOBS)
+def reply_block_loop_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(chat_turn).named("mid").into(blocking_reply).sink("out")
 
 
 # -- the bench chains --------------------------------------------------------
 #
-# What `mix bench.bounded --scenario chain` drives: K durable pass-through
+# What `mix bench.steps --scenario chain` drives: K durable pass-through
 # steps in a line, the payload unchanged, so the sink receives the seed input
 # and the bench reads its own seq and send timestamp back. Each chain position
 # needs its own tasklet, so the sixteen are generated rather than written out;
@@ -772,7 +780,7 @@ BENCH_STEPS = [durable_step(f"bench_s{at}") for at in range(16)]
 
 
 def bench_chain(factory_id: str, steps: int, persistent: bool) -> flezha.Operator:
-    @flezha.bounded_operator(factory_id, persistent=persistent)
+    @flezha.operator(factory_id, run="steps", durable="local" if persistent else False)
     def declare(c: flezha.Channels) -> None:
         edge = c.input("in", codec="text").into(BENCH_STEPS[0])
         for at in range(1, steps):
@@ -788,7 +796,7 @@ bench_chain_16 = bench_chain("bench_chain_16", 16, True)
 bench_chain_optout_4 = bench_chain("bench_chain_optout_4", 4, False)
 
 
-# -- bench_loop_bounded -----------------------------------------------------
+# -- bench_loop_steps -----------------------------------------------------
 #
 # The long-lived loop the `turns` scenario drives: the chat loop's shape with a
 # BOUNDED per-turn state, so a million-turn soak snapshots the same few bytes at
@@ -822,22 +830,23 @@ bench_turn = flezha.tasklet(BenchTurn, name="bench_turn")
 
 
 # A day, not the chat loop's ten minutes: a soak outlives 600 s.
-@flezha.bounded_operator(
-    "bench_loop_bounded",
-    loop_mode="per_input",
+@flezha.operator(
+    "bench_loop_steps",
+    run={"steps": {"each": "per_input"}},
+    durable=FIXTURE_DURABLE,
     max_duration_ms=24 * 3_600_000,
 )
-def bench_loop_bounded(c: flezha.Channels) -> None:
+def bench_loop_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(bench_turn).named("mid").into(chat_reply).sink("out")
 
 
-# -- timer_loop_bounded -----------------------------------------------------
+# -- timer_loop_steps -----------------------------------------------------
 #
 # `in -> tick -> relay -> out`, a per-input loop whose `tick` arms a
 # processing-time timer of the delay `after:<ms>` names and emits `armed:<at>`;
 # its firing emits `fired:<at>` and opens a pass of its own. `slow:<ms>` holds
-# `tick` that long, for a firing due mid-pass (bounded.rs). On a runner booted
-# with `FLEZHA_BOUNDED_E2E_HOLD` the firing parks at the gate: `timer` inside
+# `tick` that long, for a firing due mid-pass (steps.rs). On a runner booted
+# with `FLEZHA_STEPS_E2E_HOLD` the firing parks at the gate: `timer` inside
 # `on_timer`, before `tick` commits; `relay` in `relay`, after.
 
 
@@ -870,7 +879,7 @@ class TimerTick:
 
 async def _hold_at(point: str) -> None:
     """Park at ``point`` when this runner was booted to hold there, until the release."""
-    if os.environ.get("FLEZHA_BOUNDED_E2E_HOLD") == point:
+    if os.environ.get("FLEZHA_STEPS_E2E_HOLD") == point:
         await block_until_released()
 
 
@@ -884,16 +893,16 @@ timer_tick = flezha.tasklet(TimerTick, name="tick")
 timer_relay = stateless_step("relay", _relay)
 
 
-@flezha.bounded_operator("timer_loop_bounded", **LOOP_KNOBS)
-def timer_loop_bounded(c: flezha.Channels) -> None:
+@flezha.operator("timer_loop_steps", **LOOP_KNOBS)
+def timer_loop_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(timer_tick).named("ticked").into(timer_relay).sink("out")
 
 
-# -- event_timer_bounded ----------------------------------------------------
+# -- event_timer_steps ----------------------------------------------------
 #
 # An entry-fed tasklet whose clock is the message's leading event time; each
 # message arms an event-time timer 100 later and emits `seen:<t>`, and the
-# firing emits `fired:<at>` (bounded.rs).
+# firing emits `fired:<at>` (steps.rs).
 
 
 class EventTick:
@@ -919,16 +928,16 @@ class EventTick:
 event_tick = flezha.tasklet(EventTick, name="event_tick")
 
 
-@flezha.bounded_operator("event_timer_bounded", **LOOP_KNOBS)
-def event_timer_bounded(c: flezha.Channels) -> None:
+@flezha.operator("event_timer_steps", **LOOP_KNOBS)
+def event_timer_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(event_tick).sink("out")
 
 
-# -- static_cell_bounded ----------------------------------------------------
+# -- static_cell_steps ----------------------------------------------------
 #
 # A per-input loop whose one tasklet declares three static cells and routes
 # every message to two of them; each cell that runs emits `<cell key>:<message>`,
-# so one message yields exactly two outputs (bounded.rs).
+# so one message yields exactly two outputs (steps.rs).
 
 
 class StaticCellStep:
@@ -944,8 +953,8 @@ static_cell_step = flezha.tasklet(
 )
 
 
-@flezha.bounded_operator("static_cell_bounded", **LOOP_KNOBS)
-def static_cell_bounded(c: flezha.Channels) -> None:
+@flezha.operator("static_cell_steps", **LOOP_KNOBS)
+def static_cell_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(static_cell_step).sink("out")
 
 
@@ -954,42 +963,42 @@ def static_cell_bounded(c: flezha.Channels) -> None:
 call_turn = stateless_step("call_turn", lambda value, ctx: ctx.emit(value))
 
 
-@flezha.bounded_operator("call_turn", **LOOP_KNOBS)
-def call_turn_bounded(c: flezha.Channels) -> None:
+@flezha.operator("call_turn", **LOOP_KNOBS)
+def call_turn_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(call_turn).response()
 
 
-#: Every bounded operator this app registers, in the reference's order.
+#: Every steps operator this app registers, in the reference's order.
 ALL: list[flezha.Operator] = [
-    echo_bounded,
-    typed_once_bounded,
-    commit_block_bounded,
-    sync_durable_bounded,
+    echo_steps,
+    typed_once_steps,
+    commit_block_steps,
+    sync_durable_steps,
     optout_commit_block,
-    tier_commit_block_bounded,
-    saga_block_bounded,
-    keyed_block_bounded,
-    keyed_saga_bounded,
-    outbox_block_bounded,
-    undo_outbox_bounded,
-    failed_stage_bounded,
-    chat_loop_bounded,
-    stateless_loop_bounded,
-    keyed_loop_bounded,
-    chat_rewind_bounded,
-    failing_turn_loop_bounded,
-    failing_turn_all_or_nothing_bounded,
-    reply_block_loop_bounded,
-    retry_bounded,
-    branch_bounded,
-    diamond_bounded,
+    tier_commit_block_steps,
+    saga_block_steps,
+    keyed_block_steps,
+    keyed_saga_steps,
+    outbox_block_steps,
+    undo_outbox_steps,
+    failed_stage_steps,
+    chat_loop_steps,
+    stateless_loop_steps,
+    keyed_loop_steps,
+    chat_rewind_steps,
+    failing_turn_loop_steps,
+    failing_turn_undo_all_steps,
+    reply_block_loop_steps,
+    retry_steps,
+    branch_steps,
+    diamond_steps,
     bench_chain_1,
     bench_chain_4,
     bench_chain_16,
     bench_chain_optout_4,
-    bench_loop_bounded,
-    static_cell_bounded,
-    timer_loop_bounded,
-    event_timer_bounded,
-    call_turn_bounded,
+    bench_loop_steps,
+    static_cell_steps,
+    timer_loop_steps,
+    event_timer_steps,
+    call_turn_steps,
 ]

@@ -1,4 +1,4 @@
-"""The HTTP side of the desk: an unbounded operator that carries the HTTP plugin,
+"""The HTTP side of the desk: a flow operator that carries the HTTP plugin,
 answers every request, and calls the session a message is for.
 """
 
@@ -14,9 +14,9 @@ import flezha
 DEADLINE_MS = 60_000
 
 
-@flezha.unbounded_operator("gateway")
+# each request and answer on disk before it runs
+@flezha.operator("gateway", run={"flow": {"exactly": "effectively_once"}})
 def gateway(c: flezha.Channels) -> None:
-    c.effectively_once()  # each request and answer on disk before it runs
     user = itemgetter("user")
     http = c.input("http").map(Request.of)
     http.filter(lambda request: not request.sends()).into(Watch).response()  # a stream, or 404

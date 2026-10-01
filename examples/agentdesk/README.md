@@ -5,24 +5,24 @@ build, as a standalone project. Nothing here depends on the Flezha source tree:
 `requirements.txt` names one released version of `flezha`, the way your own
 project would. It needs Python 3.11 or later.
 
-Every conversation is a session of its own: an instance of the bounded operator `agent`,
+Every conversation is a session of its own: an instance of the steps operator `agent`,
 which runs one turn per message and keeps the conversation as its state. A turn is
 answered by a demo model that lives in this project. It is a stand-in, not a model:
 it answers every message with the same sentence, one token at a time, and reports how
 many tokens it used. `demo_model.py` is where a real model's client would be called.
 
-In front of the sessions is `gateway`, an unbounded operator that carries the HTTP
+In front of the sessions is `gateway`, a flow operator that carries the HTTP
 plugin: a POST is a message for a user's session, answered 202 at once, a GET streams
 the session's answer as it is written, and each user has a daily token budget.
 
 | File | What is in it |
 |---|---|
 | `runner.py` | the runner: this process joins the `agents` namespace and registers the `agent` and `gateway` factories |
-| `agent.py` | a session, a bounded operator: one turn per message, and a failed turn fails alone; and the `Message` the gateway sends it |
+| `agent.py` | a session, a steps operator: one turn per message, and a failed turn fails alone; and the `Message` the gateway sends it |
 | `reply.py` | answers a message with the demo model, sends the answer as it grows, and keeps the conversation |
 | `deliver.py` | hands the finished answer to whoever called |
 | `demo_model.py` | the demo model, and the `Answer` it gives |
-| `gateway.py` | the HTTP side, an unbounded operator: it carries the HTTP plugin, answers every request, and calls the session a message is for |
+| `gateway.py` | the HTTP side, a flow operator: it carries the HTTP plugin, answers every request, and calls the session a message is for |
 | `request.py` | one HTTP request, as the plugin hands it to the gateway, the two routes the gateway knows, and the `Http` answer |
 | `watch.py` | answers a request for a session's events with its stream, and any other request with 404 |
 | `budget.py` | keeps the tokens each user's answers used today, and admits a message while they are under the day's budget |

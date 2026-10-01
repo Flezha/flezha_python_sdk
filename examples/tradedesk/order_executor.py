@@ -1,7 +1,7 @@
-"""The desk's bounded operator: one instance per order, which runs its steps
+"""The desk's steps operator: one instance per order, which runs its steps
 once and then ends.
 
-A bounded operator declares its steps the way an unbounded operator declares its
+A steps operator declares its steps the way a flow operator declares its
 graph, on the same builder, and the controller schedules, restarts and
 relocates it in the same way. What differs is the lifecycle: each step's output
 is written down as it commits, so an instance that is interrupted resumes at
@@ -27,7 +27,7 @@ from reserve_funds import ReserveFunds
 import flezha
 
 
-@flezha.bounded_operator("order_executor")
+@flezha.operator("order_executor", run="steps")
 def order_executor(c: flezha.Channels) -> None:
     """Two steps in order, then a fan-out: confirming the fill and booking the
     order are two independent consequences of the placement, and neither waits

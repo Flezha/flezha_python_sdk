@@ -168,46 +168,58 @@ class ChannelSpec:
     request; its ``tasklet`` is -1, since a call feeds none."""
 
 
+def _branch(tree: Any) -> str | None:
+    """The branch a tree setting names: its bare name, or its one key."""
+    if tree is False:
+        return "false"
+    if isinstance(tree, str):
+        return tree
+    if isinstance(tree, dict) and len(tree) == 1:
+        return next(iter(tree))
+    return None
+
+
 @dataclass(slots=True)
 class ClassSpec:
     """Everything the graph knows about one declared class."""
 
     factory_id: str
-    kind: str
-    persistent: bool
     tasklets: list[TaskNode]
     channels: list[ChannelSpec]
-    sleep_when_idle: bool = False
-    effectively_once: bool = False
-    checkpoint_ack: bool = False
-    """The author's explicit ``checkpoint_ack()``; the core derives the granularity."""
-    checkpoint_every: int | None = None
-    checkpoint_outputs: str = "as_produced"
-    checkpoint_max_delay_ms: int | None = None
-    correction_window_ms: int | None = None
-    beyond_window_policy: str = "process_as_arrival"
+    description: str | None = None
+    max_duration_ms: int | None = None
+    run: Any = None
+    """The tree's ``run`` as the host declaration writes it; the core judges it."""
+    durable: Any = None
+    """The tree's ``durable``, likewise; ``None`` is the core's default."""
     compact_after_bytes: int | None = None
-    sync_durability: bool = False
-    bounded: dict[str, Any] | None = None
 
     @property
-    def structured_bounded(self) -> bool:
-        """Whether this class's producers release their values untransformed.
+    def runs_in_steps(self) -> bool:
+        """Whether this class runs in steps, whose producers release their
+        values untransformed.
 
-        A structured bounded's stage releases ONE value per emit and the driver
-        fans it out to every consumer itself, so each consumer edge — its
-        transforms and its key — belongs to the consumer. The producer and the
-        consumer read this one predicate, so they cannot disagree about which
-        side applies the edge.
+        A steps stage releases ONE value per emit and the driver fans it out
+        to every consumer itself, so each consumer edge — its transforms and
+        its key — belongs to the consumer. The producer and the consumer read
+        this one predicate, so they cannot disagree about which side applies
+        the edge.
         """
-        return self.kind == "bounded"
+        return _branch(self.run) == "steps"
+
+    @property
+    def keeps_work(self) -> bool:
+        """Whether an instance keeps its work anywhere: ``durable`` is not ``False``."""
+        return _branch(self.durable) != "false"
 
     @property
     def records_effects(self) -> bool:
         """Whether each invocation's output rides one effect record the
         controller stamps at flush: under the effectively-once tier, and for a
-        durable bounded, whose stage commit names the record."""
-        return self.effectively_once or (self.kind == "bounded" and self.persistent)
+        durable steps class, whose stage commit names the record."""
+        flow = self.run.get("flow") if isinstance(self.run, dict) else None
+        exactly = flow.get("exactly") if isinstance(flow, dict) else None
+        return _branch(exactly) == "effectively_once" or (self.runs_in_steps and self.keeps_work)
 
 
 class Channels:
@@ -217,54 +229,10 @@ class Channels:
         self.factory_id = factory_id
         self.tasklets: list[TaskNode] = []
         self.channels: list[ChannelSpec] = []
-        self.effectively_once_flag = False
-        self.checkpoint_ack_flag = False
-        self.checkpoint_every_value: int | None = None
-        self.checkpoint_outputs_value = "as_produced"
-        self.checkpoint_max_delay_ms_value: int | None = None
-        self.correction_window_ms_value: int | None = None
-        self.beyond_window_policy_value = "process_as_arrival"
         self.compact_after_bytes_value: int | None = None
         self.merge_groups = 0
 
     # -- class-level declarations ----------------------------------------
-
-    def effectively_once(self) -> Channels:
-        self.effectively_once_flag = True
-        return self
-
-    # Each of the three writes its own raw flag and nothing else: any checkpoint
-    # key implies the acknowledgement granularity, and the core is where that
-    # is stated.
-
-    def checkpoint_ack(self) -> Channels:
-        """Acknowledge at the checkpoint rather than per input.
-
-        The interval closes only on an explicit ``ctx.checkpoint()``;
-        :meth:`checkpoint_every` is the same acknowledgement on a declared
-        cadence. All three require :meth:`effectively_once`, which is where the
-        durable offset the checkpoint holds back actually lives.
-        """
-        self.checkpoint_ack_flag = True
-        return self
-
-    def checkpoint_every(self, count: int) -> Channels:
-        self.checkpoint_every_value = count
-        return self
-
-    def outputs_at_checkpoint(self, max_delay_ms: int | None = None) -> Channels:
-        self.checkpoint_outputs_value = "at_checkpoint"
-        if max_delay_ms is not None:
-            self.checkpoint_max_delay_ms_value = max_delay_ms
-        return self
-
-    def correction_window(self, milliseconds: int) -> Channels:
-        self.correction_window_ms_value = milliseconds
-        return self
-
-    def beyond_window_policy(self, policy: str) -> Channels:
-        self.beyond_window_policy_value = policy
-        return self
 
     def compact_after_bytes(self, size: int) -> Channels:
         self.compact_after_bytes_value = size

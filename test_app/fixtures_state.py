@@ -9,8 +9,8 @@ import os
 from typing import Any
 
 import flezha
-from fixture_support import _as_int, _env_int, prefix
-from fixtures_bounded import RELEASE_ENV
+from fixture_support import FIXTURE_DURABLE, _as_int, _env_int, prefix
+from fixtures_steps import RELEASE_ENV
 from flezha import codec as flezha_codec
 
 # -- bench_keyed_nopersist ---------------------------------------------------
@@ -46,7 +46,7 @@ class TierStore(KeyedUpsert):
 tier_store = flezha.tasklet(TierStore, name="tier_store_tasklet")
 
 
-@flezha.unbounded_operator("bench_keyed_nopersist", persistent=False)
+@flezha.operator("bench_keyed_nopersist", durable=False)
 def bench_keyed_nopersist_operator(c: flezha.Channels) -> None:
     """Per-cell persistence off: the heap-only posture the bench isolates
     against the durable one."""
@@ -74,7 +74,7 @@ class StoreInput:
 store_input = flezha.tasklet(StoreInput, name="store_input_tasklet")
 
 
-@flezha.unbounded_operator("store_input")
+@flezha.operator("store_input")
 def store_input_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(store_input).sink("sink")
 
@@ -99,12 +99,12 @@ class Counter:
 counter = flezha.tasklet(Counter, name="counter_tasklet")
 
 
-@flezha.unbounded_operator("stateful_counter")
+@flezha.operator("stateful_counter")
 def stateful_counter_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(CounterEntry).named("ticks").into(counter)
 
 
-@flezha.unbounded_operator("persistence_off_counter", persistent=False)
+@flezha.operator("persistence_off_counter", durable=False)
 def persistence_off_operator(c: flezha.Channels) -> None:
     """The same topology with per-Cell persistence off.
 
@@ -119,7 +119,7 @@ def persistence_off_operator(c: flezha.Channels) -> None:
 
 # -- sleeping_counter --------------------------------------------------------
 #
-# An unbounded operator that sleeps when idle: `key:delta` inputs fold into one running
+# A flow operator that sleeps when idle: `key:delta` inputs fold into one running
 # total per key, and every input emits `key=total` on the `totals` sink. The
 # sleep e2e reads the total after a wake to prove the Cell came back with the
 # state it slept with.
@@ -141,7 +141,7 @@ class SleepingCounter:
 sleeping_counter = flezha.tasklet(SleepingCounter, name="sleeping_counter_tasklet")
 
 
-@flezha.unbounded_operator("sleeping_counter", sleep_when_idle=True)
+@flezha.operator("sleeping_counter", durable=FIXTURE_DURABLE)
 def sleeping_counter_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").key_by(prefix).into(sleeping_counter).sink("totals")
 
@@ -181,7 +181,7 @@ class Tick:
 tick = flezha.tasklet(Tick, name="tick_tasklet")
 
 
-@flezha.unbounded_operator("coalescing_counter")
+@flezha.operator("coalescing_counter")
 def coalescing_counter_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(TickEntry).named("ticks").into(tick)
 
@@ -207,12 +207,12 @@ class ResumeProbe:
 resume_probe = flezha.tasklet(ResumeProbe, name="resume_probe_tasklet")
 
 
-@flezha.unbounded_operator("resume_probe")
+@flezha.operator("resume_probe")
 def resume_probe_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(resume_probe).sink("total")
 
 
-@flezha.unbounded_operator("bench_keyed")
+@flezha.operator("bench_keyed")
 def bench_keyed_operator(c: flezha.Channels) -> None:
     """`bench_keyed_nopersist`'s durable twin: the same keyed upsert with
     per-Cell persistence on, so the bench can isolate that cost."""
@@ -283,12 +283,12 @@ evolving_cart_v2 = flezha.tasklet(
 )
 
 
-@flezha.unbounded_operator("schema_evolution_v1")
+@flezha.operator("schema_evolution_v1")
 def schema_evolution_v1_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(evolving_cart_v1).sink("total")
 
 
-@flezha.unbounded_operator("schema_evolution_v2")
+@flezha.operator("schema_evolution_v2")
 def schema_evolution_v2_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(evolving_cart_v2).sink("total")
 
@@ -296,7 +296,7 @@ def schema_evolution_v2_operator(c: flezha.Channels) -> None:
 # -- tier_store / checkpoint_store / checkpoint_batched_store / bench_checkpoint
 
 
-@flezha.unbounded_operator("tier_store")
+@flezha.operator("tier_store", run={"flow": {"exactly": "effectively_once"}})
 def tier_store_operator(c: flezha.Channels) -> None:
     """The effectively-once reference: a keyed upsert under the tier.
 
@@ -305,7 +305,6 @@ def tier_store_operator(c: flezha.Channels) -> None:
     mailbox would hold the min-watermark on the shed offset forever while the
     log behind it kept growing.
     """
-    c.effectively_once()
     c.input("input", codec="text").on_full("drop_nothing").retry_backoff_ms(300).into(
         tier_store, "tier_store_tasklet"
     ).keyed().sink("sink")
@@ -347,9 +346,8 @@ tier_relay = flezha.tasklet(TierRelay, name="tier_relay")
 tier_tally = flezha.tasklet(TierTally, name="tier_tally")
 
 
-@flezha.unbounded_operator("tier_chain")
+@flezha.operator("tier_chain", run={"flow": {"exactly": "effectively_once"}})
 def tier_chain_operator(c: flezha.Channels) -> None:
-    c.effectively_once()
     c.input("input", codec="text").on_full("drop_nothing").into(tier_relay).key_by(
         prefix
     ).retry_max(1_000).into(tier_tally).keyed().sink("sink")
@@ -368,22 +366,33 @@ class CheckpointStore(KeyedUpsert):
 checkpoint_store = flezha.tasklet(CheckpointStore, name="checkpoint_store_tasklet")
 
 
-@flezha.unbounded_operator("checkpoint_store")
+@flezha.operator(
+    "checkpoint_store", run={"flow": {"exactly": {"effectively_once": {"ack": "checkpoint"}}}}
+)
 def checkpoint_store_operator(c: flezha.Channels) -> None:
-    c.effectively_once().checkpoint_ack()
     c.input("input", codec="text").into(checkpoint_store).keyed().sink("sink")
 
 
-@flezha.unbounded_operator("checkpoint_batched_store")
+@flezha.operator(
+    "checkpoint_batched_store",
+    run={
+        "flow": {
+            "exactly": {
+                "effectively_once": {
+                    "ack": {"checkpoint": {"outputs": "at_checkpoint", "max_delay_ms": 1_500}}
+                }
+            }
+        }
+    },
+)
 def checkpoint_batched_operator(c: flezha.Channels) -> None:
-    """The same tasklet declared ``outputs_at_checkpoint``.
+    """The same tasklet declared ``outputs: at_checkpoint``.
 
     The interval's outputs are held with its changes and ship inside its
-    checkpoint record. ``checkpoint_every`` is deliberately absent so the test
+    checkpoint record. ``every`` is deliberately absent so the test
     drives the close itself — with ``commit:`` for the batch case, and with the
     delay alone for the quiet-Cell case.
     """
-    c.effectively_once().checkpoint_ack().outputs_at_checkpoint(1_500)
     c.input("input", codec="text").into(checkpoint_store, "checkpoint_store_tasklet").keyed().sink(
         "sink"
     )
@@ -399,11 +408,17 @@ class BenchCheckpoint(KeyedUpsert):
 bench_checkpoint = flezha.tasklet(BenchCheckpoint, name="bench_checkpoint_tasklet")
 
 
-@flezha.unbounded_operator("bench_checkpoint")
-def bench_checkpoint_operator(c: flezha.Channels) -> None:
-    c.effectively_once().checkpoint_every(_env_int("FLEZHA_BENCH_CHECKPOINT_EVERY", 500) or 500)
+def _bench_checkpoint() -> dict[str, Any]:
+    """The bench's cadence, and its held outputs when the bench asks for them."""
+    checkpoint: dict[str, Any] = {"every": _env_int("FLEZHA_BENCH_CHECKPOINT_EVERY", 500) or 500}
     if os.environ.get("FLEZHA_BENCH_CHECKPOINT_OUTPUTS") == "at_checkpoint":
-        c.outputs_at_checkpoint(_env_int("FLEZHA_BENCH_CHECKPOINT_DELAY_MS", 50) or 50)
+        checkpoint["outputs"] = "at_checkpoint"
+        checkpoint["max_delay_ms"] = _env_int("FLEZHA_BENCH_CHECKPOINT_DELAY_MS", 50) or 50
+    return {"flow": {"exactly": {"effectively_once": {"ack": {"checkpoint": checkpoint}}}}}
+
+
+@flezha.operator("bench_checkpoint", run=_bench_checkpoint())
+def bench_checkpoint_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").on_full("drop_nothing").into(bench_checkpoint).keyed().sink(
         "sink"
     )

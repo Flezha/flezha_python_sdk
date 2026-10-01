@@ -10,7 +10,7 @@ present, and is permanently supported; it is not yet run by the maintainer in a 
 deployment, so a defect specific to it is likely to be found by its users first.
 
 The kernel owns transport, ordering, per-cell exclusivity, durability,
-retries, timers, credit, routing and bounded runs. This package brings
+retries, timers, credit, routing and steps runs. This package brings
 the authoring surface, the codec for user types, the threading host and
 idiomatic errors — and no kernel code.
 
@@ -24,7 +24,7 @@ class Echo:
         ctx.emit(value)
 
 
-@flezha.unbounded_operator("echo")
+@flezha.operator("echo")
 def echo_operator(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(Echo).sink("out")
 
@@ -32,6 +32,14 @@ def echo_operator(c: flezha.Channels) -> None:
 flezha.create_runner("default").register_factory(echo_operator).run()
 ```
 
+- **One decorator, one settings tree.** `@flezha.operator` declares every
+  operator, over a channels body or, as the short form, one tasklet's body.
+  Its keywords are the class settings: `run` (`"flow"`, the default, or
+  `{"steps": {"each": "per_input", "on_failure": "keep_progress"}}`), `durable`
+  (`False`, `"local"`, the default, or `"remote"`, with `sleep_after` in
+  milliseconds; by default a flow never sleeps and a steps class sleeps after
+  six hours), `max_duration_ms` and `description`. The
+  core refuses a setting under a parent that does not carry it, naming both.
 - **Preview an output while it is produced.** `ctx.part(value)` sends a
   listener a preview of the tasklet's output while `run` is still working; a
   sink never sees it.

@@ -11,6 +11,6 @@ import flezha
 # cannot work is refused at startup. The entry names the text codec, so the
 # tasklet is handed a str, and the sink names none, so a str result leaves
 # as its own bytes.
-@flezha.unbounded_operator("echo")  # the stable identity `flz operator start` takes
+@flezha.operator("echo")  # the stable identity `flz operator start` takes
 def echo_operator(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(Echo).sink("out")

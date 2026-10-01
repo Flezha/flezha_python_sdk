@@ -2,7 +2,7 @@
 
 The SDK contains no kernel code. Transport, framing, ordering, per-cell
 exclusivity, durability, retries, the retry-to-park ladder, timers, credit,
-routing, the bounded driver and reconnect all live in the core; this package
+routing, the steps driver and reconnect all live in the core; this package
 brings the authoring surface, the codec for user types, the threading host and
 idiomatic errors.
 
@@ -15,7 +15,7 @@ idiomatic errors.
         def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
             ctx.emit(value)
 
-    @flezha.unbounded_operator("echo")
+    @flezha.operator("echo")
     def echo_operator(c: flezha.Channels) -> None:
         c.input("input").into(Echo).sink("out")
 
@@ -33,7 +33,7 @@ from .ctx import Ctx, SpawnHandle, SpawnResult
 from .errors import DeterminismWarning, FlezhaError, NonRetryableError
 from .local import LocalOperator, SinkOutput
 from .logger import configure as configure_logging
-from .operator import Operator, bounded_operator, unbounded_operator
+from .operator import Durable, Operator, Run, operator
 from .runner import ACTIVATION_SCHEMA_VERSION, Runner, create_runner
 from .tasklet import Tasklet, tasklet
 from .version import __version__
@@ -44,8 +44,7 @@ __all__ = [
     # authoring
     "tasklet",
     "state",
-    "unbounded_operator",
-    "bounded_operator",
+    "operator",
     "Channels",
     "Edge",
     "Merge",
@@ -55,6 +54,8 @@ __all__ = [
     "SpawnResult",
     "Tasklet",
     "Operator",
+    "Run",
+    "Durable",
     "DROPPED",
     # runner
     "create_runner",

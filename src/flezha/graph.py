@@ -133,7 +133,7 @@ def _tasklet_json(spec: ClassSpec, node: TaskNode, keyed: set[int]) -> dict[str,
             # A tasklet that folds no change has the empty Change type, so a
             # logical clock over it would never advance; a class that journals
             # nothing has it for every tasklet.
-            "change_is_nochange": not spec.persistent or task.apply_change is None,
+            "change_is_nochange": not spec.keeps_work or task.apply_change is None,
             "schema_version": task.schema_version or 1,
             "min_readable_schema_version": task.min_readable_schema_version,
         }
@@ -143,9 +143,8 @@ def _tasklet_json(spec: ClassSpec, node: TaskNode, keyed: set[int]) -> dict[str,
 def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
     """The declaration the core deserializes.
 
-    Every key the author wrote is here whatever the class's kind: which keys a
-    kind may carry is the core's judgement, answered by name. Every key is
-    pinned by ``test/fixtures/host_class_decl_keys.txt``, which this package's
+    The settings tree goes as the author wrote it: the core judges it and
+    refuses a misplaced setting by name. Every key is pinned by ``test/fixtures/host_class_decl_keys.txt``, which this package's
     own test reads: a key the core learns that Python cannot spell fails that
     test.
     """
@@ -153,22 +152,15 @@ def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
     return _compact(
         {
             "factory_id": spec.factory_id,
-            "persistent": spec.persistent,
-            "sleep_when_idle": spec.sleep_when_idle,
+            "description": spec.description,
+            "max_duration_ms": spec.max_duration_ms,
+            "run": spec.run,
+            "durable": spec.durable,
             "sdk_lang": SDK_LANG_PYTHON,
             "sdk_version": __version__,
             "change_format_id": FORMAT_ID_MSGPACK,
-            "effectively_once": spec.effectively_once,
-            "checkpoint_ack": spec.checkpoint_ack,
-            "checkpoint_every": spec.checkpoint_every,
-            "checkpoint_outputs": spec.checkpoint_outputs,
-            "checkpoint_max_delay_ms": spec.checkpoint_max_delay_ms,
-            "correction_window_ms": spec.correction_window_ms,
-            "beyond_window_policy": spec.beyond_window_policy,
             "compact_after_bytes": spec.compact_after_bytes,
-            "sync_durability": spec.sync_durability,
             "channels": [_channel_json(channel) for channel in spec.channels],
             "tasklets": [_tasklet_json(spec, node, keyed) for node in spec.tasklets],
-            "bounded": _compact(spec.bounded) if spec.bounded else None,
         }
     )

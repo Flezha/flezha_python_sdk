@@ -43,13 +43,13 @@ class Parts:
         ctx.part({"fired": timer["scheduled_at"]})
 
 
-@flezha.unbounded_operator("part_unbounded")
-def _unbounded(c: flezha.Channels) -> None:
+@flezha.operator("part_flow")
+def _flow(c: flezha.Channels) -> None:
     c.input("in").into(Parts).sink("answer")
 
 
-@flezha.bounded_operator("part_bounded", loop_mode="per_input")
-def _bounded(c: flezha.Channels) -> None:
+@flezha.operator("part_steps", run={"steps": {"each": "per_input"}})
+def _steps(c: flezha.Channels) -> None:
     c.input("in").into(Parts).sink("answer")
 
 
@@ -62,8 +62,8 @@ def test_each_items_parts_carry_the_token_the_index_and_the_sink_encoding(
     fake_core: FakeCore,
 ) -> None:
     _recording(fake_core, SEEN)
-    deps = deps_for(_unbounded, fake_core)
-    effects = answered(work_activation(7, 2, 1, factory="part_unbounded"), deps)["effects"]
+    deps = deps_for(_flow, fake_core)
+    effects = answered(work_activation(7, 2, 1, factory="part_flow"), deps)["effects"]
 
     assert SEEN == [
         '7/0/{"part":1}',
@@ -80,17 +80,17 @@ def test_each_items_parts_carry_the_token_the_index_and_the_sink_encoding(
 
 def test_a_timer_handler_sends_a_part_under_its_own_item(fake_core: FakeCore) -> None:
     _recording(fake_core, SEEN)
-    activation = work_activation(7, 0, 0, factory="part_unbounded")
+    activation = work_activation(7, 0, 0, factory="part_flow")
     activation["items"][1].update(kind="timer", timer_kind="processing_time", scheduled_at=5)
-    answered(activation, deps_for(_unbounded, fake_core))
+    answered(activation, deps_for(_flow, fake_core))
 
     assert SEEN == ["returned 0", '7/1/{"fired":5}']
 
 
-def test_a_per_input_bounded_stage_sends_its_parts(fake_core: FakeCore) -> None:
+def test_a_per_input_steps_stage_sends_its_parts(fake_core: FakeCore) -> None:
     _recording(fake_core, SEEN)
-    deps = deps_for(_bounded, fake_core)
-    (effect,) = answered(work_activation(7, 2, factory="part_bounded"), deps)["effects"]
+    deps = deps_for(_steps, fake_core)
+    (effect,) = answered(work_activation(7, 2, factory="part_steps"), deps)["effects"]
 
     assert effect["verdict"] == "ok"
     assert SEEN == ['7/0/{"part":1}', '7/0/{"part":2}', "returned 2"]
@@ -99,8 +99,8 @@ def test_a_per_input_bounded_stage_sends_its_parts(fake_core: FakeCore) -> None:
 def test_a_refused_part_fails_the_invocation_as_any_raise_does(fake_core: FakeCore) -> None:
     refusal = FlezhaError("part.no_sink", {"tasklet": "parts", "operator": "op", "channel": ""})
     _recording(fake_core, SEEN, refusal)
-    deps = deps_for(_unbounded, fake_core)
-    (effect,) = answered(work_activation(7, 1, factory="part_unbounded"), deps)["effects"]
+    deps = deps_for(_flow, fake_core)
+    (effect,) = answered(work_activation(7, 1, factory="part_flow"), deps)["effects"]
 
     assert effect["verdict"] == "retryable"
     assert effect["message"].endswith("(part.no_sink)")
@@ -136,17 +136,17 @@ class PartDrain:
         pass
 
 
-@flezha.unbounded_operator("part_to_tasklet")
+@flezha.operator("part_to_tasklet")
 def _to_tasklet(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(RefusedPart).into(PartDrain)
 
 
-@flezha.unbounded_operator("part_to_response")
+@flezha.operator("part_to_response")
 def _to_response(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(RefusedPart).response()
 
 
-@flezha.unbounded_operator("part_local")
+@flezha.operator("part_local")
 def _local(c: flezha.Channels) -> None:
     c.input("in").into(Parts).sink("answer")
 

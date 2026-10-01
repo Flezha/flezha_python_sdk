@@ -24,7 +24,7 @@ What each piece is doing, and why it is not the obvious thing:
   forward outputs the engine recorded, so an undo does not depend on the agent
   having written down what it did.
 * **Suspension is waiting without holding anything.** A session is a
-  ``per_input`` bounded: between messages it waits at a committed iteration
+  ``per_input`` steps: between messages it waits at a committed iteration
   boundary and parks, holding no runner resources, and a delivery wakes it
   wherever it is rehydrated, its state rebuilt from its changes.
 
@@ -166,7 +166,7 @@ class Agent:
 agent = flezha.tasklet(Agent, name="agent_turn", idle_ttl_seconds=15 * 60)
 
 
-@flezha.unbounded_operator("durable_agent")
+@flezha.operator("durable_agent")
 def durable_agent(c: flezha.Channels) -> None:
     """One conversation per key, with a retry ladder on the model call.
 
@@ -180,7 +180,7 @@ def durable_agent(c: flezha.Channels) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The long-running side: a bounded operator that suspends while it waits
+# The long-running side: a steps operator that suspends while it waits
 # ---------------------------------------------------------------------------
 
 
@@ -227,7 +227,7 @@ class SessionTurn:
 session_turn = flezha.tasklet(SessionTurn, name="session_turn")
 
 
-@flezha.bounded_operator("agent_session", loop_mode="per_input", max_duration_ms=3_600_000)
+@flezha.operator("agent_session", run={"steps": {"each": "per_input"}}, max_duration_ms=3_600_000)
 def agent_session(c: flezha.Channels) -> None:
     """A session that waits for the human between messages.
 

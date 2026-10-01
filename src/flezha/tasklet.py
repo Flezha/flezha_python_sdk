@@ -571,7 +571,7 @@ def _refuse_unannotated(task: Tasklet[Any, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 #: The keywords of an operator's short form, which a tasklet never takes.
-_OPERATOR_KEYWORDS = ("kind", "sink", "input", "codec")
+_OPERATOR_KEYWORDS = ("run", "durable", "sink", "input", "codec")
 
 
 @overload
@@ -591,8 +591,7 @@ def tasklet(target: Any = None, /, **declarations: Any) -> Any:
     Declaring performs no I/O, opens no socket and starts no thread: it builds
     one :class:`Tasklet` and returns it. A function is refused: a whole
     one-tasklet operator written as a function is the short form of
-    :func:`~flezha.operator.unbounded_operator` or
-    :func:`~flezha.operator.bounded_operator`.
+    :func:`~flezha.operator.operator`.
     """
     written = [key for key in _OPERATOR_KEYWORDS if key in declarations]
     if written:
@@ -601,7 +600,7 @@ def tasklet(target: Any = None, /, **declarations: Any) -> Any:
             {
                 "tasklet": declarations.get("name") or getattr(target, "__name__", "<tasklet>"),
                 "fields": [f"`{key}`" for key in written],
-                "instead": "`@flezha.unbounded_operator(id=...)` or `@flezha.bounded_operator(id=...)`",
+                "instead": "`@flezha.operator(id=...)`",
             },
         )
 
@@ -611,7 +610,7 @@ def tasklet(target: Any = None, /, **declarations: Any) -> Any:
                 getattr(inner, "__name__", str(inner)),
                 "is a function; a tasklet is a class whose `run(self, value, ctx)` takes the "
                 "value and the context. A whole one-tasklet operator written as a function "
-                "is `@flezha.unbounded_operator(id=...)` or `@flezha.bounded_operator(id=...)`",
+                "is `@flezha.operator(id=...)`",
             )
         return Tasklet(inner, **declarations)
 

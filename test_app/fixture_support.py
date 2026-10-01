@@ -6,8 +6,16 @@ operators declare identically.
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import flezha
+
+
+def _fixture_durable() -> Any:
+    """A kept instance that sleeps after `FLEZHA_FIXTURE_SLEEP_AFTER_MS`, so a
+    test can watch one sleep; the class default when the variable is unset."""
+    sleep_after = _as_int(os.environ.get("FLEZHA_FIXTURE_SLEEP_AFTER_MS", ""))
+    return {"local": {"sleep_after": sleep_after}} if sleep_after > 0 else "local"
 
 
 def prefix(value: str) -> str:
@@ -20,6 +28,9 @@ def _as_int(value: str) -> int:
         return int(value)
     except ValueError:
         return 0
+
+
+FIXTURE_DURABLE = _fixture_durable()
 
 
 def _env_int(key: str, default: int | None) -> int | None:

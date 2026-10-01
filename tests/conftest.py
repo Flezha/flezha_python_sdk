@@ -78,7 +78,7 @@ class Echo:
 echo = flezha.tasklet(Echo, name="echo")
 
 
-@flezha.unbounded_operator("demo")
+@flezha.operator("demo")
 def demo(c: flezha.Channels) -> None:
     c.input("input").into(echo).named("mid").into(count_up).sink("out")
 
@@ -375,7 +375,7 @@ def compensating(seen: list[Any]) -> Any:
 def solo(task: flezha.Tasklet[Any, Any], factory: str = "solo") -> flezha.Operator:
     """A one-tasklet operator wrapped around `task`, its output on a sink."""
 
-    @flezha.unbounded_operator(factory)
+    @flezha.operator(factory)
     def operator(c: flezha.Channels) -> None:
         c.input("in").into(task).sink()
 

@@ -54,7 +54,7 @@ def _operator_of(value: object) -> Operator:
     """
     if not isinstance(value, Operator):
         raise FlezhaError(
-            "topology.unknown_operator_kind", {"module": str(getattr(value, "__name__", value))}
+            "topology.no_operator_exported", {"module": str(getattr(value, "__name__", value))}
         )
     return value
 

@@ -80,8 +80,6 @@ class TaskletTestHarness(Generic[S]):
         channels.input("in").into(task).sink(codec="msgpack")
         self._spec = ClassSpec(
             factory_id="<harness>",
-            kind="unbounded",
-            persistent=True,
             tasklets=channels.tasklets,
             channels=channels.channels,
         )

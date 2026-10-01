@@ -1,25 +1,26 @@
-"""The operator decorators: what an author declares and what a runner registers.
+"""The operator decorator: what an author declares and what a runner registers.
 
 An operator is its channel graph, so the decorated object is the function that
 builds one:
 
 .. code-block:: python
 
-    @flezha.unbounded_operator("echo")
+    @flezha.operator("echo")
     def echo(c: flezha.Channels) -> None:
         c.input("input").into(echo_task).sink("out")
 
-A bounded operator is the same shape: a chain of tasklets over a graph. A
-channels body takes one parameter, annotated :class:`~flezha.builder.Channels` or
-not at all.
+A channels body takes one parameter, annotated :class:`~flezha.builder.Channels`
+or not at all. The class settings are keywords of the decorator: ``run`` (a
+flow, the default, or steps), ``durable``, ``max_duration_ms`` and
+``description``.
 
-Handed a tasklet body instead, the same decorators declare the single-tasklet
-short form: a function whose one parameter is the input and whose return value
-is emitted, or a tasklet class, which emits through its context:
+Handed a tasklet body instead, the decorator declares the single-tasklet short
+form: a function whose one parameter is the input and whose return value is
+emitted, or a tasklet class, which emits through its context:
 
 .. code-block:: python
 
-    @flezha.unbounded_operator(id="echo", sink="out", codec="text")
+    @flezha.operator(id="echo", sink="out", codec="text")
     def echo(value: str) -> str:
         return value
 """
@@ -28,26 +29,96 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
-from typing import Any, Literal, Unpack, get_args, get_origin
+from typing import Any, Literal, TypedDict, Unpack
 
 from . import codec as _codec
 from .builder import Channels, ClassSpec
 from .errors import FlezhaError
 from .tasklet import Tasklet, TaskletSettings, output_type, positional_parameters
 
-__all__ = ["LoopMode", "Operator", "RollbackMode", "unbounded_operator", "bounded_operator"]
+__all__ = [
+    "Ack",
+    "Durable",
+    "Each",
+    "Exactly",
+    "OnFailure",
+    "Operator",
+    "Run",
+    "operator",
+]
 
-LoopMode = Literal["once", "per_input", "chained"]
-"""How a bounded iterates: one pass, one per message, or each pass seeding the next."""
+Each = Literal["once", "per_input", "chained"]
+"""How a steps run iterates: one pass, one per message, or each pass seeding the next."""
 
-RollbackMode = Literal["all_or_nothing", "keep_progress"]
+OnFailure = Literal["undo_all", "keep_progress"]
 """What a failure undoes: every completed tasklet, or the in-flight iteration only."""
 
-#: The bounded facts a bounded class declares beside its channels.
-_BOUNDED_KEYS = ("loop_mode", "rollback_mode", "max_duration_ms")
 
-#: The one class setting a short form keeps: a loop is still one tasklet.
-_SHORT_FORM_SETTINGS = ("loop_mode",)
+class StepsSettings(TypedDict, total=False):
+    each: Each
+    on_failure: OnFailure
+
+
+class CheckpointSettings(TypedDict, total=False):
+    every: int
+    max_delay_ms: int
+    outputs: Literal["as_produced", "at_checkpoint"]
+
+
+class _Checkpoint(TypedDict):
+    checkpoint: CheckpointSettings
+
+
+Ack = Literal["per_input", "checkpoint"] | _Checkpoint
+"""When a flow acknowledges an input: one by one, or at the checkpoint."""
+
+
+class EffectivelyOnceSettings(TypedDict, total=False):
+    ack: Ack
+    correction_ms: int
+    beyond_window: Literal["process_as_arrival", "drop"]
+
+
+class _EffectivelyOnce(TypedDict):
+    effectively_once: EffectivelyOnceSettings
+
+
+Exactly = Literal["at_least_once", "effectively_once"] | _EffectivelyOnce
+"""A flow's duplicate rule."""
+
+
+class FlowSettings(TypedDict, total=False):
+    exactly: Exactly
+
+
+class _Flow(TypedDict):
+    flow: FlowSettings
+
+
+class _Steps(TypedDict):
+    steps: StepsSettings
+
+
+Run = Literal["flow", "steps"] | _Flow | _Steps
+"""How the class runs: a flow (the default) or in steps, bare or with its members."""
+
+
+class KeptSettings(TypedDict, total=False):
+    sleep_after: int | Literal[False]
+
+
+class _Local(TypedDict):
+    local: KeptSettings
+
+
+class _Remote(TypedDict):
+    remote: KeptSettings
+
+
+Durable = Literal[False, "local", "remote"] | _Local | _Remote
+"""Where an instance keeps its work. Unless ``sleep_after`` names an interval in
+milliseconds, or ``False``, a kept flow instance never sleeps and a kept steps
+instance sleeps after six idle hours."""
 
 
 class Operator:
@@ -60,10 +131,9 @@ class Operator:
 
     __slots__ = (
         "factory_id",
-        "kind",
         "declaration",
         "tasklet",
-        "_options",
+        "_settings",
         "_spec",
         "__name__",
         "doc",
@@ -72,18 +142,16 @@ class Operator:
     def __init__(
         self,
         factory_id: str,
-        kind: str,
         declaration: Callable[..., Any],
-        options: dict[str, Any],
+        settings: dict[str, Any],
         tasklet: Tasklet[Any, Any] | None = None,
     ) -> None:
         self.factory_id = factory_id
-        self.kind = kind
         self.declaration = declaration
         #: A short form's generated tasklet, named after the factory id and
         #: wireable in another operator's body; ``None`` for a channels body.
         self.tasklet = tasklet
-        self._options = options
+        self._settings = settings
         self._spec: ClassSpec | None = None
         self.__name__ = getattr(declaration, "__name__", factory_id)
         #: The declaration's own docstring. Not `__doc__`, which `__slots__`
@@ -91,7 +159,7 @@ class Operator:
         self.doc = declaration.__doc__
 
     def __repr__(self) -> str:
-        return f"<flezha {self.kind} operator {self.factory_id}>"
+        return f"<flezha operator {self.factory_id}>"
 
     @property
     def spec(self) -> ClassSpec:
@@ -100,35 +168,16 @@ class Operator:
         return self._spec
 
     def _build_spec(self) -> ClassSpec:
-        """Every flag the builder recorded, for either kind: the core judges which
-        a kind may carry and refuses the rest by name."""
+        """The graph and the settings tree as written: the core judges the tree
+        and refuses a misplaced setting by name."""
         builder = Channels(self.factory_id)
         self.declaration(builder)
-        options = self._options
-        sleep_when_idle = options["sleep_when_idle"]
         return ClassSpec(
             factory_id=self.factory_id,
-            kind=self.kind,
-            persistent=options["persistent"],
             tasklets=builder.tasklets,
             channels=builder.channels,
-            sleep_when_idle=(
-                self.kind == "bounded" and options["persistent"]
-                if sleep_when_idle is None
-                else sleep_when_idle
-            ),
-            effectively_once=builder.effectively_once_flag,
-            checkpoint_ack=builder.checkpoint_ack_flag,
-            checkpoint_every=builder.checkpoint_every_value,
-            checkpoint_outputs=builder.checkpoint_outputs_value,
-            checkpoint_max_delay_ms=builder.checkpoint_max_delay_ms_value,
-            correction_window_ms=builder.correction_window_ms_value,
-            beyond_window_policy=builder.beyond_window_policy_value,
             compact_after_bytes=builder.compact_after_bytes_value,
-            sync_durability=options["sync_durability"],
-            bounded=(
-                {key: options[key] for key in _BOUNDED_KEYS} if self.kind == "bounded" else None
-            ),
+            **self._settings,
         )
 
 
@@ -146,60 +195,73 @@ def _declares_channels(declaration: Any) -> bool:
     return annotation is None or (isinstance(annotation, type) and issubclass(annotation, Channels))
 
 
-def _operator(
-    decorator: Callable[..., Any],
-    factory_id: str | None,
-    kind: str,
-    options: dict[str, Any],
-    short_form: dict[str, Any],
-    settings: TaskletSettings,
+def operator(
+    id: str | None = None,
+    *,
+    run: Run | None = None,
+    durable: Durable | None = None,
+    max_duration_ms: int | None = None,
+    description: str | None = None,
+    sink: str | None = None,
+    input: str | None = None,
+    codec: _codec.ChannelCodec | None = None,
+    **settings: Unpack[TaskletSettings],
 ) -> Callable[[Any], Operator]:
+    """Declare an operator: fed by the controller through entry channels.
+
+    ``id`` is the factory id. ``run`` is ``"flow"`` (the default) or
+    ``"steps"``, bare or with its members, e.g.
+    ``{"steps": {"each": "per_input"}}``; ``durable`` is ``False``, ``"local"``
+    (the default) or ``"remote"``, e.g. ``{"local": {"sleep_after": 2_000}}``.
+    The core reads both when the class registers and refuses a setting under a
+    parent that does not carry it as ``topology.unknown_field``.
+
+    Over a tasklet body this is the short form, with the same class settings:
+    an entry channel named by ``input`` (``"input"`` when none is written) and
+    decoded by ``codec``, the tasklet, and the ``sink`` plugin channel when one
+    is written. ``settings`` are the tasklet's own declarations, as
+    :func:`~flezha.tasklet.tasklet` takes them.
+    """
     unknown = sorted(settings.keys() - TaskletSettings.__optional_keys__)
     if unknown:
-        raise TypeError(f"{decorator.__name__}() got an unexpected keyword argument {unknown[0]!r}")
-    parameters = inspect.signature(decorator, eval_str=True).parameters
-    for key, value in options.items():
-        # A keyword annotated with a `Literal` takes only the values it spells.
-        annotation = parameters[key].annotation
-        if get_origin(annotation) is Literal and value not in get_args(annotation):
-            raise FlezhaError(
-                "topology.invalid_mode",
-                {"factory_id": factory_id or "<operator>", "knob": key, "value": str(value)},
-            )
-    class_settings = [
-        key
-        for key, value in options.items()
-        if value != parameters[key].default and key not in _SHORT_FORM_SETTINGS
-    ]
+        raise TypeError(f"operator() got an unexpected keyword argument {unknown[0]!r}")
+    class_settings = {
+        "run": run,
+        "durable": durable,
+        "max_duration_ms": max_duration_ms,
+        "description": description,
+    }
 
     def decorate(declaration: Any) -> Operator:
         name = getattr(declaration, "__name__", "<declaration>")
-        if factory_id is None:
+        if id is None:
             # A factory id is an address a user types, so it is written
             # rather than derived from the declaration's name.
             raise FlezhaError("topology.missing_factory_id", {"operator": name})
         if not _declares_channels(declaration):
             return _short_form(
-                factory_id, kind, declaration, options, class_settings, settings, **short_form
+                id, declaration, class_settings, settings, sink=sink, input=input, codec=codec
             )
-        written = [key for key, value in short_form.items() if value is not None]
+        written = [
+            key
+            for key, value in {"sink": sink, "input": input, "codec": codec}.items()
+            if value is not None
+        ]
         written += list(settings)
         if written:
             raise FlezhaError(
                 "topology.short_form_field_on_full_form",
-                {"factory_id": factory_id, "fields": [f"`{key}`" for key in written]},
+                {"factory_id": id, "fields": [f"`{key}`" for key in written]},
             )
-        return Operator(factory_id, kind, declaration, options)
+        return Operator(id, declaration, class_settings)
 
     return decorate
 
 
 def _short_form(
     factory_id: str,
-    kind: str,
     body: Any,
-    options: dict[str, Any],
-    class_settings: list[str],
+    class_settings: dict[str, Any],
     settings: TaskletSettings,
     *,
     sink: str | None,
@@ -212,11 +274,6 @@ def _short_form(
     name = body.__name__
     if inspect.isclass(body) and hasattr(body, "run") and hasattr(body, "channels"):
         raise FlezhaError("topology.short_form_with_topology", {"factory_id": factory_id})
-    if class_settings:
-        raise FlezhaError(
-            "topology.setting_on_short_form",
-            {"factory_id": factory_id, "fields": [f"`{key}`" for key in class_settings]},
-        )
     generated = Tasklet(body, name=factory_id, **settings)
     returned = output_type(generated)
     # An unresolvable hint degrades to the raw annotation, where `None` is the string.
@@ -230,86 +287,4 @@ def _short_form(
 
     channels.__name__ = name
     channels.__doc__ = generated.doc
-    return Operator(factory_id, kind, channels, options, generated)
-
-
-def unbounded_operator(
-    id: str | None = None,
-    *,
-    persistent: bool = True,
-    sleep_when_idle: bool | None = None,
-    sync_durability: bool = False,
-    sink: str | None = None,
-    input: str | None = None,
-    codec: _codec.ChannelCodec | None = None,
-    **settings: Unpack[TaskletSettings],
-) -> Callable[[Any], Operator]:
-    """Declare an unbounded operator: fed by the controller through entry channels.
-
-    ``id`` is the factory id. ``persistent`` is whether change bytes are flushed
-    to the per-cell WAL. ``sleep_when_idle`` is whether an idle instance is
-    written out and dropped from memory until its next input, off unless
-    written. ``sync_durability`` is a bounded operator's setting, reaching
-    the core from here so that it is refused by name (``SyncDurabilityOnUnbounded``)
-    rather than dropped.
-
-    Over a tasklet body this is the short form: an entry channel named by
-    ``input`` (``"input"`` when none is written) and decoded by ``codec``, the
-    tasklet, and the ``sink`` plugin channel when one is written. ``settings`` are the
-    tasklet's own declarations, as :func:`~flezha.tasklet.tasklet` takes
-    them.
-    """
-    return _operator(
-        unbounded_operator,
-        id,
-        "unbounded",
-        {
-            "persistent": persistent,
-            "sleep_when_idle": sleep_when_idle,
-            "sync_durability": sync_durability,
-        },
-        {"sink": sink, "input": input, "codec": codec},
-        settings,
-    )
-
-
-def bounded_operator(
-    id: str | None = None,
-    *,
-    persistent: bool = True,
-    sleep_when_idle: bool | None = None,
-    loop_mode: LoopMode = "once",
-    rollback_mode: RollbackMode = "all_or_nothing",
-    max_duration_ms: int | None = None,
-    sync_durability: bool = False,
-    sink: str | None = None,
-    input: str | None = None,
-    codec: _codec.ChannelCodec | None = None,
-    **settings: Unpack[TaskletSettings],
-) -> Callable[[Any], Operator]:
-    """Declare a bounded operator: a chain of tasklets, run once or looping.
-
-    Retry is the edges', as on an unbounded operator: ``retry_max`` and ``retry_backoff_ms``
-    on the channel feeding a tasklet. ``loop_mode`` and ``rollback_mode`` outside
-    their declared values are refused here. ``sleep_when_idle`` defaults to
-    ``persistent``: a bounded operator that keeps its state sleeps while it waits.
-
-    Over a tasklet body this is the short form: a ``once`` bounded that runs
-    its tasklet on its first message, or the ``loop_mode`` written, the one
-    class setting a short form keeps; see :func:`unbounded_operator`.
-    """
-    return _operator(
-        bounded_operator,
-        id,
-        "bounded",
-        {
-            "persistent": persistent,
-            "sleep_when_idle": sleep_when_idle,
-            "loop_mode": loop_mode,
-            "rollback_mode": rollback_mode,
-            "max_duration_ms": max_duration_ms,
-            "sync_durability": sync_durability,
-        },
-        {"sink": sink, "input": input, "codec": codec},
-        settings,
-    )
+    return Operator(factory_id, channels, class_settings, generated)

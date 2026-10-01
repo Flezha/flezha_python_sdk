@@ -12,7 +12,7 @@ import asyncio
 from typing import Any
 
 import flezha
-from fixtures_bounded import LOOP_KNOBS, stateless_step
+from fixtures_steps import LOOP_KNOBS, stateless_step
 
 #: The deadline every fixture call carries, with UTF-8 requests and answers.
 CALL: dict[str, Any] = {"deadline_ms": 30_000, "codec": "text"}
@@ -71,7 +71,7 @@ def _quote(value: str, ctx: flezha.Ctx[None, Any]) -> None:
         ctx.emit(f"price:{value}")
 
 
-@flezha.unbounded_operator("call_pricing")
+@flezha.operator("call_pricing")
 def call_pricing_operator(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(stateless_step("pricing_quote", _quote)).response()
 
@@ -84,7 +84,7 @@ class OrderPriced:
 order_priced = flezha.tasklet(OrderPriced, name="order_priced")
 
 
-@flezha.unbounded_operator("call_orders")
+@flezha.operator("call_orders")
 def call_orders_operator(c: flezha.Channels) -> None:
     (
         c.input("in", codec="text")
@@ -105,8 +105,11 @@ async def _agent_turn(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     ctx.emit(f"answer:{value}")
 
 
-@flezha.bounded_operator("call_agent", rollback_mode="keep_progress", **LOOP_KNOBS)
-def call_agent_bounded(c: flezha.Channels) -> None:
+@flezha.operator(
+    "call_agent",
+    **{**LOOP_KNOBS, "run": {"steps": {"each": "per_input", "on_failure": "keep_progress"}}},
+)
+def call_agent_steps(c: flezha.Channels) -> None:
     c.input("turn", codec="text").into(stateless_step("agent_turn", _agent_turn)).response()
 
 
@@ -115,9 +118,8 @@ gateway_resume = stateless_step(
 )
 
 
-@flezha.unbounded_operator("call_gateway")
+@flezha.operator("call_gateway", run={"flow": {"exactly": "effectively_once"}})
 def call_gateway_operator(c: flezha.Channels) -> None:
-    c.effectively_once()
     gateway_account = account("gateway_account")
     gateway = c.input("in", codec="text").into(gateway_account).named("gateway")
     (
@@ -143,8 +145,8 @@ def call_gateway_operator(c: flezha.Channels) -> None:
     )
 
 
-@flezha.bounded_operator("call_tool_session", **LOOP_KNOBS)
-def call_tool_session_bounded(c: flezha.Channels) -> None:
+@flezha.operator("call_tool_session", **LOOP_KNOBS)
+def call_tool_session_steps(c: flezha.Channels) -> None:
     tool_turn = account("tool_turn")
     tool = c.input("turn", codec="text").into(tool_turn).named("tool")
     tool.filter(is_request).call("pricing", **CALL).into(tool_turn)
@@ -155,7 +157,7 @@ def call_tool_session_bounded(c: flezha.Channels) -> None:
 ALL: list[flezha.Operator] = [
     call_pricing_operator,
     call_orders_operator,
-    call_agent_bounded,
+    call_agent_steps,
     call_gateway_operator,
-    call_tool_session_bounded,
+    call_tool_session_steps,
 ]

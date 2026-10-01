@@ -30,8 +30,8 @@ from typing import Any
 
 import flezha
 from fixtures import hybrid_channel_operator
-from fixtures_bounded import tier_commit_block_bounded
 from fixtures_call import render
+from fixtures_steps import tier_commit_block_steps
 from flezha import graph
 from flezha.native import Core
 
@@ -39,13 +39,13 @@ FIXTURE = "test/fixtures/reference_topologies.txt"
 
 # The authoring surfaces this builder carries — the same list the app's
 # `conformance.json` declares. A row needing anything else is skipped BY NAME,
-# which is what makes the skip checkable. The class flag a typed stream builder
-# cannot spell is a decorator keyword here, on either kind.
+# which is what makes the skip checkable. The settings tree is a decorator
+# keyword here, written as data, so a setting can sit under any parent.
 SURFACES = (
     "merge",
     "branch",
-    "bounded",
-    "sync_durability",
+    "steps",
+    "untyped_tree",
     "shorthand",
     "shorthand_typed_output",
     "response",
@@ -56,7 +56,7 @@ SURFACES = (
 # fixtures, the twins of its seven-column table.
 CITED = {
     "hybrid_channel": hybrid_channel_operator,
-    "commit_block_chain": tier_commit_block_bounded,
+    "commit_block_chain": tier_commit_block_steps,
 }
 
 # -- the palette -------------------------------------------------------------
@@ -145,7 +145,7 @@ class Interpreter:
         """``<handle>.<link>…`` — a chain, a channel knob or a class flag."""
         head, _, rest = step.partition(".")
         if head == "class":
-            self._class_flag(builder, rest)
+            # Read by `class_settings` when the row's operator is declared.
             return
         edge = self._handle(head)
         for link in rest.split("."):
@@ -214,29 +214,6 @@ class Interpreter:
         target, arms = (part.strip() for part in arg.split(","))
         self._handle(target).branch(*[lambda _arm: None] * int(arms))
 
-    def _class_flag(self, builder: flezha.Channels, rest: str) -> None:
-        """``class.<flag>[(<value>)]`` — the facts the class declares.
-
-        ``persistent``, ``sync_durability``, ``sleep_when_idle`` and ``bounded``
-        are operator-level declarations, read as the row's operator was minted
-        rather than called on the builder.
-        """
-        flag, value = split_call(rest)
-        if flag in ("persistent", "sync_durability", "sleep_when_idle", "bounded"):
-            return
-        if flag == "effectively_once":
-            builder.effectively_once()
-        elif flag == "checkpoint_ack":
-            builder.checkpoint_ack()
-        elif flag == "checkpoint_every":
-            builder.checkpoint_every(int(value))
-        elif flag == "correction_window":
-            builder.correction_window(int(value))
-        elif flag == "outputs_at_checkpoint":
-            builder.outputs_at_checkpoint(int(value))
-        else:
-            raise AssertionError(f"the fixture spells a class flag this run does not map: {flag}")
-
     # -- what the steps address ---------------------------------------------
 
     def _handle(self, name: str) -> Any:
@@ -292,31 +269,39 @@ def rows() -> list[dict[str, str]]:
     return table
 
 
+def class_settings(steps: str) -> dict[str, Any]:
+    """``class.run(<tree>)`` and ``class.durable(<tree>)``: the tree's JSON, which
+    is how the decorator takes it, a misplaced setting and all."""
+    settings: dict[str, Any] = {}
+    for step in (step.strip() for step in steps.split(";")):
+        head, _, rest = step.partition(".")
+        if head != "class":
+            continue
+        setting, tree = split_call(rest)
+        if setting not in ("run", "durable"):
+            raise AssertionError(
+                f"the fixture spells a class setting this run does not map: {setting}"
+            )
+        settings[setting] = json.loads(tree)
+    return settings
+
+
 def operator_for(row: dict[str, str]) -> flezha.Operator:
     """A row's operator. The cited twins are this app's own; the rest are built.
 
-    Fresh per row: an operator memoises its own spec, and `persistent`,
-    `sync_durability`, `sleep_when_idle` and the class kind are declarations
-    rather than builder calls. A `class.bounded` row is a real bounded declaration carrying the
-    row's builder flags, so the core judges what that kind may carry.
+    Fresh per row: an operator memoises its own spec, and the class settings
+    are the decorator's keywords rather than builder calls, passed as the row
+    wrote them so the core judges the tree.
     """
     if row["topology"] in CITED:
         return CITED[row["topology"]]
     interpreter = Interpreter(row["steps"])
-    bounded = "class.bounded" in row["steps"]
-    declare = flezha.bounded_operator if bounded else flezha.unbounded_operator
 
     def channels(c: flezha.Channels) -> None:
         interpreter.declare(c)
 
     channels.__name__ = row["topology"]
-    return declare(
-        row["topology"],
-        persistent="class.persistent" in row["steps"],
-        sync_durability="class.sync_durability" in row["steps"],
-        # Unwritten, a row keeps the kind's default rather than declaring it off.
-        sleep_when_idle=True if "class.sleep_when_idle" in row["steps"] else None,
-    )(channels)
+    return flezha.operator(row["topology"], **class_settings(row["steps"]))(channels)
 
 
 def channels_of(derived: dict[str, Any]) -> list[dict[str, Any]]:
@@ -375,7 +360,7 @@ class PlainWithTopology(Plain):
         c.input("input")
 
 
-def declare_shorthand(declaration: dict[str, Any], declare: Any) -> flezha.Operator:
+def declare_shorthand(declaration: dict[str, Any], settings: dict[str, Any]) -> flezha.Operator:
     """Declare one short form exactly as an author writes it.
 
     A `.noout` row's body is annotated `-> None`, which is what an SDK that
@@ -394,19 +379,21 @@ def declare_shorthand(declaration: dict[str, Any], declare: Any) -> flezha.Opera
         def body(value: str) -> str:  # type: ignore[misc]
             return value
 
-    return declare(id=declaration["id"], sink=declaration["sink"], input=declaration["input"])(body)
+    return flezha.operator(
+        id=declaration["id"], sink=declaration["sink"], input=declaration["input"], **settings
+    )(body)
 
 
 def drive_shorthand(declarations: list[dict[str, Any]]) -> None:
     """Declare and register the row's short forms; the refusal is what it raises.
 
-    The first step is an unbounded short form and any later one a bounded one, so a
-    collision crosses kinds.
+    The first step is a flow short form and any later one runs in steps, so a
+    collision crosses runs.
     """
     runner = flezha.create_runner("conformance_shorthand")
     for index, declaration in enumerate(declarations):
-        declare = flezha.unbounded_operator if index == 0 else flezha.bounded_operator
-        runner.register_factory(declare_shorthand(declaration, declare))
+        settings = {} if index == 0 else {"run": "steps"}
+        runner.register_factory(declare_shorthand(declaration, settings))
 
 
 def codes_of(refusal: flezha.FlezhaError) -> list[str]:

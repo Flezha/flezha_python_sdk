@@ -11,10 +11,10 @@ write them one tasklet at a time.
 | File | What is in it |
 |---|---|
 | `runner.py` | the runner: this process joins the `trading` namespace and registers both factories |
-| `trade_watcher.py` | the ETL stream, an unbounded operator: the exchange's trade messages in, a cell per symbol, buy signals out |
+| `trade_watcher.py` | the ETL stream, a flow operator: the exchange's trade messages in, a cell per symbol, buy signals out |
 | `track_prices.py` | keeps each symbol's last ten prices, and compares a new price with their average |
 | `buy_above_average.py` | starts an order when a price is 2 % or more above its average |
-| `order_executor.py` | the workflow, a bounded operator: two steps in order, then two side by side |
+| `order_executor.py` | the workflow, a steps operator: two steps in order, then two side by side |
 | `reserve_funds.py` | step one: puts the money aside, and releases it again if the order is undone. The order an instance is started with is the `OrderTicket` here |
 | `place_order.py` | step two: places the paper order, and cancels it if the order is undone |
 | `confirm_fill.py` | waits ten seconds for the exchange, confirms the fill and ends the order with its result, and refuses an order above the exchange's limit |
@@ -75,7 +75,7 @@ flz operator info order_1 --namespace trading
 ```
 ...
 Operator: order_1
-  Kind: bounded
+  Run: steps
   Phase: finished
   Status: ok
   Finished At (unix s): 1790594741
@@ -111,7 +111,7 @@ flz operator info order_2 --namespace trading
 ```
 ...
 Operator: order_2
-  Kind: bounded
+  Run: steps
   Phase: finished
   Status: error
   Error: RuntimeError: the exchange fills at most 100 a time, and this is 500

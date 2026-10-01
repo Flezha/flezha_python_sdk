@@ -8,7 +8,6 @@ never learned already fails at the core's ``deny_unknown_fields``.
 
 from __future__ import annotations
 
-import dataclasses
 from typing import Any
 
 import pytest
@@ -102,28 +101,44 @@ class Statics:
 statics = flezha.tasklet(Statics, cell_keys=["a", "b"], name="statics")
 
 
-@flezha.unbounded_operator("every_key")
+@flezha.operator(
+    "every_key",
+    description="every flow key",
+    run={
+        "flow": {
+            "exactly": {
+                "effectively_once": {
+                    "ack": {
+                        "checkpoint": {"every": 10, "outputs": "at_checkpoint", "max_delay_ms": 500}
+                    },
+                    "correction_ms": 60_000,
+                    "beyond_window": "drop",
+                }
+            }
+        }
+    },
+    durable={"local": {"sleep_after": 2_000}},
+    max_duration_ms=600_000,
+)
 def every_key(c: flezha.Channels) -> None:
-    c.effectively_once().checkpoint_every(10).outputs_at_checkpoint(500)
-    c.correction_window(60_000).beyond_window_policy("drop").compact_after_bytes(1 << 20)
+    c.compact_after_bytes(1 << 20)
     c.input("in").key_by(lambda value: str(value["k"])).into(keyed).retry_max(5).retry_backoff_ms(
         100
     ).keyed().sink()
 
 
-@flezha.unbounded_operator("static_key")
+@flezha.operator("static_key")
 def static_key(c: flezha.Channels) -> None:
     c.input("in").into(statics).sink()
 
 
-@flezha.bounded_operator(
-    "every_bounded_key",
-    loop_mode="chained",
-    rollback_mode="keep_progress",
+@flezha.operator(
+    "every_steps_key",
+    run={"steps": {"each": "chained", "on_failure": "keep_progress"}},
+    durable="remote",
     max_duration_ms=600_000,
-    sync_durability=True,
 )
-def every_bounded_key(c: flezha.Channels) -> None:
+def every_steps_key(c: flezha.Channels) -> None:
     c.input("in").into(echo).sink()
 
 
@@ -133,16 +148,14 @@ def _emitted() -> dict[str, set[str]]:
         "class": set(),
         "channel": set(),
         "tasklet": set(),
-        "bounded": set(),
     }
-    for operator in (every_key, static_key, every_bounded_key):
+    for operator in (every_key, static_key, every_steps_key):
         decl = graph.to_host_class_decl(operator.spec)
         emitted["class"] |= set(decl)
         for channel in decl.get("channels", []):
             emitted["channel"] |= set(channel)
         for tasklet in decl.get("tasklets", []):
             emitted["tasklet"] |= set(tasklet)
-        emitted["bounded"] |= set(decl.get("bounded") or {})
     return emitted
 
 
@@ -180,7 +193,7 @@ def test_the_fixture_names_the_python_builder_as_a_reader() -> None:
     [
         (every_key, "every_key"),
         (static_key, "static_key"),
-        (every_bounded_key, "every_bounded_key"),
+        (every_steps_key, "every_steps_key"),
     ],
 )
 def test_each_declaration_carries_the_python_language_byte(
@@ -213,36 +226,6 @@ def test_flat_map_records_the_link_map_records() -> None:
         == record("map")
         == [[{"link": "transform"}, {"link": "into", "tasklet": 0}]]
     )
-
-
-# --- what the author wrote reaches the core, whatever the kind -------------
-#
-# ``flz_core::host::register::refuse_bounded_facts`` names each unbounded-only
-# key a bounded class may not carry. This builder puts every one on the wire
-# for either kind, so the refusal is the core's, by name, and never a drop.
-
-_UNBOUNDED_ONLY = (
-    "effectively_once",
-    "checkpoint_ack",
-    "checkpoint_every",
-    "checkpoint_outputs",
-    "checkpoint_max_delay_ms",
-    "correction_window_ms",
-    "beyond_window_policy",
-)
-
-
-def test_every_unbounded_setting_reaches_the_wire_on_a_bounded() -> None:
-    """The unbounded fixture's spec re-kinded: every stream-only key populated at once."""
-    bounded = dataclasses.replace(
-        every_key.spec,
-        factory_id="tier_bounded",
-        kind="bounded",
-        bounded=every_bounded_key.spec.bounded,
-    )
-    decl = graph.to_host_class_decl(bounded)
-    dropped = [key for key in _UNBOUNDED_ONLY if key not in decl]
-    assert not dropped, f"keys dropped before the core could judge them: {dropped}"
 
 
 # --- the cross-language topology golden -------------------------------------
@@ -308,7 +291,7 @@ hybrid_producer = flezha.tasklet(HybridProducer, name="hybrid_producer_tasklet")
 hybrid_consumer = flezha.tasklet(HybridConsumer, name="hybrid_consumer_tasklet")
 
 
-@flezha.unbounded_operator("hybrid_channel")
+@flezha.operator("hybrid_channel")
 def hybrid_channel(c: flezha.Channels) -> None:
     c.input("input").into(hybrid_producer).sink("hybrid_indicator", encode=_bytes).into(
         hybrid_consumer
@@ -329,7 +312,7 @@ tier_commit_a = flezha.tasklet(TierCommitA, name="tier_commit_a")
 block_b = flezha.tasklet(BlockB, name="block_b")
 
 
-@flezha.bounded_operator("commit_block_chain")
+@flezha.operator("commit_block_chain", run="steps")
 def commit_block_chain(c: flezha.Channels) -> None:
     c.input("in").into(tier_commit_a).keyed().sink("mid", encode=_bytes).into(block_b)
 
@@ -338,7 +321,7 @@ def test_the_hybrid_stream_topology_is_the_reference() -> None:
     assert _lines("hybrid_channel", hybrid_channel) == _golden("hybrid_channel")
 
 
-def test_the_structured_bounded_topology_is_the_reference() -> None:
+def test_the_structured_steps_topology_is_the_reference() -> None:
     assert _lines("commit_block_chain", commit_block_chain) == _golden("commit_block_chain")
 
 
@@ -361,11 +344,11 @@ def _modes(operator: flezha.Operator) -> dict[str, str]:
 
 
 def test_key_by_alone_makes_the_consumer_dynamic_and_one_tasklet_can_be_both() -> None:
-    @flezha.unbounded_operator("keyed_plain")
+    @flezha.operator("keyed_plain")
     def keyed_plain(c: flezha.Channels) -> None:
         c.input("in", codec="text").key_by(lambda value: value[:1]).into(plain).sink()
 
-    @flezha.unbounded_operator("single_plain")
+    @flezha.operator("single_plain")
     def single_plain(c: flezha.Channels) -> None:
         c.input("in", codec="text").into(plain).sink()
 
@@ -375,7 +358,7 @@ def test_key_by_alone_makes_the_consumer_dynamic_and_one_tasklet_can_be_both() -
 
 
 def test_a_keyed_merge_makes_the_merged_tasklet_dynamic() -> None:
-    @flezha.unbounded_operator("keyed_merge")
+    @flezha.operator("keyed_merge")
     def keyed_merge(c: flezha.Channels) -> None:
         c.merge().from_(c.input("a"), str).from_(c.input("b"), str).key_by(str).into(plain)
 
@@ -384,7 +367,7 @@ def test_a_keyed_merge_makes_the_merged_tasklet_dynamic() -> None:
 
 
 def test_a_static_key_set_fed_by_key_by_is_refused_by_the_core() -> None:
-    @flezha.unbounded_operator("static_keyed")
+    @flezha.operator("static_keyed")
     def static_keyed(c: flezha.Channels) -> None:
         c.input("in").key_by(str).into(statics).sink()
 

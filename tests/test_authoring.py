@@ -75,7 +75,7 @@ def test_declaring_performs_no_io(monkeypatch: pytest.MonkeyPatch) -> None:
         def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
             ctx.emit(value)
 
-    @flezha.unbounded_operator("late")
+    @flezha.operator("late")
     def late(c: flezha.Channels) -> None:
         c.input("in").into(Later).sink()
 
@@ -100,7 +100,7 @@ def test_two_unnamed_mentions_of_one_tasklet_are_one_node() -> None:
         def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
             ctx.emit(value)
 
-    @flezha.unbounded_operator("diamond")
+    @flezha.operator("diamond")
     def diamond(c: flezha.Channels) -> None:
         entry = c.input("in")
         entry.into(Split).named("a").into(Join, "join_a").sink()
@@ -147,7 +147,7 @@ def test_a_node_identity_collision_is_refused() -> None:
         def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
             ctx.emit(value)
 
-    @flezha.unbounded_operator("collision")
+    @flezha.operator("collision")
     def collision(c: flezha.Channels) -> None:
         entry = c.input("in")
         entry.into(First).sink()
@@ -162,35 +162,26 @@ def test_a_node_identity_collision_is_refused() -> None:
     )
 
 
-# KI-122: three options, one implication. Each writes its own raw flag and the
-# core derives the acknowledgement granularity from any of them, so no order of
-# calls can clear another's.
-def test_the_checkpoint_options_compose_in_any_order_and_none_clears_another() -> None:
+def test_an_ack_at_checkpoint_reaches_the_declaration_as_the_tree() -> None:
     @flezha.tasklet(name="one")
     class One:
         def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
             ctx.emit(value)
 
-    @flezha.unbounded_operator("compose")
+    ack = {"checkpoint": {"every": 4, "outputs": "at_checkpoint", "max_delay_ms": 250}}
+
+    @flezha.operator("compose", run={"flow": {"exactly": {"effectively_once": {"ack": ack}}}})
     def compose(c: flezha.Channels) -> None:
-        c.effectively_once()
-        c.outputs_at_checkpoint(250)
-        c.checkpoint_ack()
-        c.checkpoint_every(4)
         c.input("in").into(One).keyed().sink()
 
     assert declare(compose)["ack_granularity"] == "checkpoint"
     decl = graph.to_host_class_decl(compose.spec)
-
-    assert decl["checkpoint_ack"] is True
-    assert decl["checkpoint_every"] == 4
-    assert decl["checkpoint_outputs"] == "at_checkpoint"
-    assert decl["checkpoint_max_delay_ms"] == 250
+    assert decl["run"] == {"flow": {"exactly": {"effectively_once": {"ack": ack}}}}
 
 
 # The verdict itself: one exception carrying every name the core answered with.
 def test_a_refusal_reaches_the_author_under_the_cores_own_names() -> None:
-    @flezha.unbounded_operator("edge_already_wired")
+    @flezha.operator("edge_already_wired")
     def already_wired(c: flezha.Channels) -> None:
         edge = c.input("in")
         edge.into(echo)
@@ -207,7 +198,7 @@ def test_a_refusal_reaches_the_author_under_the_cores_own_names() -> None:
 # advances. The refusal is the core's ``UnservableClock``; what is asserted here
 # is that this builder writes the fact it reads.
 def test_a_tasklet_that_folds_no_change_declares_it() -> None:
-    @flezha.unbounded_operator("nochange")
+    @flezha.operator("nochange")
     def nochange(c: flezha.Channels) -> None:
         c.input("in").into(echo).sink()
 
@@ -261,8 +252,8 @@ def test_an_unrepresentable_state_field_is_refused_naming_it() -> None:
     assert caught.value.details["path"] == "holder.state.conn"
 
 
-def test_a_bounded_that_declares_no_tasklet_is_refused() -> None:
-    @flezha.bounded_operator("empty")
+def test_a_steps_class_that_declares_no_tasklet_is_refused() -> None:
+    @flezha.operator("empty", run="steps")
     def empty(c: flezha.Channels) -> None:
         return None
 
@@ -295,7 +286,7 @@ def test_a_valid_graph_passes() -> None:
 
 
 def test_a_held_edge_wired_twice_is_one_channel_with_two_consumers() -> None:
-    @flezha.unbounded_operator("fan_out")
+    @flezha.operator("fan_out")
     def fan_out(c: flezha.Channels) -> None:
         edge = c.input("in").into(echo)
         edge.into(count_up, "b")
@@ -310,13 +301,13 @@ def test_a_held_edge_wired_twice_is_one_channel_with_two_consumers() -> None:
 def test_branch_and_two_into_statements_derive_the_identical_topology() -> None:
     # The record differs by one link — the sugar's declared arity — and the
     # topology the core derives from the two does not.
-    @flezha.unbounded_operator("separate")
+    @flezha.operator("separate")
     def separate(c: flezha.Channels) -> None:
         edge = c.input("in").into(echo)
         edge.into(count_up, "b")
         edge.into(count_up, "c")
 
-    @flezha.unbounded_operator("branched")
+    @flezha.operator("branched")
     def branched(c: flezha.Channels) -> None:
         c.input("in").into(echo).branch(
             lambda arm: arm.into(count_up, "b"), lambda arm: arm.into(count_up, "c")
@@ -326,7 +317,7 @@ def test_branch_and_two_into_statements_derive_the_identical_topology() -> None:
 
 
 def test_sink_returns_the_edge_so_a_consumer_wires_behind_it() -> None:
-    @flezha.unbounded_operator("hybrid")
+    @flezha.operator("hybrid")
     def hybrid(c: flezha.Channels) -> None:
         c.input("in").into(echo).sink("hybrid_indicator").into(count_up)
 
@@ -339,11 +330,11 @@ def test_sink_returns_the_edge_so_a_consumer_wires_behind_it() -> None:
 
 
 def test_the_sink_names_the_channel_and_the_no_argument_form_does_not() -> None:
-    @flezha.unbounded_operator("sink_named")
+    @flezha.operator("sink_named")
     def named(c: flezha.Channels) -> None:
         c.input("in").into(echo).sink("items_output")
 
-    @flezha.unbounded_operator("sink_derived")
+    @flezha.operator("sink_derived")
     def derived(c: flezha.Channels) -> None:
         c.input("in").into(echo).sink()
 
@@ -352,7 +343,7 @@ def test_the_sink_names_the_channel_and_the_no_argument_form_does_not() -> None:
 
 
 def test_a_channel_named_twice_is_refused_naming_both() -> None:
-    @flezha.unbounded_operator("named_twice")
+    @flezha.operator("named_twice")
     def named_twice(c: flezha.Channels) -> None:
         c.input("in").into(echo).named("a").sink("b")
 
@@ -363,11 +354,11 @@ def test_a_channel_named_twice_is_refused_naming_both() -> None:
 
 
 def test_a_channel_option_with_nothing_wired_after_it_still_reaches_the_channel() -> None:
-    @flezha.unbounded_operator("trailing_named")
+    @flezha.operator("trailing_named")
     def renamed(c: flezha.Channels) -> None:
         c.input("in").into(echo).named("renamed")
 
-    @flezha.unbounded_operator("trailing_keyed")
+    @flezha.operator("trailing_keyed")
     def keyed(c: flezha.Channels) -> None:
         c.input("in").into(echo).keyed()
 
@@ -378,7 +369,7 @@ def test_a_channel_option_with_nothing_wired_after_it_still_reaches_the_channel(
 
 
 def test_two_channels_naming_one_sink_is_refused() -> None:
-    @flezha.unbounded_operator("one_sink_two_channels")
+    @flezha.operator("one_sink_two_channels")
     def one_sink(c: flezha.Channels) -> None:
         c.input("in").into(echo).sink("shared").into(count_up).sink("shared")
 
@@ -388,11 +379,11 @@ def test_two_channels_naming_one_sink_is_refused() -> None:
 
 
 def test_response_records_its_link_and_ends_the_channel_as_a_sink_would() -> None:
-    @flezha.unbounded_operator("answers")
+    @flezha.operator("answers")
     def terminal(c: flezha.Channels) -> None:
         c.input("in").into(echo).response()
 
-    @flezha.unbounded_operator("answers_and_feeds")
+    @flezha.operator("answers_and_feeds")
     def hybrid(c: flezha.Channels) -> None:
         c.input("in").into(echo).response().into(count_up)
 
@@ -406,7 +397,7 @@ def test_response_records_its_link_and_ends_the_channel_as_a_sink_would() -> Non
 
 
 def test_a_sink_beside_a_response_on_one_channel_is_refused() -> None:
-    @flezha.unbounded_operator("ends_twice")
+    @flezha.operator("ends_twice")
     def ends_twice(c: flezha.Channels) -> None:
         c.input("in").into(echo).sink("out").response()
 
@@ -417,7 +408,7 @@ def test_a_sink_beside_a_response_on_one_channel_is_refused() -> None:
 
 
 def test_keyed_reaches_the_channel_of_an_edge_that_also_declares_a_sink() -> None:
-    @flezha.unbounded_operator("keyed_hybrid")
+    @flezha.operator("keyed_hybrid")
     def keyed_hybrid(c: flezha.Channels) -> None:
         c.input("in").into(echo).keyed().sink("mid").into(count_up)
 
@@ -426,7 +417,7 @@ def test_keyed_reaches_the_channel_of_an_edge_that_also_declares_a_sink() -> Non
 
 
 def test_a_transform_before_one_into_reaches_that_consumer_only() -> None:
-    @flezha.unbounded_operator("per_edge_transform")
+    @flezha.operator("per_edge_transform")
     def per_edge_transform(c: flezha.Channels) -> None:
         edge = c.input("in").into(echo)
         edge.map(lambda value: f"{value}!").into(count_up, "b")
@@ -444,7 +435,7 @@ def test_a_transform_before_one_into_reaches_that_consumer_only() -> None:
 
 
 def test_a_bare_re_declared_edge_is_a_no_op_not_a_second_edge() -> None:
-    @flezha.unbounded_operator("edge_redeclared_bare")
+    @flezha.operator("edge_redeclared_bare")
     def bare(c: flezha.Channels) -> None:
         edge = c.input("in")
         edge.into(echo)
@@ -455,83 +446,80 @@ def test_a_bare_re_declared_edge_is_a_no_op_not_a_second_edge() -> None:
     assert [(e.tasklet, len(e.transforms)) for e in channel.consumers] == [(0, 0)]
 
 
-# What an author writes reaches the core whatever the kind, and a setting of
-# the other kind is refused there by its own name rather than dropped here.
+# The tree reaches the core as written, and a setting under a parent that does
+# not carry it is refused there by its own name and its parent's.
 
 
 @pytest.mark.parametrize(
-    ("write", "refusal"),
+    ("settings", "field", "parent"),
     [
-        (lambda c: c.effectively_once(), "topology.effectively_once_on_bounded"),
-        (lambda c: c.checkpoint_every(500), "topology.checkpoint_on_bounded"),
-        (lambda c: c.correction_window(60_000), "topology.correction_window_on_bounded"),
+        ({"run": {"flow": {"each": "per_input"}}}, "each", "flow"),
+        ({"run": {"steps": {"correction_ms": 5_000}}}, "correction_ms", "steps"),
+        (
+            {"run": {"flow": {"exactly": {"at_least_once": {"ack": "checkpoint"}}}}},
+            "ack",
+            "at_least_once",
+        ),
+        ({"durable": {"false": {"sleep_after": 1_000}}}, "sleep_after", "false"),
     ],
 )
-def test_a_stream_setting_on_a_bounded_is_refused_by_name(
-    write: Callable[[flezha.Channels], object], refusal: str
+def test_a_misplaced_setting_is_refused_naming_it_and_its_parent(
+    settings: dict[str, Any], field: str, parent: str
 ) -> None:
-    @flezha.bounded_operator("unbounded_setting_bounded")
-    def bounded(c: flezha.Channels) -> None:
-        write(c)
+    @flezha.operator("misplaced", **settings)
+    def misplaced(c: flezha.Channels) -> None:
         c.input("in").into(echo)
 
     with pytest.raises(FlezhaError) as refused:
-        declare(bounded)
-    assert codes(refused.value) == [refusal]
+        declare(misplaced)
+    assert codes(refused.value) == ["topology.unknown_field"]
+    assert field in str(refused.value) and f"'{parent}'" in str(refused.value)
 
 
-def test_sync_durability_on_a_stream_is_refused_by_name() -> None:
-    @flezha.unbounded_operator("sync_unbounded", sync_durability=True)
+def test_a_remote_flow_class_is_refused_by_name() -> None:
+    @flezha.operator("remote_flow", durable="remote")
     def stream(c: flezha.Channels) -> None:
         c.input("in").into(echo).sink("out")
 
     with pytest.raises(FlezhaError) as refused:
         declare(stream)
-    assert codes(refused.value) == ["topology.sync_durability_on_unbounded"]
+    assert codes(refused.value) == ["topology.remote_on_flow"]
 
 
 @pytest.mark.parametrize(
-    ("decorator", "persistent", "sleeps"),
+    ("durable", "written"),
     [
-        (flezha.bounded_operator, True, True),
-        (flezha.bounded_operator, False, False),
-        (flezha.unbounded_operator, True, False),
+        (None, None),
+        (False, False),
+        ({"local": {"sleep_after": False}}, {"local": {"sleep_after": False}}),
     ],
 )
-def test_sleeping_defaults_to_persistence_on_a_bounded_only(
-    decorator: Callable[..., Any], persistent: bool, sleeps: bool
-) -> None:
-    @decorator("sleep_default", persistent=persistent)
-    def operator(c: flezha.Channels) -> None:
+def test_the_durability_reaches_the_declaration_as_written(durable: Any, written: Any) -> None:
+    @flezha.operator("kept", run="steps", durable=durable)
+    def kept(c: flezha.Channels) -> None:
         c.input("in").into(echo)
 
-    assert graph.to_host_class_decl(operator.spec)["sleep_when_idle"] is sleeps
-
-
-@pytest.mark.parametrize("decorator", [flezha.unbounded_operator, flezha.bounded_operator])
-def test_sleeping_without_persistence_is_refused_by_name(decorator: Callable[..., Any]) -> None:
-    @decorator("sleep_no_persist", persistent=False, sleep_when_idle=True)
-    def operator(c: flezha.Channels) -> None:
-        c.input("in").into(echo)
-
-    with pytest.raises(FlezhaError) as caught:
-        declare(operator)
-    assert codes(caught.value) == ["topology.sleep_without_persistence"]
+    declare(kept)
+    assert graph.to_host_class_decl(kept.spec).get("durable") == written
 
 
 @pytest.mark.parametrize(
-    ("keyword", "value"), [("loop_mode", "forever"), ("rollback_mode", "best_effort")]
+    ("run", "value"),
+    [
+        ({"steps": {"each": "forever"}}, "forever"),
+        ({"steps": {"on_failure": "best_effort"}}, "best_effort"),
+        ("bounded", "bounded"),
+    ],
 )
-def test_a_mode_outside_its_declared_values_is_refused_at_decoration(
-    keyword: str, value: str
-) -> None:
-    written: dict[str, Any] = {keyword: value}
-    with pytest.raises(FlezhaError) as caught:
-        flezha.bounded_operator(id="w", **written)
-    assert (caught.value.code, caught.value.details) == (
-        "topology.invalid_mode",
-        {"factory_id": "w", "knob": keyword, "value": value},
-    )
+def test_a_value_outside_its_choice_is_refused_at_registration(run: Any, value: str) -> None:
+    @flezha.operator("moded", run=run)
+    def moded(c: flezha.Channels) -> None:
+        c.input("in").into(echo)
+
+    with pytest.raises(FlezhaError) as refused:
+        declare(moded)
+    assert codes(refused.value) == ["topology.invalid_setting"]
+    assert value in str(refused.value)
 
 
 # ---------------------------------------------------------------------------
@@ -558,7 +546,7 @@ def test_two_sources_merge_into_one_node_each_edge_under_its_own_mapping() -> No
 def _merge_refusal(sources: int) -> FlezhaError:
     """The verdict on a merge naming one entry edge ``sources`` times."""
 
-    @flezha.unbounded_operator("merge_refused")
+    @flezha.operator("merge_refused")
     def refused(c: flezha.Channels) -> None:
         merge, entry = c.merge(), c.input("in")
         for _ in range(sources):
@@ -583,7 +571,7 @@ def test_a_merge_naming_one_source_twice_is_refused_naming_the_channel() -> None
 
 
 def test_a_merge_source_already_wired_into_the_tasklet_is_refused() -> None:
-    @flezha.unbounded_operator("merge_rewired")
+    @flezha.operator("merge_rewired")
     def rewired(c: flezha.Channels) -> None:
         entry = c.input("in")
         entry.map(str.upper).into(echo)
@@ -601,7 +589,7 @@ class RoutedDocument:
 
 
 def test_the_router_is_one_route_latest_node_and_a_named_router_is_another() -> None:
-    @flezha.unbounded_operator("routers")
+    @flezha.operator("routers")
     def routers(c: flezha.Channels) -> None:
         trades = c.input("trades")
         c.route_latest(c.input("config"), trades, lambda trade: trade["symbol"]).into(
@@ -621,7 +609,7 @@ def test_the_router_is_one_route_latest_node_and_a_named_router_is_another() -> 
 
 
 def test_two_unnamed_routers_are_one_node_so_a_shared_traffic_edge_is_refused() -> None:
-    @flezha.unbounded_operator("unnamed_routers")
+    @flezha.operator("unnamed_routers")
     def routers(c: flezha.Channels) -> None:
         trades = c.input("trades")
         for documents in ("config", "feature_flags"):
@@ -762,8 +750,8 @@ def _decodes_text(operator: flezha.Operator) -> bool:
     return decode is not None and decode(b"abc") == "abc"
 
 
-def test_an_unbounded_short_form_is_its_hand_written_twin() -> None:
-    @flezha.unbounded_operator(id="upcase", sink="out", codec="text")
+def test_a_flow_short_form_is_its_hand_written_twin() -> None:
+    @flezha.operator(id="upcase", sink="out", codec="text")
     def upcase(value: str) -> str:
         return value.upper()
 
@@ -772,22 +760,21 @@ def test_an_unbounded_short_form_is_its_hand_written_twin() -> None:
         def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
             ctx.emit(value.upper())
 
-    @flezha.unbounded_operator("upcase")
+    @flezha.operator("upcase")
     def twin(c: flezha.Channels) -> None:
         c.input("input", codec="text").into(UpcaseTasklet).sink("out")
 
-    assert upcase.kind == "unbounded"
+    assert "run" not in graph.to_host_class_decl(upcase.spec)
     assert graph.to_host_class_decl(upcase.spec) == graph.to_host_class_decl(twin.spec)
     assert _decodes_text(upcase)
 
 
 @pytest.mark.parametrize(
-    ("written", "loop_mode"), [({}, "once"), ({"loop_mode": "per_input"}, "per_input")]
+    "run",
+    ["steps", {"steps": {"each": "per_input"}}],
 )
-def test_a_bounded_short_form_is_its_hand_written_twin(
-    written: dict[str, Any], loop_mode: str
-) -> None:
-    @flezha.bounded_operator(id="place", sink="placed", input="order", codec="text", **written)
+def test_a_steps_short_form_is_its_hand_written_twin(run: Any) -> None:
+    @flezha.operator(id="place", run=run, durable=False, sink="placed", input="order", codec="text")
     def place(order: str) -> str:
         return order
 
@@ -796,14 +783,13 @@ def test_a_bounded_short_form_is_its_hand_written_twin(
         def run(self, order: str, ctx: flezha.Ctx[None, str]) -> None:
             ctx.emit(order)
 
-    @flezha.bounded_operator("place", **written)
+    @flezha.operator("place", run=run, durable=False)
     def twin(c: flezha.Channels) -> None:
         c.input("order", codec="text").into(PlaceTasklet).sink("placed")
 
-    assert place.kind == "bounded"
     record = graph.to_host_class_decl(place.spec)
     assert record == graph.to_host_class_decl(twin.spec)
-    assert record["bounded"]["loop_mode"] == loop_mode
+    assert (record["run"], record["durable"]) == (run, False)
     declare(place)
 
 
@@ -818,11 +804,11 @@ def test_a_channels_body_annotated_or_not_is_still_the_full_form() -> None:
     def bare(c) -> None:
         c.input("input").into(echo).sink("out")
 
-    @flezha.unbounded_operator(id="static_cell")
+    @flezha.operator(id="static_cell")
     def static_cell(c: flezha.Channels) -> None:
         bare(c)
 
-    for full in (static_cell, flezha.unbounded_operator(id="bare")(bare)):
+    for full in (static_cell, flezha.operator(id="bare")(bare)):
         assert full.tasklet is None
         assert [node.name for node in full.spec.tasklets] == ["echo"]
 
@@ -830,7 +816,7 @@ def test_a_channels_body_annotated_or_not_is_still_the_full_form() -> None:
 def test_a_function_short_form_taking_a_context_is_refused() -> None:
     with pytest.raises(FlezhaError) as caught:
 
-        @flezha.unbounded_operator(id="stamp", sink="out")
+        @flezha.operator(id="stamp", sink="out")
         def stamp(value: str, ctx: flezha.Ctx[None, str]) -> str:
             return value
 
@@ -840,7 +826,7 @@ def test_a_function_short_form_taking_a_context_is_refused() -> None:
 
 
 def test_the_generated_tasklet_composes_in_another_topology() -> None:
-    @flezha.unbounded_operator(id="upcase", sink="out")
+    @flezha.operator(id="upcase", sink="out")
     def upcase(value: str) -> str:
         return value.upper()
 
@@ -848,7 +834,7 @@ def test_the_generated_tasklet_composes_in_another_topology() -> None:
     assert generated is not None
     assert generated("abc") == "ABC"
 
-    @flezha.unbounded_operator("wider")
+    @flezha.operator("wider")
     def wider(c: flezha.Channels) -> None:
         c.input("in").into(generated).into(echo).sink("out")
 
@@ -865,7 +851,7 @@ def test_a_tasklet_body_beside_a_topology_body_is_refused() -> None:
             return None
 
     with pytest.raises(FlezhaError) as caught:
-        flezha.unbounded_operator(id="both", sink="out")(Both)
+        flezha.operator(id="both", sink="out")(Both)
 
     assert (caught.value.code, caught.value.details) == (
         "topology.short_form_with_topology",
@@ -893,7 +879,7 @@ def _returns_none_under_an_unresolvable_hint(value: Decimal) -> None:
 )
 def test_a_sink_on_a_body_with_no_output_is_refused(body: Callable[[str], Any]) -> None:
     with pytest.raises(FlezhaError) as caught:
-        flezha.unbounded_operator(id="drain", sink="out")(body)
+        flezha.operator(id="drain", sink="out")(body)
 
     assert (caught.value.code, caught.value.details) == (
         "topology.sink_without_output",
@@ -904,13 +890,13 @@ def test_a_sink_on_a_body_with_no_output_is_refused(body: Callable[[str], Any]) 
 def test_an_absent_id_is_refused_rather_than_derived() -> None:
     with pytest.raises(FlezhaError) as short:
 
-        @flezha.unbounded_operator(sink="out")
+        @flezha.operator(sink="out")
         def upcase(value: str) -> str:
             return value
 
     with pytest.raises(FlezhaError) as full_form:
 
-        @flezha.bounded_operator()
+        @flezha.operator(run="steps")
         def full(c: flezha.Channels) -> None:
             c.input("in").into(echo).sink("out")
 
@@ -921,7 +907,7 @@ def test_an_absent_id_is_refused_rather_than_derived() -> None:
         )
 
 
-@pytest.mark.parametrize("keyword", ["kind", "sink", "input", "codec"])
+@pytest.mark.parametrize("keyword", ["run", "durable", "sink", "input", "codec"])
 def test_an_operator_keyword_on_a_tasklet_is_refused(keyword: str) -> None:
     declarations: dict[str, Any] = {keyword: "text"}
     with pytest.raises(FlezhaError) as caught:
@@ -933,7 +919,7 @@ def test_an_operator_keyword_on_a_tasklet_is_refused(keyword: str) -> None:
 
     assert caught.value.code == "topology.operator_field_on_tasklet"
     assert caught.value.details["fields"] == [f"`{keyword}`"]
-    assert "flezha.unbounded_operator" in str(caught.value)
+    assert "flezha.operator" in str(caught.value)
 
 
 def test_a_short_form_carries_its_tasklets_own_settings() -> None:
@@ -944,12 +930,15 @@ def test_a_short_form_carries_its_tasklets_own_settings() -> None:
         def cells_for(self, value: str) -> list[str]:
             return ["a"]
 
-    short = flezha.unbounded_operator(
-        id="keyed", sink="out", cell_keys=["a", "b"], mailbox_capacity=8
+    short = flezha.operator(
+        id="keyed",
+        sink="out",
+        cell_keys=["a", "b"],
+        mailbox_capacity=8,
     )(Keyed)
     keyed = flezha.tasklet(name="keyed", cell_keys=["a", "b"], mailbox_capacity=8)(Keyed)
 
-    @flezha.unbounded_operator("keyed")
+    @flezha.operator("keyed")
     def twin(c: flezha.Channels) -> None:
         c.input("input").into(keyed).sink("out")
 
@@ -964,7 +953,7 @@ def test_a_short_form_carries_its_tasklets_own_settings() -> None:
 def test_a_short_form_keyword_on_a_channels_body_is_refused(keyword: dict[str, Any]) -> None:
     with pytest.raises(FlezhaError) as caught:
 
-        @flezha.unbounded_operator(id="full", **keyword)
+        @flezha.operator(id="full", **keyword)
         def full(c: flezha.Channels) -> None:
             c.input("input").into(echo).sink("out")
 
@@ -975,44 +964,29 @@ def test_a_short_form_keyword_on_a_channels_body_is_refused(keyword: dict[str, A
 
 
 @pytest.mark.parametrize(
-    ("declare_operator", "keyword"),
-    [
-        (flezha.unbounded_operator, "name"),
-        (flezha.bounded_operator, "retry_attempts"),
-        (flezha.bounded_operator, "retry_backoff_ms"),
-        (flezha.bounded_operator, "barrier_retry_attempts"),
-        (flezha.bounded_operator, "wake_after_ms"),
-    ],
+    "keyword",
+    ["name", "retry_attempts", "retry_backoff_ms", "barrier_retry_attempts", "wake_after_ms"],
 )
-def test_a_keyword_neither_form_takes_is_a_type_error(
-    declare_operator: Callable[..., Any], keyword: str
-) -> None:
+def test_a_keyword_neither_form_takes_is_a_type_error(keyword: str) -> None:
     written: dict[str, Any] = {keyword: 5}
     with pytest.raises(TypeError, match=keyword):
-        declare_operator(id="upcase", **written)
+        flezha.operator(id="upcase", run="steps", **written)
 
 
-@pytest.mark.parametrize(
-    ("declare_operator", "setting"),
-    [
-        (flezha.unbounded_operator, {"persistent": False}),
-        (flezha.unbounded_operator, {"sync_durability": True}),
-        (flezha.bounded_operator, {"rollback_mode": "keep_progress"}),
-        (flezha.bounded_operator, {"max_duration_ms": 60_000}),
-    ],
-)
-def test_a_class_setting_on_a_short_form_is_refused(
-    declare_operator: Callable[..., Any], setting: dict[str, Any]
-) -> None:
+def test_a_short_form_takes_the_class_settings_the_full_form_takes() -> None:
+    settings: dict[str, Any] = {
+        "run": {"steps": {"each": "per_input", "on_failure": "keep_progress"}},
+        "durable": {"local": {"sleep_after": 2_000}},
+        "max_duration_ms": 60_000,
+    }
+
     def place(order: str) -> str:
         return order
 
-    with pytest.raises(FlezhaError) as caught:
-        declare_operator(id="place", sink="placed", **setting)(place)
-    assert (caught.value.code, caught.value.details) == (
-        "topology.setting_on_short_form",
-        {"factory_id": "place", "fields": [f"`{next(iter(setting))}`"]},
-    )
+    short = flezha.operator(id="place", sink="placed", **settings)(place)
+    decl = graph.to_host_class_decl(short.spec)
+    assert {key: decl[key] for key in settings} == settings
+    declare(short)
 
 
 def test_a_class_tasklet_body_is_its_run_method() -> None:

@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 import contract
-from flezha import Channels, Ctx, FlezhaError, LocalOperator, state, tasklet, unbounded_operator
+from flezha import Channels, Ctx, FlezhaError, LocalOperator, operator, state, tasklet
 
 FIXTURE = contract.member("test/fixtures/local_mode_word_count.txt")
 
@@ -57,7 +57,7 @@ class Tally:
         state.seen = change.seen
 
 
-@unbounded_operator("local_word_count_python")
+@operator("local_word_count_python")
 def word_count(c: Channels) -> None:
     c.input("lines", codec="text").into(Split).key_by(lambda word: word).into(Tally).keyed().sink(
         "totals"
@@ -115,7 +115,7 @@ class Defaults:
         ctx.emit({"a": value["a"]})
 
 
-@unbounded_operator("local_default_codecs_python")
+@operator("local_default_codecs_python")
 def default_codecs(c: Channels) -> None:
     c.input("in").into(Defaults).sink("out")
 
@@ -123,7 +123,7 @@ def default_codecs(c: Channels) -> None:
 calls: list[str] = []
 
 
-@unbounded_operator("local_echoless_python", input="ticks", codec="text")
+@operator("local_echoless_python", input="ticks", codec="text")
 def echoless(tick: str) -> str:
     calls.append(tick)
     return f"got {tick}"

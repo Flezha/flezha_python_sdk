@@ -85,7 +85,7 @@ def test_blocked_handlers_buy_threads_and_the_grown_ones_retire() -> None:
             release.wait(timeout=5)
             ctx.emit(value)
 
-    @flezha.unbounded_operator("blocking")
+    @flezha.operator("blocking")
     def blocking(c: flezha.Channels) -> None:
         c.input("in").into(Blocks).sink()
 
@@ -118,7 +118,7 @@ def test_the_supervisor_stops_growing_at_the_ceiling() -> None:
             release.wait(timeout=5)
             ctx.emit(value)
 
-    @flezha.unbounded_operator("capped")
+    @flezha.operator("capped")
     def capped(c: flezha.Channels) -> None:
         c.input("in").into(Blocks).sink()
 
@@ -252,7 +252,7 @@ def test_an_async_handler_is_driven_under_either_executor(kind: str) -> None:
             await asyncio.sleep(0.001)
             ctx.emit(value.upper())
 
-    @flezha.unbounded_operator("async_op")
+    @flezha.operator("async_op")
     def async_op(c: flezha.Channels) -> None:
         c.input("in").into(Slow).sink()
 
@@ -282,7 +282,7 @@ def test_a_drain_has_a_time_limit_and_says_what_it_abandoned(
             never.wait(timeout=30)
             ctx.emit(value)
 
-    @flezha.unbounded_operator("wedge")
+    @flezha.operator("wedge")
     def wedge(c: flezha.Channels) -> None:
         c.input("in").into(Wedged).sink()
 
@@ -332,7 +332,7 @@ def _assert_releases_the_gil(blocking_call: Any) -> None:
 
     Both blocking entry points go through the veneer's single ``py.detach``
     seam — which the crate's own test asserts is used exactly once per blocking
-    export, so ``complete`` and the bounded receive are covered by the same
+    export, so ``complete`` and the steps receive are covered by the same
     proof without needing a live controller to reach them.
     """
     core = native.Core.create()

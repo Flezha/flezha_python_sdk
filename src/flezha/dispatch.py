@@ -89,7 +89,7 @@ class RegisteredClass:
             for node in spec.tasklets
         ]
         # Keyed by operator too: one class serves every operator of its
-        # factory on this runner, such as each bounded instance, and each has
+        # factory on this runner, such as each steps instance, and each has
         # cells of its own under the same tasklet and key.
         self._cells: dict[tuple[str, int, str | None], Any] = {}
         # Cells of one class are touched from every worker thread, and the
@@ -185,7 +185,7 @@ class UnreadableMessage(Exception):
     """An entry channel's decoder, or the entry edge's transforms over what it
     decoded, rejected a message. Only the entrance raises this: the verdict it
     becomes tells the core the message is unreadable rather than that the
-    handler failed, so a bounded parks it and keeps waiting instead of ending."""
+    handler failed, so a steps parks it and keeps waiting instead of ending."""
 
     def __init__(self, cause: BaseException) -> None:
         super().__init__(error_message(cause))
@@ -461,12 +461,10 @@ async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any, Any]) -> Non
     # This node's own edge off the channel: a transform chain declared before
     # one `into` belongs to that consumer and to no other. It is evaluated here
     # only for a payload that reached us untransformed — an entry payload,
-    # whose producer is the wire, or a bounded stage's released value. A
+    # whose producer is the wire, or a steps stage's released value. A
     # stream producer evaluated it as its activation completed, and evaluating
     # it again would compose the chain with itself.
-    untransformed = (
-        channel is None or channel.kind == "entry" or cell.registered.spec.structured_bounded
-    )
+    untransformed = channel is None or channel.kind == "entry" or cell.registered.spec.runs_in_steps
     edge = _edge_into(channel, cell.node.index) if untransformed else None
     # The entrance (the entry channel's decoder and the entry edge's
     # transforms) is where a message the operator cannot read is told apart

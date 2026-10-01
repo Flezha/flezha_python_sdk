@@ -24,7 +24,7 @@ class Other:
         ctx.emit(value)
 
 
-@flezha.unbounded_operator("other")
+@flezha.operator("other")
 def other_op(c: flezha.Channels) -> None:
     c.input("in").into(Other).sink()
 
@@ -123,7 +123,7 @@ def test_only_one_runner_may_be_started_per_process(runner: Any) -> None:
 
 
 def test_a_declaration_that_fails_releases_the_slot(runner: Any) -> None:
-    @flezha.unbounded_operator("broken")
+    @flezha.operator("broken")
     def broken(c: flezha.Channels) -> None:
         c.input("dangling")
 
@@ -368,23 +368,23 @@ def test_one_call_turns_diagnostics_on() -> None:
         root.setLevel(logging.NOTSET)
 
 
-@flezha.unbounded_operator(id="short_unbounded", sink="out", codec="text")
-def short_unbounded(value: str) -> str:
+@flezha.operator(id="short_flow", sink="out", codec="text")
+def short_flow(value: str) -> str:
     return value
 
 
-@flezha.bounded_operator(id="short_bounded", sink="placed", codec="text")
-def short_bounded(value: str) -> str:
+@flezha.operator(id="short_steps", run="steps", sink="placed", codec="text")
+def short_steps(value: str) -> str:
     return value
 
 
 def test_register_factory_takes_a_short_form_of_either_kind(runner: Any) -> None:
-    r = runner().register_factory(short_unbounded).register_factory(short_bounded)
-    assert r.operators() == ["short_unbounded", "short_bounded"]
+    r = runner().register_factory(short_flow).register_factory(short_steps)
+    assert r.operators() == ["short_flow", "short_steps"]
 
-    r.unregister_factory(short_bounded)
-    assert r.operators() == ["short_unbounded"]
-    r.unregister_factory(short_unbounded)
+    r.unregister_factory(short_steps)
+    assert r.operators() == ["short_flow"]
+    r.unregister_factory(short_flow)
     assert r.operators() == []
 
 
@@ -399,21 +399,21 @@ def test_register_modules_collects_a_short_form(runner: Any) -> None:
 
 
 def test_a_short_form_collides_with_one_of_the_other_kind(runner: Any) -> None:
-    @flezha.bounded_operator(id="short_unbounded", sink="placed")
+    @flezha.operator(id="short_flow", run="steps", sink="placed")
     def twin(value: str) -> str:
         return value
 
-    r = runner().register_factory(short_unbounded)
+    r = runner().register_factory(short_flow)
     with pytest.raises(FlezhaError) as caught:
         r.register_factory(twin)
     assert (caught.value.code, caught.value.details) == (
         "topology.duplicate_factory_id",
-        {"factory_id": "short_unbounded"},
+        {"factory_id": "short_flow"},
     )
-    assert "short_unbounded" in str(caught.value)
+    assert "short_flow" in str(caught.value)
 
 
 def test_registering_a_tasklet_is_refused(runner: Any) -> None:
     with pytest.raises(FlezhaError) as caught:
         runner().register_factory(Other)  # type: ignore[arg-type]
-    assert caught.value.code == "topology.unknown_operator_kind"
+    assert caught.value.code == "topology.no_operator_exported"

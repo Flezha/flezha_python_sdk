@@ -19,7 +19,7 @@ from flezha.testing import ReplayMismatch, TaskletTestHarness, replay_equals
 def test_a_handler_is_testable_with_no_runtime_and_no_controller() -> None:
     """A tasklet class through the harness, a short form's function directly."""
 
-    @flezha.unbounded_operator(id="shout", sink="out")
+    @flezha.operator(id="shout", sink="out")
     def shout(value: str) -> str:
         return value.upper()
 
@@ -321,11 +321,11 @@ def test_the_harness_answers_a_spawn_already_resolved() -> None:
     @flezha.tasklet(name="spawner")
     class Spawner:
         def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
-            results.append(ctx.spawn_bounded("worker", value).try_result())
-            named = ctx.spawn_bounded("worker", value, id="w1")
+            results.append(ctx.spawn_steps("worker", value).try_result())
+            named = ctx.spawn_steps("worker", value, id="w1")
             results.append(named.try_result())
             again.append(named.wait())
-            unread.append(ctx.spawn_bounded("worker", value))
+            unread.append(ctx.spawn_steps("worker", value))
 
     harness: TaskletTestHarness[None] = TaskletTestHarness(Spawner)
     harness.feed("a")

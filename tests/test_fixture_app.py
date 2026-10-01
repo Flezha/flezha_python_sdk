@@ -28,7 +28,7 @@ def test_persistence_off_counter_declares_its_own_nodes() -> None:
     decl = graph.to_host_class_decl(fixtures_state.persistence_off_operator.spec)
 
     assert decl["factory_id"] == "persistence_off_counter"
-    assert decl["persistent"] is False
+    assert decl["durable"] is False
     assert _tasklet_names(decl) == [
         "persistence_off_entry_tasklet",
         "persistence_off_counter_tasklet",

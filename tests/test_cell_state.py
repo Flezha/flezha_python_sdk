@@ -1,7 +1,7 @@
 """A cell belongs to one operator.
 
 One registered class serves every operator of its factory on a runner, such as
-each instance of a bounded operator or each partition of a stream, and each has
+each instance of a steps operator or each partition of a stream, and each has
 cells of its own under the same tasklet and cell key. Every path that reads or
 writes a cell's state is driven here with two operators side by side.
 """
@@ -37,7 +37,7 @@ class Kept:
 kept = flezha.tasklet(Kept, name="kept")
 
 
-@flezha.unbounded_operator("kept_operator")
+@flezha.operator("kept_operator")
 def kept_operator(c: flezha.Channels) -> None:
     c.input("input").into(kept).sink("out")
 

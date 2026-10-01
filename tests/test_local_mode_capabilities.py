@@ -4,7 +4,7 @@ it: the same class the end-to-end scenario drives, so what passes here and what
 passes there cannot be two different graphs.
 
 The other ten capabilities in the vocabulary are the controller's: persistence,
-effectively-once, correction, partitioning, bounded, liveness, restarts. Local
+effectively-once, correction, partitioning, steps, liveness, restarts. Local
 mode refuses them by name rather than approximating them.
 
 What each test can assert is what a run with no controller can see. A durable

@@ -15,11 +15,11 @@ class Handle:
         ctx.emit(value)
 
 
-@flezha.unbounded_operator("from_module")
+@flezha.operator("from_module")
 def from_module(c: flezha.Channels) -> None:
     c.input("in").into(Handle).sink()
 
 
-@flezha.unbounded_operator(id="from_module_short_form", sink="out")
+@flezha.operator(id="from_module_short_form", sink="out")
 def from_module_short_form(value: str) -> str:
     return value

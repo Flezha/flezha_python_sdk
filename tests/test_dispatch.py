@@ -142,7 +142,7 @@ def test_a_filtered_input_is_consumed_and_reaches_no_handler(fake_core: FakeCore
             seen.append(value)
             ctx.emit(value)
 
-    @flezha.unbounded_operator("filtered")
+    @flezha.operator("filtered")
     def filtered(c: flezha.Channels) -> None:
         c.input("in").filter(lambda value: len(value) > 2).into(OnlyLong).sink()
 
@@ -162,7 +162,7 @@ def test_a_key_request_answers_one_entry_per_payload(fake_core: FakeCore) -> Non
         def run(self, value: dict[str, str], ctx: flezha.Ctx[None, dict[str, str]]) -> None:
             ctx.emit(value)
 
-    @flezha.unbounded_operator("routed_op")
+    @flezha.operator("routed_op")
     def routed_op(c: flezha.Channels) -> None:
         c.input("in").key_by(lambda value: value["k"]).into(Routed).sink()
 
@@ -179,7 +179,7 @@ def test_a_key_request_answers_the_keyed_consumer_behind_an_unkeyed_one(
     """The keys are the keyed consumer's, whatever an unkeyed consumer declared
     before it filters out."""
 
-    @flezha.unbounded_operator("split_keyed")
+    @flezha.operator("split_keyed")
     def split_keyed(c: flezha.Channels) -> None:
         entry = c.input("in", codec="text")
         entry.filter(lambda value: value == "drop").into(echo).sink("dropped")
@@ -203,7 +203,7 @@ def test_a_per_payload_refusal_does_not_fail_the_whole_crossing(fake_core: FakeC
             raise ValueError("no key")
         return value["k"]
 
-    @flezha.unbounded_operator("picky_keys")
+    @flezha.operator("picky_keys")
     def picky_keys(c: flezha.Channels) -> None:
         c.input("in").key_by(key_of).into(Routed).sink()
 
@@ -291,7 +291,7 @@ def test_a_keyed_channel_with_no_key_is_refused_naming_it(fake_core: FakeCore) -
         def run(self, value: str, ctx: flezha.Ctx[None, Any]) -> None:
             ctx.emit(value)
 
-    @flezha.unbounded_operator("keyed_sink")
+    @flezha.operator("keyed_sink")
     def keyed_sink(c: flezha.Channels) -> None:
         c.input("in").into(Keyless).keyed().sink("out")
 
@@ -300,10 +300,10 @@ def test_a_keyed_channel_with_no_key_is_refused_naming_it(fake_core: FakeCore) -
     assert "out" in effect["message"]
 
 
-# -- a tasklet ending its bounded operator -------------------------------------------
+# -- a tasklet ending its operator ------------------------------------------------
 #
 # The host only carries the request in the item's effect. Ending the instance
-# after the iteration commits, and failing an unbounded operator's item, are the core's.
+# after the iteration commits is the core's.
 
 _RESULTS: dict[str, Any] = {"text": "3", "bytes": b"\x00raw", "json": {"turns": 3}, "none": None}
 
@@ -315,13 +315,13 @@ class Finisher:
         ctx.complete(_RESULTS[value])
 
 
-@flezha.bounded_operator("finishing_bounded")
-def _finishing_bounded(c: flezha.Channels) -> None:
+@flezha.operator("finishing_steps", run="steps")
+def _finishing_steps(c: flezha.Channels) -> None:
     c.input("in").into(Finisher).sink()
 
 
-@flezha.unbounded_operator("finishing_unbounded")
-def _finishing_unbounded(c: flezha.Channels) -> None:
+@flezha.operator("finishing_flow")
+def _finishing_flow(c: flezha.Channels) -> None:
     c.input("in").into(Finisher).sink()
 
 
@@ -332,17 +332,15 @@ def _finishing_unbounded(c: flezha.Channels) -> None:
 def test_complete_carries_the_latest_result_in_the_effect(
     fake_core: FakeCore, value: str, carried: bytes
 ) -> None:
-    deps = deps_for(_finishing_bounded, fake_core)
-    (effect,) = answered(work_activation(19, value, factory="finishing_bounded"), deps)["effects"]
+    deps = deps_for(_finishing_steps, fake_core)
+    (effect,) = answered(work_activation(19, value, factory="finishing_steps"), deps)["effects"]
     assert effect["verdict"] == "ok"
     assert effect["complete"] == carried
 
 
-def test_an_unbounded_tasklet_completing_is_carried_the_same_way(fake_core: FakeCore) -> None:
-    deps = deps_for(_finishing_unbounded, fake_core)
-    (effect,) = answered(work_activation(20, "text", factory="finishing_unbounded"), deps)[
-        "effects"
-    ]
+def test_a_flow_tasklet_completing_is_carried_the_same_way(fake_core: FakeCore) -> None:
+    deps = deps_for(_finishing_flow, fake_core)
+    (effect,) = answered(work_activation(20, "text", factory="finishing_flow"), deps)["effects"]
     assert effect["complete"] == b"3"
 
 
@@ -359,9 +357,9 @@ def test_a_failed_item_carries_no_completion(fake_core: FakeCore) -> None:
     assert "complete" not in effect
 
 
-# -- timers inside a bounded operator ------------------------------------------------
+# -- timers inside a steps operator ------------------------------------------------
 #
-# A bounded tasklet arms and cancels timers exactly as an unbounded operator one does; only
+# A steps tasklet arms and cancels timers exactly as a flow operator one does; only
 # a compensate hook refuses them.
 
 
@@ -376,13 +374,13 @@ class TimerSetter:
             ctx.cancel_timer("processing_time", 60_000)
 
 
-@flezha.bounded_operator("timer_bounded")
-def _timer_bounded(c: flezha.Channels) -> None:
+@flezha.operator("timer_steps", run="steps")
+def _timer_steps(c: flezha.Channels) -> None:
     c.input("in").into(TimerSetter)
 
 
-@flezha.unbounded_operator("timer_unbounded")
-def _timer_unbounded(c: flezha.Channels) -> None:
+@flezha.operator("timer_flow")
+def _timer_flow(c: flezha.Channels) -> None:
     c.input("in").into(TimerSetter)
 
 
@@ -394,11 +392,11 @@ def _timer_unbounded(c: flezha.Channels) -> None:
         ("cancel", {"kind": "processing_time", "scheduled_at": 60_000, "register": False}),
     ],
 )
-def test_a_timer_call_inside_a_bounded_reaches_the_item_effect(
+def test_a_timer_call_inside_a_steps_reaches_the_item_effect(
     fake_core: FakeCore, call: str, operation: dict[str, Any]
 ) -> None:
-    deps = deps_for(_timer_bounded, fake_core)
-    (effect,) = answered(work_activation(22, call, factory="timer_bounded"), deps)["effects"]
+    deps = deps_for(_timer_steps, fake_core)
+    (effect,) = answered(work_activation(22, call, factory="timer_steps"), deps)["effects"]
     assert effect["verdict"] == "ok"
     assert effect["timers"] == [operation]
 
@@ -428,9 +426,9 @@ def test_a_timer_call_inside_a_compensate_hook_is_refused(fake_core: FakeCore) -
     assert result["error"].endswith("(runtime.timers_unavailable)")
 
 
-def test_an_unbounded_tasklet_still_registers_its_timer(fake_core: FakeCore) -> None:
-    deps = deps_for(_timer_unbounded, fake_core)
-    (effect,) = answered(work_activation(23, "after", factory="timer_unbounded"), deps)["effects"]
+def test_a_flow_tasklet_still_registers_its_timer(fake_core: FakeCore) -> None:
+    deps = deps_for(_timer_flow, fake_core)
+    (effect,) = answered(work_activation(23, "after", factory="timer_flow"), deps)["effects"]
     assert effect["verdict"] == "ok"
     assert [timer["register"] for timer in effect["timers"]] == [True]
 
@@ -454,17 +452,17 @@ def test_a_compensation_runs_over_the_recorded_outputs(fake_core: FakeCore) -> N
     assert result["outcome"] == "work"
 
 
-# -- the structured-bounded emit arm ------------------------------------------
+# -- the structured-steps emit arm ------------------------------------------
 #
-# One released value is ONE edge output on a bounded class, untransformed and
+# One released value is ONE edge output on a steps class, untransformed and
 # unkeyed, naming the producing channel and its first consumer: the driver fans
-# it out from the journaled handoff. On an unbounded class the same topology
+# it out from the journaled handoff. On a flow class the same topology
 # releases one output per consumer, transformed and keyed. The plugin output
 # rides alongside either way.
 
 
-@flezha.tasklet(name="bounded_producer")
-class BoundedProducer:
+@flezha.tasklet(name="steps_producer")
+class StepsProducer:
     def run(self, value: int, ctx: flezha.Ctx[None, Any]) -> None:
         ctx.emit(value)
 
@@ -473,33 +471,33 @@ _DELIVERED: list[Any] = []
 """What a consumer of the ``handoff`` channel was handed, in delivery order."""
 
 
-@flezha.tasklet(name="bounded_b")
-class BoundedB:
+@flezha.tasklet(name="steps_b")
+class StepsB:
     def run(self, value: int, ctx: flezha.Ctx[None, None]) -> None:
         _DELIVERED.append(value)
 
 
-@flezha.tasklet(name="bounded_c")
-class BoundedC:
+@flezha.tasklet(name="steps_c")
+class StepsC:
     def run(self, value: int, ctx: flezha.Ctx[None, None]) -> None:
         _DELIVERED.append(value)
 
 
-def _bounded_graph(c: flezha.Channels) -> None:
-    edge = c.input("in").into(BoundedProducer).named("handoff")
-    edge.map(lambda value: value + 1).into(BoundedB)
-    edge.into(BoundedC)
+def _steps_graph(c: flezha.Channels) -> None:
+    edge = c.input("in").into(StepsProducer).named("handoff")
+    edge.map(lambda value: value + 1).into(StepsB)
+    edge.into(StepsC)
     edge.sink()
 
 
-@flezha.bounded_operator("bounded_emit")
-def _bounded_emit(c: flezha.Channels) -> None:
-    _bounded_graph(c)
+@flezha.operator("steps_emit", run="steps")
+def _steps_emit(c: flezha.Channels) -> None:
+    _steps_graph(c)
 
 
-@flezha.unbounded_operator("bounded_emit_stream")
-def _bounded_emit_stream(c: flezha.Channels) -> None:
-    _bounded_graph(c)
+@flezha.operator("steps_emit_stream")
+def _steps_emit_stream(c: flezha.Channels) -> None:
+    _steps_graph(c)
 
 
 def _delivered(factory: str, tasklet: int, payload: bytes, deps: DispatchDeps) -> list[Any]:
@@ -517,11 +515,11 @@ def _payload_of(output: dict[str, Any]) -> Any:
     return codec.decode(output["payload"])
 
 
-def test_a_structured_bounded_releases_one_untransformed_edge_output(
+def test_a_structured_steps_releases_one_untransformed_edge_output(
     fake_core: FakeCore,
 ) -> None:
-    deps = deps_for(_bounded_emit, fake_core)
-    (effect,) = answered(work_activation(40, 10, factory="bounded_emit"), deps)["effects"]
+    deps = deps_for(_steps_emit, fake_core)
+    (effect,) = answered(work_activation(40, 10, factory="steps_emit"), deps)["effects"]
     assert [
         (o["target"], o["consumer"], o["plugin_channel"], _payload_of(o)) for o in effect["outputs"]
     ] == [("edge", 1, None, 10), ("plugin", None, "handoff", 10)]
@@ -529,7 +527,22 @@ def test_a_structured_bounded_releases_one_untransformed_edge_output(
     assert effect["outputs"][0]["event_time"] is None
 
 
-@flezha.unbounded_operator("answering")
+@flezha.operator("steps_carry", run={"steps": {"each": "chained"}})
+def _steps_carry(c: flezha.Channels) -> None:
+    c.input("in").into(StepsProducer).named("carry")
+
+
+def test_a_steps_terminal_nothing_consumes_hands_its_value_to_the_core_as_the_carry(
+    fake_core: FakeCore,
+) -> None:
+    deps = deps_for(_steps_carry, fake_core)
+    (effect,) = answered(work_activation(42, 3, factory="steps_carry"), deps)["effects"]
+    assert [
+        (o["target"], o["channel"], o["consumer"], _payload_of(o)) for o in effect["outputs"]
+    ] == [("edge", 1, 0, 3)]
+
+
+@flezha.operator("answering")
 def _answering(c: flezha.Channels) -> None:
     c.input("in").into(echo).response()
 
@@ -562,8 +575,8 @@ def test_an_edge_payload_is_the_encoders_own_bytes(
         return made
 
     monkeypatch.setattr(codec, "encode", recording)
-    deps = deps_for(_bounded_emit_stream, fake_core)
-    (effect,) = answered(work_activation(43, 10, factory="bounded_emit_stream"), deps)["effects"]
+    deps = deps_for(_steps_emit_stream, fake_core)
+    (effect,) = answered(work_activation(43, 10, factory="steps_emit_stream"), deps)["effects"]
 
     assert len(effect["outputs"]) == 3
     for output in (o for o in effect["outputs"] if o["target"] == "edge"):
@@ -572,11 +585,11 @@ def test_an_edge_payload_is_the_encoders_own_bytes(
         )
 
 
-def test_the_same_graph_on_an_unbounded_class_releases_one_output_per_consumer(
+def test_the_same_graph_on_a_flow_class_releases_one_output_per_consumer(
     fake_core: FakeCore,
 ) -> None:
-    deps = deps_for(_bounded_emit_stream, fake_core)
-    (effect,) = answered(work_activation(41, 10, factory="bounded_emit_stream"), deps)["effects"]
+    deps = deps_for(_steps_emit_stream, fake_core)
+    (effect,) = answered(work_activation(41, 10, factory="steps_emit_stream"), deps)["effects"]
     assert [(o["target"], o["consumer"], _payload_of(o)) for o in effect["outputs"]] == [
         ("edge", 1, 11),
         ("edge", 2, 10),
@@ -585,26 +598,26 @@ def test_the_same_graph_on_an_unbounded_class_releases_one_output_per_consumer(
 
 
 # The other end of the same two arms: what the CONSUMER is handed. A stream
-# producer already applied the edge, so delivery applies nothing; a bounded operator
+# producer already applied the edge, so delivery applies nothing; a steps operator
 # stage released the value raw, so delivery is the one application.
 
 
-def test_an_unbounded_inter_task_edge_applies_its_map_exactly_once(fake_core: FakeCore) -> None:
-    deps = deps_for(_bounded_emit_stream, fake_core)
-    (effect,) = answered(work_activation(42, 10, factory="bounded_emit_stream"), deps)["effects"]
-    assert _delivered("bounded_emit_stream", 1, effect["outputs"][0]["payload"], deps) == [11]
+def test_a_flow_inter_task_edge_applies_its_map_exactly_once(fake_core: FakeCore) -> None:
+    deps = deps_for(_steps_emit_stream, fake_core)
+    (effect,) = answered(work_activation(42, 10, factory="steps_emit_stream"), deps)["effects"]
+    assert _delivered("steps_emit_stream", 1, effect["outputs"][0]["payload"], deps) == [11]
 
 
-def test_a_bounded_consumer_applies_its_own_edge_exactly_once_at_delivery(
+def test_a_steps_consumer_applies_its_own_edge_exactly_once_at_delivery(
     fake_core: FakeCore,
 ) -> None:
-    deps = deps_for(_bounded_emit, fake_core)
-    (effect,) = answered(work_activation(43, 10, factory="bounded_emit"), deps)["effects"]
+    deps = deps_for(_steps_emit, fake_core)
+    (effect,) = answered(work_activation(43, 10, factory="steps_emit"), deps)["effects"]
     released = effect["outputs"][0]["payload"]
     # One released value reaches BOTH children — the driver's fan-out — and
     # each evaluates its own edge here.
-    assert _delivered("bounded_emit", 1, released, deps) == [11]
-    assert _delivered("bounded_emit", 2, released, deps) == [10]
+    assert _delivered("steps_emit", 1, released, deps) == [11]
+    assert _delivered("steps_emit", 2, released, deps) == [10]
 
 
 def test_plain_text_into_an_entry_naming_no_codec_never_reaches_the_handler(
@@ -612,7 +625,7 @@ def test_plain_text_into_an_entry_naming_no_codec_never_reaches_the_handler(
 ) -> None:
     """An entry naming no codec reads JSON, so plain text fails its decode: the
     verdict says the message is unreadable (the core parks it under the entry
-    channel, and a bounded keeps waiting), and the handler is never handed it."""
+    channel, and a steps keeps waiting), and the handler is never handed it."""
     seen: list[Any] = []
 
     @flezha.tasklet(name="record")
@@ -645,7 +658,7 @@ def test_an_entry_edge_transform_that_raises_makes_the_message_unreadable(
             raise KeyError("k")
         return value["k"]
 
-    @flezha.unbounded_operator("strict_entry")
+    @flezha.operator("strict_entry")
     def strict_entry(c: flezha.Channels) -> None:
         c.input("in").map(strict).into(Record).sink()
 
@@ -715,7 +728,7 @@ def test_a_merged_entry_source_is_keyed_on_its_mapped_value(fake_core: FakeCore)
         assert [answer["keys"] for answer in result["prepared"]] == [["AAPL"], ["MSFT"]]
 
 
-@flezha.unbounded_operator("merged_edge")
+@flezha.operator("merged_edge")
 def _merged_edge(c: flezha.Channels) -> None:
     ticks = c.input("ticks", codec="text")
     quotes = c.input("quotes", codec="text").into(echo)
@@ -765,7 +778,7 @@ def test_a_cell_handed_a_fanned_payload_runs_only_the_values_keyed_to_it(
     assert _plugin_payloads(result) == [b"B:2"]
 
 
-@flezha.unbounded_operator("fanned_static")
+@flezha.operator("fanned_static")
 def _fanned_static(c: flezha.Channels) -> None:
     c.input("in", codec="text").flat_map(lambda line: line.split(",")).into(
         fixtures.static_entry
@@ -787,7 +800,7 @@ def test_a_fan_into_a_static_consumer_runs_each_value_only_where_its_router_name
     } == {"a": [b"a:1"], "b": [b"b:2"], "c": [], "d": [b"x:3"]}
 
 
-@flezha.unbounded_operator("fanned_edge")
+@flezha.operator("fanned_edge")
 def _fanned_edge(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(echo).flat_map(
         lambda line: [part for part in line.split(",") if part]
@@ -826,7 +839,7 @@ def test_a_spawn_returns_before_the_controller_answers_and_its_refusal_stays_in_
     class Spawner:
         def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
             began = time.monotonic()
-            handle = ctx.spawn_bounded("worker", value)
+            handle = ctx.spawn_steps("worker", value)
             seen["returned_after_s"] = time.monotonic() - began
             seen["pending"] = handle.try_result()
             try:
@@ -855,8 +868,8 @@ def test_a_spawn_without_an_id_asks_for_one_and_a_spawn_with_an_id_carries_it(
     @flezha.tasklet(name="spawner")
     class Spawner:
         def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
-            results.append(ctx.spawn_bounded("worker", value).wait())
-            results.append(ctx.spawn_bounded("worker", value, id="w1").wait())
+            results.append(ctx.spawn_steps("worker", value).wait())
+            results.append(ctx.spawn_steps("worker", value, id="w1").wait())
 
     answered(work_activation(91, "p", factory="solo"), solo_deps(Spawner, fake_core))
     assert results == [
@@ -883,14 +896,14 @@ def test_a_spawn_without_an_id_asks_for_one_and_a_spawn_with_an_id_carries_it(
 def test_a_spawn_payload_is_what_a_text_or_json_entry_reads(fake_core: FakeCore) -> None:
     """The payload takes the no-codec sink rule `complete` applies: a string is
     its UTF-8, bytes are themselves, anything else its JSON, so the spawned
-    bounded's `text` or `json` entry decodes it as a send's payload."""
+    steps's `text` or `json` entry decodes it as a send's payload."""
 
     @flezha.tasklet(name="spawner")
     class Spawner:
         def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
-            ctx.spawn_bounded("place", "o-1").wait()
-            ctx.spawn_bounded("place", b"\xff\x00raw").wait()
-            ctx.spawn_bounded("place", {"symbol": "AAPL", "quantity": 10}).wait()
+            ctx.spawn_steps("place", "o-1").wait()
+            ctx.spawn_steps("place", b"\xff\x00raw").wait()
+            ctx.spawn_steps("place", {"symbol": "AAPL", "quantity": 10}).wait()
 
     answered(work_activation(92, "p", factory="solo"), solo_deps(Spawner, fake_core))
     payloads = [s["payload"] for s in fake_core.spawns]
@@ -904,7 +917,7 @@ def test_a_spawn_payload_is_what_a_text_or_json_entry_reads(fake_core: FakeCore)
     [
         ("operator.already_running", {"operator": "w1"}),
         ("operator.factory_unknown", {"namespace": "default", "factory": "worker"}),
-        ("operator.factory_not_bounded", {"namespace": "default", "factory": "worker"}),
+        ("operator.factory_not_steps", {"namespace": "default", "factory": "worker"}),
         ("authz.no_role_binding", {}),
         ("spawn.timeout", {"seconds": 30}),
         ("spawn.unavailable", {}),
@@ -919,7 +932,7 @@ def test_each_failure_a_read_meets_is_the_one_error_with_its_code(
     @flezha.tasklet(name="spawner")
     class Spawner:
         def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
-            handle = ctx.spawn_bounded("worker", value, id="w1", if_running="error")
+            handle = ctx.spawn_steps("worker", value, id="w1", if_running="error")
             try:
                 handle.wait()
             except flezha.FlezhaError as error:
@@ -940,7 +953,7 @@ def test_if_running_without_an_id_is_refused_at_the_call_and_sends_nothing(
     @flezha.tasklet(name="spawner")
     class Spawner:
         def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
-            ctx.spawn_bounded("worker", value, if_running="error")
+            ctx.spawn_steps("worker", value, if_running="error")
 
     (effect,) = answered(work_activation(93, "p", factory="solo"), solo_deps(Spawner, fake_core))[
         "effects"
@@ -961,8 +974,8 @@ def test_a_replayed_spawn_hands_the_replay_to_the_core_and_answers_the_id_it_was
     @flezha.tasklet(name="spawner")
     class Spawner:
         def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
-            results.append(ctx.spawn_bounded("worker", value).try_result())
-            results.append(ctx.spawn_bounded("worker", value, id="w1").try_result())
+            results.append(ctx.spawn_steps("worker", value).try_result())
+            results.append(ctx.spawn_steps("worker", value, id="w1").try_result())
 
     activation = work_activation(94, "p", factory="solo")
     activation["items"][0]["replay"] = True
@@ -981,7 +994,7 @@ def test_an_async_handler_awaits_a_spawn_while_its_loop_keeps_serving(fake_core:
     @flezha.tasklet(name="spawner")
     class Spawner:
         async def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
-            results.append(await ctx.spawn_bounded("worker", value, id="w1"))
+            results.append(await ctx.spawn_steps("worker", value, id="w1"))
 
     deps = solo_deps(Spawner, fake_core)
 

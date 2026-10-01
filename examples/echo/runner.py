@@ -2,7 +2,7 @@
 operators.
 
 Declare every operator you want served before `start`. One runner can serve
-several, and `register_factory` is the same call for the bounded kind.
+several, and `register_factory` is the same call for the steps kind.
 """
 
 import sys

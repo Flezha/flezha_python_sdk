@@ -27,7 +27,7 @@ def _caller(codec: ChannelCodec | None) -> flezha.Operator:
     """A caller whose ``ask`` channel calls with ``codec``, the outcome fed back
     into the tasklet that made the call."""
 
-    @flezha.unbounded_operator(f"caller_{codec}")
+    @flezha.operator(f"caller_{codec}")
     def caller(c: flezha.Channels) -> None:
         (
             c.input("in", codec="text")
@@ -76,7 +76,7 @@ def test_call_closes_its_chain_with_the_call_link_and_declares_the_response_chan
 
 
 def test_a_call_to_a_named_instance_records_its_target_and_create_true() -> None:
-    @flezha.unbounded_operator("named_call")
+    @flezha.operator("named_call")
     def named_call(c: flezha.Channels) -> None:
         c.input("in").into(echo).call("pricing", deadline_ms=500).map(lambda r: r.request).into(
             echo
@@ -96,7 +96,7 @@ def test_a_call_to_a_named_instance_records_its_target_and_create_true() -> None
 
 
 def test_a_call_on_an_entry_channel_is_refused_as_a_sink_on_one_is() -> None:
-    @flezha.unbounded_operator("entry_call")
+    @flezha.operator("entry_call")
     def entry_call(c: flezha.Channels) -> None:
         c.input("in").call("pricing", deadline_ms=500)
 

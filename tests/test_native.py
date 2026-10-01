@@ -107,37 +107,26 @@ def test_a_context_is_created_used_and_freed_through_the_object() -> None:
         core.free()
 
 
-def _checkpoint_class(factory_id: str, declare: Any) -> dict[str, Any]:
-    """A tier class under one checkpoint declaration, as the core reads it.
-
-    Asserted against the core rather than against the builder's fields because
-    the core is what refuses AND what implies: the builder writes each raw flag,
-    and the acknowledgement granularity a declaration registers under is derived
-    from any of them.
-    """
+def _checkpoint_class(factory_id: str, ack: Any) -> dict[str, Any]:
+    """A tier class under one checkpoint acknowledgement, as the core reads it."""
     import flezha
     from conftest import declare as submit
     from conftest import echo
     from flezha import graph
 
-    @flezha.unbounded_operator(factory_id)
+    @flezha.operator(factory_id, run={"flow": {"exactly": {"effectively_once": {"ack": ack}}}})
     def operator(c: flezha.Channels) -> None:
-        c.effectively_once()
-        declare(c)
         c.input("input").into(echo, f"{factory_id}_tasklet").keyed().sink("sink")
 
     assert submit(operator)["ack_granularity"] == "checkpoint"
     return graph.to_host_class_decl(operator.spec)
 
 
-def test_holding_outputs_at_the_checkpoint_acknowledges_at_the_checkpoint() -> None:
-    decl = _checkpoint_class("outputs_only", lambda c: c.outputs_at_checkpoint(1500))
-    assert decl["checkpoint_ack"] is False, "the flag is raw: nothing amends it"
-    assert decl["checkpoint_outputs"] == "at_checkpoint"
-    assert decl["checkpoint_max_delay_ms"] == 1500
+def test_holding_outputs_at_the_checkpoint_registers_with_its_delay() -> None:
+    ack = {"checkpoint": {"outputs": "at_checkpoint", "max_delay_ms": 1500}}
+    decl = _checkpoint_class("outputs_only", ack)
+    assert decl["run"]["flow"]["exactly"]["effectively_once"]["ack"] == ack
 
-    # Registering is the assertion: the core implies the checkpoint
-    # acknowledgement from the outputs flag, and refuses the pair otherwise.
     core = native.Core.create()
     try:
         core.declare_class(json.dumps(decl).encode())
@@ -226,15 +215,15 @@ def test_a_spawn_with_no_control_plane_answers_unavailable_until_its_invocation_
     @flezha.tasklet(name="spawner")
     class Spawner:
         def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
-            handle = ctx.spawn_bounded("worker", value, id="w1")
+            handle = ctx.spawn_steps("worker", value, id="w1")
             for read in (handle.try_result, handle.wait):
                 try:
                     read()
                 except flezha.FlezhaError as error:
                     reads.append((error.code, error.class_))
-            unread.append(ctx.spawn_bounded("worker", value))
+            unread.append(ctx.spawn_steps("worker", value))
 
-    @flezha.unbounded_operator("spawn_without_control_plane")
+    @flezha.operator("spawn_without_control_plane")
     def operator(c: flezha.Channels) -> None:
         c.input("in", codec="text").into(Spawner).sink("out")
 

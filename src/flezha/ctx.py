@@ -40,7 +40,7 @@ RESERVED_PREFIX = "flz."
 
 #: The identity stamps a non-tier keyed plugin emit carries.
 #:
-#: Under the effectively-once tier, and for a durable bounded operator, the controller
+#: Under the effectively-once tier, and for a durable steps operator, the controller
 #: derives them at flush time from the effect record, so none ride on the frame;
 #: otherwise the frame is written straight to the wire and the stamps have
 #: nowhere else to come from.
@@ -77,7 +77,7 @@ class SpawnResult:
 
 
 class SpawnHandle:
-    """The answer to one ``ctx.spawn_bounded``, read inside the invocation that
+    """The answer to one ``ctx.spawn_steps``, read inside the invocation that
     made it.
 
     ``wait()`` blocks for the answer; ``try_result()`` never waits and answers
@@ -304,23 +304,21 @@ class Ctx(Generic[S, O_contra]):
         self.checkpointed = True
 
     def complete(self, result: Any = None) -> None:
-        """End the bounded instance this tasklet runs in, with ``result``.
+        """End the instance this tasklet runs in, with ``result``.
 
         The rest of the iteration still runs and commits; the instance then
-        ends with status ``ok`` instead of waiting for its next input. In a
-        ``once`` bounded it sets the result the pass ends with. ``result`` is
-        encoded as a sink naming no codec encodes a value: bytes as they are, a
-        string as UTF-8 and anything else as JSON; ``None`` carries no result. A
-        later call in the same invocation replaces an earlier one.
-
-        A stream never completes: an unbounded tasklet calling this fails its
-        input, without a retry, with an error naming ``CompleteOutsideBounded``.
+        ends instead of waiting for its next input, a flow instance once every
+        Cell is idle. In a ``once`` steps operator it sets the result the pass
+        ends with. ``result`` is encoded as a sink naming no codec encodes a
+        value: bytes as they are, a string as UTF-8 and anything else as JSON;
+        ``None`` carries no result. A later call in the same invocation replaces
+        an earlier one.
         """
         self.completion = (
             b"" if result is None else _codec.plain_payload(result, f"tasklet '{self._node.name}'")
         )
 
-    def spawn_bounded(
+    def spawn_steps(
         self,
         factory_id: str,
         payload: Any,
@@ -328,7 +326,7 @@ class Ctx(Generic[S, O_contra]):
         id: str | None = None,
         if_running: IfRunning | None = None,
     ) -> SpawnHandle:
-        """Start a bounded instance of ``factory_id`` with ``payload`` as its
+        """Start a steps instance of ``factory_id`` with ``payload`` as its
         first message, and answer a :class:`SpawnHandle` at once.
 
         ``payload`` is encoded as a sink naming no codec encodes a value, the
@@ -420,12 +418,19 @@ class Ctx(Generic[S, O_contra]):
         key: str | None,
         metadata: Mapping[str, Any] | Iterable[tuple[str, Any]] | None,
     ) -> None:
-        # A channel with no consumer releases nothing on the edge path: on a
-        # bounded operator that is the plugin-bound terminal, and seeding the next
-        # stage from it would hand the driver a terminal output.
-        if self._spec.structured_bounded:
+        # In steps a value rides the edge path to its first consumer, and an
+        # inter-tasklet terminal's value to the core as the pass's handoff (a
+        # chained loop's carry); a plugin-bound terminal releases nothing there.
+        if self._spec.runs_in_steps:
             if channel.consumers:
-                self.outputs.append(self._bounded_output(channel, channel.consumers[0], value))
+                consumer = channel.consumers[0].tasklet
+            elif channel.kind == "inter_task" and channel.sink is None:
+                # The core reads no consumer for a terminal's handoff.
+                consumer = channel.producer
+            else:
+                consumer = None
+            if consumer is not None:
+                self.outputs.append(self._steps_output(channel, consumer, value))
         else:
             for edge in channel.consumers:
                 self.outputs.extend(self._edge_outputs(channel, edge, value, key, metadata))
@@ -440,13 +445,11 @@ class Ctx(Generic[S, O_contra]):
             resolved = key if key is not None else self.cell_key
             self.outputs.append(self._plugin_output(channel, value, resolved, metadata))
 
-    def _bounded_output(
-        self, channel: ChannelSpec, edge: ConsumerEdge, value: Any
-    ) -> dict[str, Any]:
+    def _steps_output(self, channel: ChannelSpec, consumer: int, value: Any) -> dict[str, Any]:
         return {
             "target": "edge",
             "channel": channel.index,
-            "consumer": edge.tasklet,
+            "consumer": consumer,
             "plugin_channel": None,
             "key": None,
             "event_time": None,

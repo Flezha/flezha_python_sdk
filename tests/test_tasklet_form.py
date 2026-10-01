@@ -54,8 +54,7 @@ def test_a_function_tasklet_is_refused_pointing_at_the_short_form() -> None:
         assert caught.value.code == "topology.invalid_tasklet"
         assert "tasklet 'price' cannot be declared: is a function" in message
         assert "a tasklet is a class whose `run(self, value, ctx)`" in message
-        assert "@flezha.unbounded_operator" in message
-        assert "@flezha.bounded_operator" in message
+        assert "@flezha.operator" in message
 
 
 class Upcase:
@@ -89,7 +88,7 @@ def test_a_renamed_class_keeps_its_name_and_its_state() -> None:
     before = flezha.tasklet(Tally, name="tally")
     after = flezha.tasklet(WordTally, name="tally")
 
-    @flezha.unbounded_operator("tally_op")
+    @flezha.operator("tally_op")
     def renamed(c: flezha.Channels) -> None:
         c.input("words").into(after)
 
@@ -267,7 +266,7 @@ def test_a_tasklet_that_emits_nothing_emits_nothing(fake_core: FakeCore) -> None
 
 
 def test_a_function_short_form_emits_its_value_and_nothing_for_none(fake_core: FakeCore) -> None:
-    @flezha.unbounded_operator(id="maybe", sink="out", codec="text")
+    @flezha.operator(id="maybe", sink="out", codec="text")
     def maybe(value: str) -> str | None:
         return None if value == "skip" else value
 
@@ -280,7 +279,7 @@ def test_a_function_short_form_emits_its_value_and_nothing_for_none(fake_core: F
 
 
 def test_a_class_short_form_emits_through_its_context(fake_core: FakeCore) -> None:
-    @flezha.unbounded_operator(id="store_input", sink="sink", codec="text")
+    @flezha.operator(id="store_input", sink="sink", codec="text")
     class StoreInput:
         def run(self, value: str, ctx: flezha.Ctx[dict[str, list[str]], str]) -> None:
             ctx.change(value)
@@ -311,7 +310,7 @@ class BareContext:
 @pytest.mark.parametrize("body", [Drain, BareContext])
 def test_a_class_short_form_whose_context_names_no_output_refuses_a_sink(body: type) -> None:
     with pytest.raises(FlezhaError) as caught:
-        flezha.unbounded_operator(id="drain", sink="out")(body)
+        flezha.operator(id="drain", sink="out")(body)
     assert caught.value.code == "topology.sink_without_output"
 
 
@@ -376,7 +375,7 @@ def test_a_retired_setting_is_an_unknown_keyword(retired: dict[str, Any]) -> Non
     with pytest.raises(TypeError, match=next(iter(retired))):
         flezha.tasklet(Upcase, name="t", **retired)
     with pytest.raises(TypeError, match=next(iter(retired))):
-        flezha.unbounded_operator(id="t", **retired)
+        flezha.operator(id="t", **retired)
 
 
 # -- the idle TTL is whole seconds ------------------------------------------------
@@ -385,7 +384,7 @@ def test_a_retired_setting_is_an_unknown_keyword(retired: dict[str, Any]) -> Non
 def test_seconds_reach_the_record_in_milliseconds() -> None:
     ttl = flezha.tasklet(Upcase, name="ttl", idle_ttl_seconds=60)
 
-    @flezha.unbounded_operator("ttl_op")
+    @flezha.operator("ttl_op")
     def keyed(c: flezha.Channels) -> None:
         c.input("in").key_by(str).into(ttl).sink()
 

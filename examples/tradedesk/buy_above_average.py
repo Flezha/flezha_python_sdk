@@ -5,7 +5,7 @@ decision is a function of one value, and a restart costs this stage nothing
 because there is nothing to bring back. That is why its context names no state,
 `Ctx[None, str]`, beside `TrackPrices`, which keeps the window.
 
-It does two things per input, both through the context: it starts a bounded
+It does two things per input, both through the context: it starts a steps
 operator and it emits.
 """
 
@@ -27,7 +27,7 @@ class BuyAboveAverage:
         quantity = round(percent * UNITS_PER_PERCENT)  # a stronger move buys more
 
         order = OrderTicket(symbol=move["symbol"], quantity=quantity)
-        ctx.spawn_bounded("order_executor", order)  # one bounded operator per order
+        ctx.spawn_steps("order_executor", order)  # one steps operator per order
 
         ctx.emit(
             f"{move['symbol']} {move['price']:.4f} is {percent:.2f}% above its average "

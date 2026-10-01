@@ -19,7 +19,7 @@
 # every tier against the release's free-threaded wheel for its version.
 #
 # What this cannot see is the fifteen-capability vocabulary the controller
-# owns: persistence, effectively-once, correction, partitioning, bounded operators,
+# owns: persistence, effectively-once, correction, partitioning, steps operators,
 # liveness, restarts. Those are end-to-end scenarios and they run in the core's
 # own tree, against the commit it pins this repository at.
 set -euo pipefail

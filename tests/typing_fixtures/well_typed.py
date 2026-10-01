@@ -30,6 +30,6 @@ class Render:
         ctx.emit(f"{invoice.order_id}:{invoice.total}")
 
 
-@flezha.unbounded_operator("billing")
+@flezha.operator("billing")
 def billing(c: flezha.Channels) -> None:
     c.input("orders").into(Bill).named("invoices").into(Render).sink()

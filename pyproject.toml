@@ -13,7 +13,7 @@ authors = [{ name = "Flezha contributors" }]
 # landing, and the `abi3` tier targets the floor, so the choice decides the
 # compatibility wheel's reach for years.
 requires-python = ">=3.11"
-keywords = ["flezha", "streaming", "bounded", "durable", "orchestration"]
+keywords = ["flezha", "streaming", "steps", "durable", "orchestration"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

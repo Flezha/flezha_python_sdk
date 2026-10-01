@@ -158,7 +158,7 @@ def channel_encoder(codec: ChannelCodec | None, channel: ChannelSpec) -> Callabl
 def plain_payload(value: Any, owner: str) -> bytes:
     """Bytes as they are, a string as UTF-8 and anything else as JSON.
 
-    What a sink naming no codec sends, and what a bounded completion carries.
+    What a sink naming no codec sends, and what a steps completion carries.
     ``owner`` is the channel or tasklet a refusal names.
     """
     if isinstance(value, _BYTES):
