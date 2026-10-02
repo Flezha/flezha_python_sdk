@@ -97,10 +97,6 @@
       "part_echo",
       "part_echo_steps"
     ],
-    "inner_operator": [
-      "session_gateway",
-      "loop_gateway"
-    ],
     "partitioned": [
       "partition_relay",
       "dynamic_cell",

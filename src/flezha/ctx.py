@@ -467,9 +467,7 @@ class Ctx(Generic[S, O_contra]):
     ) -> list[dict[str, Any]]:
         """One consumer's frames, one per value its transforms yield, each with
         its own key and its own clock."""
-        consumer = self._spec.tasklets[edge.tasklet]
-        consumer_task = consumer.task
-        encode = consumer.encode or _codec.encode
+        consumer_task = self._spec.tasklets[edge.tasklet].task
         outputs = []
         # Producer-side, in declaration order: the core routes on `(edge, key)`
         # and never evaluates a host closure.
@@ -492,7 +490,7 @@ class Ctx(Generic[S, O_contra]):
                         else None
                     ),
                     "metadata": self._meta_list(metadata),
-                    "payload": encode(transformed),
+                    "payload": _codec.encode(transformed),
                 }
             )
         return outputs

@@ -32,7 +32,7 @@ from collections.abc import Callable
 from typing import Any, Literal, TypedDict, Unpack
 
 from . import codec as _codec
-from .builder import Channels, ClassSpec, runs_in_steps
+from .builder import Channels, ClassSpec
 from .errors import FlezhaError
 from .tasklet import Tasklet, TaskletSettings, output_type, positional_parameters
 
@@ -160,11 +160,6 @@ class Operator:
 
     def __repr__(self) -> str:
         return f"<flezha operator {self.factory_id}>"
-
-    @property
-    def runs_in_steps(self) -> bool:
-        """Whether this class runs in steps, read off its settings tree."""
-        return runs_in_steps(self._settings.get("run"))
 
     @property
     def spec(self) -> ClassSpec:

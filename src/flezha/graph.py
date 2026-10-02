@@ -39,19 +39,11 @@ def declare(spec: ClassSpec, core: Core, registry: Registry) -> None:
     :func:`validate` writes the derived channel names and consumer edges back
     into the spec, so a caller that skipped it would register a spec whose
     edges route nowhere. Both the runner and local mode reach the core through
-    here, so there is one such order rather than two that agree. The steps
-    classes the spec embeds are registered with it, for dispatch to find.
+    here, so there is one such order rather than two that agree.
     """
     validate(spec, core)
-    for registered in (spec, *_embedded(spec)):
-        if registry.get(registered.factory_id) is None:
-            registry.add(registered)
+    registry.add(spec)
     core.declare_class(json.dumps(to_host_class_decl(spec)).encode())
-
-
-def _embedded(spec: ClassSpec) -> list[ClassSpec]:
-    """The specs of the steps classes ``spec`` embeds."""
-    return [node.embeds.spec for node in spec.tasklets if node.embeds is not None]
 
 
 def validate(spec: ClassSpec, core: Core) -> dict[str, Any]:
@@ -63,11 +55,6 @@ def validate(spec: ClassSpec, core: Core) -> dict[str, Any]:
     written back, so the name this host addresses a channel by is the one the
     core registered.
     """
-    # The core judges an embedding against the class it names, so every steps
-    # class this one embeds is declared first: registered, never announced.
-    for inner in _embedded(spec):
-        validate(inner, core)
-        core.declare_class(json.dumps(to_host_class_decl(inner, embedded=True)).encode())
     answer = core.check_class(json.dumps(to_host_class_decl(spec)).encode())
     derived: dict[str, Any] = json.loads(answer)
     for channel in derived["channels"]:
@@ -149,13 +136,11 @@ def _tasklet_json(spec: ClassSpec, node: TaskNode, keyed: set[int]) -> dict[str,
             "change_is_nochange": not spec.keeps_work or task.apply_change is None,
             "schema_version": task.schema_version or 1,
             "min_readable_schema_version": task.min_readable_schema_version,
-            "operator": None if node.embeds is None else node.embeds.factory_id,
-            "input": node.input,
         }
     )
 
 
-def to_host_class_decl(spec: ClassSpec, *, embedded: bool = False) -> dict[str, Any]:
+def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
     """The declaration the core deserializes.
 
     The settings tree goes as the author wrote it: the core judges it and
@@ -177,6 +162,5 @@ def to_host_class_decl(spec: ClassSpec, *, embedded: bool = False) -> dict[str, 
             "compact_after_bytes": spec.compact_after_bytes,
             "channels": [_channel_json(channel) for channel in spec.channels],
             "tasklets": [_tasklet_json(spec, node, keyed) for node in spec.tasklets],
-            "embedded": embedded or None,
         }
     )

@@ -28,7 +28,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import conformance
 import fixtures
 import fixtures_call
-import fixtures_inner
 import fixtures_steps
 import flezha
 
@@ -55,8 +54,6 @@ def main() -> None:
         for operator in fixtures_steps.ALL:
             runner.register_factory(operator)
         for operator in fixtures_call.ALL:
-            runner.register_factory(operator)
-        for operator in fixtures_inner.ALL:
             runner.register_factory(operator)
 
     # The configuration this run is under, before it starts: readiness is the

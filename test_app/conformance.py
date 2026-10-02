@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -108,54 +107,6 @@ PALETTE: dict[str, tuple[type, str, dict[str, Any]]] = {
 }
 
 
-def _palette_tasklet(role: str) -> flezha.Tasklet[Any, Any]:
-    target, identity, declarations = PALETTE[role]
-    return flezha.tasklet(target, name=identity, **declarations)
-
-
-def _class(
-    factory_id: str, run: Any, channels: Callable[[flezha.Channels], None]
-) -> flezha.Operator:
-    return flezha.operator(factory_id, run=run)(channels)
-
-
-#: class role -> the operator class the fixture header describes for it.
-CLASSES: dict[str, flezha.Operator] = {
-    "inner_session": _class(
-        "inner_session",
-        {"steps": {"each": "per_input"}},
-        lambda c: c.input("turns").into(_palette_tasklet("plain")),
-    ),
-    "inner_loop": _class(
-        "inner_loop",
-        {"steps": {"each": "chained"}},
-        lambda c: c.input("turns").into(_palette_tasklet("plain")).named("carry"),
-    ),
-    "inner_cleanup": _class(
-        "inner_cleanup",
-        None,
-        lambda c: c.input("raw").into(_palette_tasklet("plain")).into(_palette_tasklet("second")),
-    ),
-    "inner_two_entries": _class(
-        "inner_two_entries",
-        {"steps": {"each": "per_input"}},
-        lambda c: (
-            c.input("a").into(_palette_tasklet("plain")),
-            c.input("b").into(_palette_tasklet("second")),
-        ),
-    ),
-    "inner_two_exits": _class(
-        "inner_two_exits",
-        {"steps": {"each": "per_input"}},
-        lambda c: [
-            turns.into(_palette_tasklet(role))
-            for turns in [c.input("turns")]
-            for role in ("plain", "second")
-        ],
-    ),
-}
-
-
 def split_call(text: str) -> tuple[str, str]:
     """``verb(arg)`` -> ``("verb", "arg")``; a bare word -> ``("word", "")``."""
     verb, _, arg = text.partition("(")
@@ -224,10 +175,6 @@ class Interpreter:
             return edge.sink(arg) if arg else edge.sink()
         if verb == "response":
             return edge.response()
-        if verb == "into_class":
-            # The result is the class's exit, addressed by the class's role.
-            self._handles[arg] = edge.into(CLASSES[arg])
-            return self._handles[arg]
         if verb == "into":
             # The result is that tasklet's output channel, addressed by role.
             self._handles[arg] = edge.into(self._tasklet(arg))
