@@ -27,7 +27,7 @@ from reserve_funds import ReserveFunds
 import flezha
 
 
-@flezha.operator("order_executor", run="steps")
+@flezha.operator("order_executor", run={"steps": {"each": "once", "on_failure": "undo_all"}})
 def order_executor(c: flezha.Channels) -> None:
     """Two steps in order, then a fan-out: confirming the fill and booking the
     order are two independent consequences of the placement, and neither waits
