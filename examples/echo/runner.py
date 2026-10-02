@@ -28,16 +28,8 @@ def main() -> None:
     #
     # admin = runner.admin()
     # admin.start_operator("echo", id="my_echo")
-    # admin.enable_plugin(
-    #     "writer",
-    #     {
-    #         "id": "writer",
-    #         "provider": "operator_file_sink",
-    #         "operator_id": "my_echo",
-    #         "opts": {"path": "echo-out.txt"},
-    #         "hooks": [["on_output", {}]],
-    #     },
-    # )
+    # admin.enable_plugin("writer", "operator_file_sink", opts={"path": "echo-out.txt"})
+    # admin.bind_plugin("writer", "my_echo", hooks=[["on_output", {}]])
     # admin.send("my_echo", "hello world", "in")
     #
     # docs/sdk/admin.md has the whole surface. An enforced controller refuses all

@@ -59,13 +59,7 @@ class Admin:
         operator, and a second stream runs until it is stopped; passing an id
         prevents it, because a start of a live id answers ``already_running``.
         """
-        fields: dict[str, Any] = {"factory_id": factory_id}
-        if id is not None:
-            fields["id"] = id
-        if init_values is not None:
-            fields["init_values"] = init_values
-        if opts is not None:
-            fields["opts"] = opts
+        fields = _given(factory_id=factory_id, id=id, init_values=init_values, opts=opts)
         answer = self.call("Operator.start", fields)
         return StartResult(answer["id"], answer["outcome"])
 
@@ -77,20 +71,60 @@ class Admin:
         """Inject a message into an operator's input stream, blocking for the verdict."""
         return self.call("Operator.send", operator_id, message, channel)
 
-    def enable_plugin(self, plugin_id: str, fields: dict[str, Any]) -> Any:
-        """Enable a plugin, built from the fields ``flz plugin enable`` takes."""
-        return self.call("PluginManager.enable", plugin_id, fields)
+    def enable_plugin(
+        self,
+        name: str,
+        provider: str,
+        *,
+        opts: dict[str, Any] | None = None,
+        single: bool = False,
+        operator_id: str | None = None,
+        hooks: list[Any] | None = None,
+    ) -> Any:
+        """Enable the plugin ``name`` in this namespace, of the provider
+        ``provider`` (for example ``"operator_websocket"``), on its ``opts``.
 
-    def disable_plugin(self, plugin_id: str) -> Any:
-        """Disable a plugin, or every partitioned instance of it."""
-        return self.call("PluginManager.disable", plugin_id)
+        ``single`` runs one copy in the whole cluster. ``operator_id`` with
+        ``hooks`` binds that operator in the same call.
+        """
+        fields = _given(
+            provider=provider,
+            opts=opts or {},
+            single=single or None,
+            operator_id=operator_id,
+            hooks=hooks,
+        )
+        return self.call("PluginManager.enable", name, fields)
+
+    def bind_plugin(
+        self,
+        name: str,
+        operator_id: str,
+        *,
+        hooks: list[Any] | None = None,
+        channel: str | None = None,
+    ) -> Any:
+        """Bind the operator ``operator_id`` to the enabled plugin ``name``."""
+        return self.call(
+            "PluginManager.bind",
+            name,
+            _given(operator_id=operator_id, hooks=hooks, channel=channel),
+        )
+
+    def unbind_plugin(self, name: str, operator_id: str) -> Any:
+        """Unbind the operator ``operator_id`` from the plugin ``name``, which stays enabled."""
+        return self.call("PluginManager.unbind", name, {"operator_id": operator_id})
+
+    def disable_plugin(self, name: str) -> Any:
+        """Disable the plugin ``name``, stopping it wherever it runs."""
+        return self.call("PluginManager.disable", name, {})
 
     def list_operators(self) -> Any:
         """The operator ids running in this namespace."""
         return self.call("Operator.list_operators")
 
     def list_plugins(self) -> Any:
-        """The plugins enabled on the controller node answering this call."""
+        """The plugins enabled in this namespace: name, provider, single, bound operators."""
         return self.call("PluginManager.list")
 
     def cell_state(self, operator_id: str, cell_key: str) -> Any:
@@ -105,3 +139,8 @@ class Admin:
         namespace, which the controller fills from the connection.
         """
         return json.loads(self._core.admin_call(verb, json.dumps(list(args))))
+
+
+def _given(**fields: Any) -> dict[str, Any]:
+    """The named parameters a call was given, leaving out every one it was not."""
+    return {key: value for key, value in fields.items() if value is not None}

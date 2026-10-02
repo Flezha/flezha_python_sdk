@@ -326,6 +326,56 @@ def test_a_start_takes_the_factory_first_and_answers_the_id_and_the_outcome(
     ]
 
 
+def test_a_plugin_is_enabled_by_name_and_bound_and_unbound_by_operator(
+    runner: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    core = FakeCore()
+    calls: list[tuple[str, Any]] = []
+
+    def admin_call(verb: str, args: str) -> str:
+        calls.append((verb, json.loads(args)))
+        return "null"
+
+    monkeypatch.setattr(core, "admin_call", admin_call)
+    admin = runner().start(core=core).admin()
+    admin.enable_plugin("writer", "operator_file_sink", opts={"path": "out.txt"})
+    admin.enable_plugin(
+        "feed", "operator_websocket", single=True, operator_id="my_echo", hooks=[["on_output", {}]]
+    )
+    admin.bind_plugin("writer", "my_echo")
+    admin.bind_plugin("writer", "my_other", hooks=["on_output"], channel="in")
+    admin.unbind_plugin("writer", "my_echo")
+    admin.disable_plugin("writer")
+    admin.list_plugins()
+    assert calls == [
+        (
+            "PluginManager.enable",
+            ["writer", {"provider": "operator_file_sink", "opts": {"path": "out.txt"}}],
+        ),
+        (
+            "PluginManager.enable",
+            [
+                "feed",
+                {
+                    "provider": "operator_websocket",
+                    "opts": {},
+                    "single": True,
+                    "operator_id": "my_echo",
+                    "hooks": [["on_output", {}]],
+                },
+            ],
+        ),
+        ("PluginManager.bind", ["writer", {"operator_id": "my_echo"}]),
+        (
+            "PluginManager.bind",
+            ["writer", {"operator_id": "my_other", "hooks": ["on_output"], "channel": "in"}],
+        ),
+        ("PluginManager.unbind", ["writer", {"operator_id": "my_echo"}]),
+        ("PluginManager.disable", ["writer", {}]),
+        ("PluginManager.list", []),
+    ]
+
+
 def test_admin_before_start_is_refused(runner: Any) -> None:
     with pytest.raises(FlezhaError, match="runtime.runner_not_started"):
         runner().admin()
