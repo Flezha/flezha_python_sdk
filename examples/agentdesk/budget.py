@@ -63,9 +63,9 @@ def used(response: flezha.Response[Message, Answer]) -> Event:  # a failed turn 
 class Budget:
     def run(self, event: Event, ctx: flezha.Ctx[Spent, Verdict]) -> None:
         today = time.strftime("%Y-%m-%d", time.gmtime(ctx.now() // 1000))
-        if "tokens" in event:  # the tokens an answer used
+        if "tokens" in event:  # the tokens an answer used: count them
             ctx.change(Counted(day=today, tokens=event["tokens"]))
-        else:  # a message to admit
+        else:  # a message to admit: hand on its verdict
             ctx.emit(Verdict(message=event, spent=ctx.state.on(today)))
 
     def apply_change(self, spent: Spent, counted: Counted) -> None:

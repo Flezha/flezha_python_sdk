@@ -25,6 +25,7 @@ class Edit(TypedDict):  # a message said, or the last one taken back
 @flezha.tasklet(name="reply")
 class Reply:
     def run(self, message: str, ctx: flezha.Ctx[Conversation, Answer]) -> None:
+        # Each piece streams out as it is made; then the whole answer.
         ctx.emit(demo_model.answer(ctx.state.messages, message, ctx.part))
         ctx.change(Edit(kind="said", message=message))
 

@@ -27,6 +27,8 @@ from reserve_funds import ReserveFunds
 import flezha
 
 
+# one instance per order; each step runs once
+# a failed step undoes the finished ones
 @flezha.operator("order_executor", run={"steps": {"each": "once", "on_failure": "undo_all"}})
 def order_executor(c: flezha.Channels) -> None:
     """Two steps in order, then a fan-out: confirming the fill and booking the
@@ -40,7 +42,7 @@ def order_executor(c: flezha.Channels) -> None:
     carries the name of the step that produces it.
     """
     (
-        c.input("order")
+        c.input("order")  # the order to carry out
         .into(ReserveFunds)  # step one
         .into(PlaceOrder)  # step two, once step one is done
         .branch(

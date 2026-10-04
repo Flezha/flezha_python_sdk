@@ -36,12 +36,12 @@ def trade_watcher(c: flezha.Channels) -> None:
     per symbol.
     """
     (
-        c.input("trades")
+        c.input("trades")  # JSON from the exchange
         .filter(lambda message: message.get("channel") == "trade")  # trade messages only
         .flat_map(lambda message: message["data"])  # a message into its trades
         .filter(lambda trade: trade["ord_type"] == "market")  # market orders only
         .key_by(lambda trade: trade["symbol"])  # one cell per symbol
         .into(TrackPrices)
-        .into(BuyAboveAverage)
-        .sink("signals")
+        .into(BuyAboveAverage)  # fed by the tasklet above
+        .sink("signals")  # out to the file plugin
     )

@@ -24,14 +24,14 @@ class Message(TypedDict):  # the session is named after the user
 )
 def agent(c: flezha.Channels) -> None:
     (
-        c.input("turn", codec="text")
+        c.input("turn", codec="text")  # entry 1: `flz operator call`
         .into(Reply)
-        .sink("answer")  # to whoever listens
+        .sink("answer")  # to whoever listens; the chain goes on
         .into(Deliver)
         .response()  # to whoever called
     )
     (
-        c.input("message")  # from the gateway
+        c.input("message")  # entry 2: the gateway, into the same Reply
         .map(lambda message: message["text"])
         .into(Reply)
     )
