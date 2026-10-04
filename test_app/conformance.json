@@ -173,7 +173,8 @@
     ],
     "correction_window": [
       "candle"
-    ]
+    ],
+    "local_send": ["bench_keyed_nopersist", "store_input", "tier_store", "sugar_steps_per_input"]
   },
   "docs": "docs/sdk/python_sdk.md"
 }

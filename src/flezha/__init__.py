@@ -24,11 +24,11 @@ idiomatic errors.
 
 from __future__ import annotations
 
-from .admin import Admin, StartResult
 from .builder import DROPPED, Channels, Edge, Merge
 from .call import Response
 from .cell_state import state
 from .codec import ChannelCodec, TypeCodec, ValueCodec
+from .control import Control, StartResult
 from .ctx import Ctx, SpawnHandle, SpawnResult
 from .errors import DeterminismWarning, FlezhaError, NonRetryableError
 from .local import LocalOperator, SinkOutput
@@ -39,7 +39,7 @@ from .tasklet import Tasklet, tasklet
 from .version import __version__
 
 __all__ = [
-    "Admin",
+    "Control",
     "StartResult",
     # authoring
     "tasklet",

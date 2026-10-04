@@ -152,10 +152,6 @@ class Registry:
     def get(self, factory_id: str) -> RegisteredClass | None:
         return self._classes.get(factory_id)
 
-    def ids(self) -> list[str]:
-        with self._lock:
-            return list(self._classes)
-
     def all(self) -> list[RegisteredClass]:
         with self._lock:
             return list(self._classes.values())

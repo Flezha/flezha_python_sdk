@@ -121,6 +121,8 @@ class FakeCore:
         self.spawn_answer: dict[str, str] | FlezhaError | None = None
         #: How long after its request a spawn is answered, as a controller takes.
         self.spawn_answer_after_s = 0.0
+        #: The operator instances the core reports bound.
+        self.bound: list[str] = []
 
     # -- the ABI ----------------------------------------------------------
 
@@ -191,6 +193,9 @@ class FakeCore:
 
     def watch_stdin_eof(self, grace_ms: int) -> None:
         self.stdin_watch_grace_ms = grace_ms
+
+    def operators(self) -> list[str]:
+        return list(self.bound)
 
     def free(self) -> None:
         self.freed = True

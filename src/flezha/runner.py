@@ -17,6 +17,7 @@ raises naming that rule rather than letting a child serve nothing.
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 import threading
@@ -24,7 +25,7 @@ from types import TracebackType
 from typing import Any, Self
 
 from . import determinism, graph
-from .admin import Admin
+from .control import Control
 from .dispatch import DispatchDeps, Registry
 from .errors import FlezhaError
 from .executor import Executor
@@ -82,8 +83,12 @@ class Runner:
         return self._namespace
 
     def operators(self) -> list[str]:
-        """The factory ids this runner currently declares."""
-        return self._registry.ids() if self._started else [o.factory_id for o in self._operators]
+        """The ids of the operator instances bound on this runner now, a
+        partition member by its member id, read without the controller.
+        Refused with ``runtime.runner_not_started`` before :meth:`start`."""
+        if self._core is None:
+            raise FlezhaError("runtime.runner_not_started")
+        return self._core.operators()
 
     def register_factory(self, operator: Operator) -> Runner:
         """Register an operator type of either kind, short form or full.
@@ -145,11 +150,11 @@ class Runner:
         self._executor_options = options
         return self
 
-    def admin(self) -> Admin:
+    def control(self) -> Control:
         """Administer this namespace from ordinary application code.
 
-        Start, stop and feed operators, enable and disable plugins, read what
-        is running. The controller judges every call as the identity this
+        Start and stop operators, enable and disable plugins, read what is
+        running. The controller judges every call as the identity this
         connection proved, so no credential is held here and nothing expires.
         A user grants a namespace's applications the authority once, with
         ``flz role bind runner@<namespace> app <namespace>``; until then every
@@ -158,7 +163,34 @@ class Runner:
         """
         if self._core is None:
             raise FlezhaError("runtime.runner_not_started")
-        return Admin(self._core)
+        return Control(self._core)
+
+    def send(
+        self,
+        operator_id: str,
+        message: str,
+        channel: str,
+        *,
+        msg_id: str | None = None,
+        key: str | None = None,
+        local: bool = False,
+    ) -> Any:
+        """Send ``message`` to the entry channel ``channel`` of ``operator_id``.
+
+        Through the controller, under the same role check as :meth:`control`,
+        answering its verdict: ``{"to": <operator>, "verdict": "delivered" |
+        "absorbed" | "suspended"}``. ``msg_id`` is stamped as ``flz.msg_id``, so
+        an operator whose input log still holds that id absorbs the repeat;
+        ``key`` reaches the partition group member whose range owns it.
+
+        ``local``: in process, without the controller: the message is on no
+        disk, is lost if the runner stops before handling it, and an operator's
+        input log does not cover it. It answers ``None``.
+        """
+        if self._core is None:
+            raise FlezhaError("runtime.runner_not_started")
+        answer = self._core.send_message(operator_id, channel, message.encode(), msg_id, key, local)
+        return json.loads(answer)
 
     # -- lifecycle ---------------------------------------------------------
 

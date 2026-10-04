@@ -29,6 +29,11 @@ def other_op(c: flezha.Channels) -> None:
     c.input("in").into(Other).sink()
 
 
+def declared(r: Runner) -> list[str]:
+    """The factory ids ``r`` declares."""
+    return [o.factory_id for o in r._operators]  # type: ignore[attr-defined]
+
+
 @pytest.fixture
 def runner() -> Any:
     made: list[Runner] = []
@@ -53,7 +58,10 @@ def runner() -> Any:
 def test_creating_a_runner_connects_nothing(runner: Any) -> None:
     r = runner("my_app")
     assert r.namespace == "my_app"
-    assert r.operators() == []
+    with pytest.raises(FlezhaError) as refused:
+        r.operators()
+    assert refused.value.code == "runtime.runner_not_started"
+    assert declared(r) == []
 
 
 def test_start_declares_then_connects(runner: Any) -> None:
@@ -64,7 +72,7 @@ def test_start_declares_then_connects(runner: Any) -> None:
         assert core.started == "my_app"
         assert len(core.declared) == 1
         assert json.loads(core.declared[0])["factory_id"] == "demo"
-        assert r.operators() == ["demo"]
+        assert declared(r) == ["demo"]
     finally:
         r.stop()
         r.drain()
@@ -140,7 +148,7 @@ def test_a_post_start_define_reaches_the_core(runner: Any) -> None:
     try:
         r.register_factory(other_op)
         assert [json.loads(body)["factory_id"] for body in core.declared] == ["demo", "other"]
-        assert r.operators() == ["demo", "other"]
+        assert declared(r) == ["demo", "other"]
     finally:
         r.stop()
         r.drain()
@@ -170,7 +178,7 @@ def test_removing_a_type_with_live_instances_is_refused(runner: Any) -> None:
             "runtime.operator_type_in_use",
             {"factory_id": "demo", "live_instances": 1},
         )
-        assert r.operators() == ["demo"]
+        assert declared(r) == ["demo"]
     finally:
         r.stop()
         r.drain()
@@ -181,7 +189,7 @@ def test_removing_a_type_with_no_instances_succeeds(runner: Any) -> None:
     r = runner().register_factory(demo).register_factory(other_op).start(core=core)
     try:
         r.unregister_factory(other_op)
-        assert r.operators() == ["demo"]
+        assert declared(r) == ["demo"]
     finally:
         r.stop()
         r.drain()
@@ -201,7 +209,7 @@ def test_register_modules_imports_and_registers(runner: Any) -> None:
     core = FakeCore()
     r = runner().register_modules("declaring_module").start(core=core)
     try:
-        assert r.operators() == ["from_module", "from_module_short_form"]
+        assert declared(r) == ["from_module", "from_module_short_form"]
     finally:
         r.stop()
         r.drain()
@@ -216,7 +224,7 @@ def test_an_unimportable_module_raises_its_own_import_error(runner: Any) -> None
 def test_the_context_manager_drains_on_exit(runner: Any) -> None:
     core = FakeCore()
     with runner().register_factory(demo).start(core=core) as r:
-        assert r.operators() == ["demo"]
+        assert declared(r) == ["demo"]
     assert core.shut_down
     assert core.freed
 
@@ -315,9 +323,9 @@ def test_a_start_takes_the_factory_first_and_answers_the_id_and_the_outcome(
         return json.dumps(next(answers))
 
     monkeypatch.setattr(core, "admin_call", admin_call)
-    admin = runner().start(core=core).admin()
-    assert admin.start_operator("echo") == flezha.StartResult("echo-k7m2qzxw4pd3fn2a", "started")
-    assert admin.start_operator("echo", id="my_echo", init_values={"a": 1}) == flezha.StartResult(
+    control = runner().start(core=core).control()
+    assert control.start_operator("echo") == flezha.StartResult("echo-k7m2qzxw4pd3fn2a", "started")
+    assert control.start_operator("echo", id="my_echo", init_values={"a": 1}) == flezha.StartResult(
         "my_echo", "already_running"
     )
     assert calls == [
@@ -337,16 +345,16 @@ def test_a_plugin_is_enabled_by_name_and_bound_and_unbound_by_operator(
         return "null"
 
     monkeypatch.setattr(core, "admin_call", admin_call)
-    admin = runner().start(core=core).admin()
-    admin.enable_plugin("writer", "operator_file_sink", opts={"path": "out.txt"})
-    admin.enable_plugin(
+    control = runner().start(core=core).control()
+    control.enable_plugin("writer", "operator_file_sink", opts={"path": "out.txt"})
+    control.enable_plugin(
         "feed", "operator_websocket", single=True, operator_id="my_echo", hooks=[["on_output", {}]]
     )
-    admin.bind_plugin("writer", "my_echo")
-    admin.bind_plugin("writer", "my_other", hooks=["on_output"], channel="in")
-    admin.unbind_plugin("writer", "my_echo")
-    admin.disable_plugin("writer")
-    admin.list_plugins()
+    control.bind_plugin("writer", "my_echo")
+    control.bind_plugin("writer", "my_other", hooks=["on_output"], channel="in")
+    control.unbind_plugin("writer", "my_echo")
+    control.disable_plugin("writer")
+    control.list_plugins()
     assert calls == [
         (
             "PluginManager.enable",
@@ -376,9 +384,41 @@ def test_a_plugin_is_enabled_by_name_and_bound_and_unbound_by_operator(
     ]
 
 
-def test_admin_before_start_is_refused(runner: Any) -> None:
+def test_control_and_send_before_start_are_refused(runner: Any) -> None:
     with pytest.raises(FlezhaError, match="runtime.runner_not_started"):
-        runner().admin()
+        runner().control()
+    with pytest.raises(FlezhaError, match="runtime.runner_not_started"):
+        runner().send("my_echo", "x", "in")
+
+
+def test_a_send_hands_its_options_to_the_core_and_reads_the_answer(
+    runner: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    core = FakeCore()
+    calls: list[tuple[Any, ...]] = []
+
+    def send_message(*args: Any) -> str:
+        calls.append(args)
+        return "null" if args[-1] else json.dumps({"to": "prices#p1", "verdict": "absorbed"})
+
+    monkeypatch.setattr(core, "send_message", send_message, raising=False)
+    r = runner().start(core=core)
+    r.send("my_echo", "hello", "in")
+    verdict = r.send("prices", "x", "in", msg_id="fx/0/7", key="EURUSD")
+    assert r.send("orders", "hé", "in", local=True) is None
+    assert calls == [
+        ("my_echo", "in", b"hello", None, None, False),
+        ("prices", "in", b"x", "fx/0/7", "EURUSD", False),
+        ("orders", "in", "hé".encode(), None, None, True),
+    ]
+    assert verdict == {"to": "prices#p1", "verdict": "absorbed"}
+
+
+def test_operators_are_the_instances_the_core_reports_bound(runner: Any) -> None:
+    core = FakeCore()
+    core.bound = ["orders", "prices#p1"]
+    r = runner().register_factory(demo).start(core=core)
+    assert r.operators() == ["orders", "prices#p1"]
 
 
 def test_the_double_answers_every_call_a_host_can_make_on_a_core() -> None:
@@ -430,19 +470,19 @@ def short_steps(value: str) -> str:
 
 def test_register_factory_takes_a_short_form_of_either_kind(runner: Any) -> None:
     r = runner().register_factory(short_flow).register_factory(short_steps)
-    assert r.operators() == ["short_flow", "short_steps"]
+    assert declared(r) == ["short_flow", "short_steps"]
 
     r.unregister_factory(short_steps)
-    assert r.operators() == ["short_flow"]
+    assert declared(r) == ["short_flow"]
     r.unregister_factory(short_flow)
-    assert r.operators() == []
+    assert declared(r) == []
 
 
 def test_register_modules_collects_a_short_form(runner: Any) -> None:
     core = FakeCore()
     r = runner().register_modules("declaring_module").start(core=core)
     try:
-        assert "from_module_short_form" in r.operators()
+        assert "from_module_short_form" in declared(r)
     finally:
         r.stop()
         r.drain()

@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 from .native import Core
 
-__all__ = ["Admin", "StartResult", "StartOutcome"]
+__all__ = ["Control", "StartResult", "StartOutcome"]
 
 #: What a start did: started the operator, or found a live instance already
 #: holding the id it named and left it untouched.
@@ -36,7 +36,7 @@ class StartResult:
     outcome: StartOutcome
 
 
-class Admin:
+class Control:
     """The administration surface for the namespace a runner proved."""
 
     __slots__ = ("_core",)
@@ -66,10 +66,6 @@ class Admin:
     def stop_operator(self, operator_id: str) -> Any:
         """Stop an operator, or the whole partition group it names."""
         return self.call("Operator.stop", operator_id)
-
-    def send(self, operator_id: str, message: str, channel: str = "") -> Any:
-        """Inject a message into an operator's input stream, blocking for the verdict."""
-        return self.call("Operator.send", operator_id, message, channel)
 
     def enable_plugin(
         self,

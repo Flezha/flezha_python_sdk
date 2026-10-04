@@ -12,12 +12,21 @@ Two environment variables select a conformance run instead of the fixtures:
 ``FLEZHA_CONFORMANCE_REPORT`` writes the refusal table's verdicts and exits
 without connecting, and ``FLEZHA_REFUSAL_FIXTURE`` registers ONE row of that
 table in place of every fixture. Both are ``conformance.py``.
+
+``FLEZHA_LOCAL_SEND_SCRIPT`` is the local-send drill: a JSON array of
+``{"operator", "channel", "message", "when"}`` sends this app's own code makes
+with ``local=True``, each once the file ``when`` names exists, printing
+``local_send <operator> ok`` or ``local_send <operator> err <code>`` per send,
+in order.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 # The SDK from this checkout, so the app runs against what was just built
@@ -68,7 +77,11 @@ def main() -> None:
     )
 
     try:
-        runner.run()
+        runner.start()
+        script = os.environ.get("FLEZHA_LOCAL_SEND_SCRIPT")
+        if script:
+            threading.Thread(target=local_sends, args=(runner, script), daemon=True).start()
+        runner.await_termination()
     except flezha.FlezhaError as refusal:
         if not refusal.code.startswith("topology."):
             raise
@@ -81,6 +94,21 @@ def main() -> None:
             flush=True,
         )
         raise SystemExit(1) from refusal
+
+
+def local_sends(runner: flezha.Runner, script: str) -> None:
+    """Each send of the drill once the test says go, by creating the file
+    ``when`` names: the test first proves the operator's sink is live, which a
+    send made at bind would race."""
+    for send in json.loads(script):
+        operator = send["operator"]
+        while not os.path.exists(send["when"]):
+            time.sleep(0.05)
+        try:
+            runner.send(operator, send["message"], send["channel"], local=True)
+            print(f"local_send {operator} ok", flush=True)
+        except flezha.FlezhaError as refusal:
+            print(f"local_send {operator} err {refusal.code}", flush=True)
 
 
 if __name__ == "__main__":

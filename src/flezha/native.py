@@ -91,6 +91,8 @@ class Core:
         "spawn_result",
         "part",
         "admin_call",
+        "send_message",
+        "operators",
         "last_error",
     )
 
@@ -229,6 +231,23 @@ class Core:
 
     def admin_call(self, verb: str, args: str) -> str:
         return str(self._call("admin_call", verb, args))
+
+    def send_message(
+        self,
+        operator: str,
+        channel: str,
+        message: bytes,
+        msg_id: str | None,
+        key: str | None,
+        local: bool,
+    ) -> str:
+        """Send one message, through the controller or locally, answering as
+        JSON: the verdict, or ``null`` for a local send."""
+        return str(self._call("send_message", operator, channel, message, msg_id, key, local))
+
+    def operators(self) -> list[str]:
+        """The ids of the operator instances bound on this runner."""
+        return list(self._call("operators"))
 
     # -- diagnostics -------------------------------------------------------
 

@@ -286,3 +286,19 @@ def test_the_dispatcher_releases_every_view_an_activation_carried() -> None:
 def _view_of(body: bytes) -> Any:
     """A payload view carrying ``body``."""
     return ffi.PayloadView(body)
+
+
+def test_the_core_refuses_a_local_send_held_elsewhere_or_with_an_id() -> None:
+    """Against the real core: no runner here holds ``elsewhere``, and only the
+    controller reads an id."""
+    core = native.Core.create()
+    try:
+        with pytest.raises(FlezhaError) as caught:
+            core.send_message("elsewhere", "in", b"x", None, None, True)
+        assert caught.value.code == "runtime.operator_not_local"
+        with pytest.raises(FlezhaError) as caught:
+            core.send_message("orders", "in", b"x", "m-1", None, True)
+        assert caught.value.code == "usage.options_conflict"
+        assert isinstance(core.operators(), list)
+    finally:
+        core.free()
