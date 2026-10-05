@@ -2,7 +2,7 @@
 under the same factory ids, tasklet names, channel names and output bytes.
 
 Entry payloads and plugin frames are UTF-8 text on the wire, the same as the
-reference: every entry names the text codec, and a sink naming no codec sends a
+reference: every entry names the text codec, and an output naming no codec sends a
 string as its UTF-8 bytes and a bytes value unchanged. An inter-tasklet hop
 between two Python tasklets carries MessagePack, which no one else reads.
 """
@@ -49,7 +49,7 @@ do_nothing = passthrough("do_nothing_tasklet")
 
 @flezha.relay("do_nothing")
 def do_nothing_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(do_nothing).sink("echo")
+    c.input("input", codec="text").into(do_nothing).output("echo")
 
 
 @flezha.relay("bench_echo")
@@ -59,7 +59,7 @@ def bench_echo_relay(c: flezha.Channels) -> None:
     ``do_nothing`` is the merge-blocking bench factory and must not change; this
     keeps the round-trip bench's back-pressure posture independent of it.
     """
-    c.input("input", codec="text").on_full("drop_nothing").into(do_nothing).sink("echo")
+    c.input("input", codec="text").on_full("drop_nothing").into(do_nothing).output("echo")
 
 
 # -- complete_flow / chained_steps -------------------------------------------
@@ -75,7 +75,7 @@ def _complete_on_bye(value: str, ctx: flezha.Ctx[None, str]) -> None:
 def complete_flow_relay(c: flezha.Channels) -> None:
     """A flow class that echoes each input and ends its instance on ``bye``."""
     tasklet = stateless_step("complete_flow_tasklet", _complete_on_bye)
-    c.input("input", codec="text").into(tasklet).sink("complete_flow_out")
+    c.input("input", codec="text").into(tasklet).output("complete_flow_out")
 
 
 def _count_down(value: str, ctx: flezha.Ctx[None, str]) -> None:
@@ -113,7 +113,7 @@ compare_filter = flezha.tasklet(CompareFilter, name="compare_filter_tasklet")
 
 @flezha.relay("compare_filter")
 def compare_filter_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(compare_filter).sink("sink")
+    c.input("input", codec="text").into(compare_filter).output("sink")
 
 
 # -- static_cell / sugar_static_cell / mixed_relay -------------------
@@ -163,7 +163,7 @@ macro_static_downstream = passthrough("macro_static_downstream_tasklet")
 
 @flezha.relay("static_cell")
 def static_cell_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(static_entry).named("hop").into(static_downstream).sink(
+    c.input("input", codec="text").into(static_entry).named("hop").into(static_downstream).output(
         "kafka"
     )
 
@@ -172,7 +172,7 @@ def static_cell_relay(c: flezha.Channels) -> None:
 def sugar_static_cell_relay(c: flezha.Channels) -> None:
     """The reference pipeline sugar leaves the hop unnamed and lets the sink
     name the producing channel."""
-    c.input("input", codec="text").into(macro_static_entry).into(macro_static_downstream).sink(
+    c.input("input", codec="text").into(macro_static_entry).into(macro_static_downstream).output(
         "test_kafka"
     )
 
@@ -187,7 +187,7 @@ mixed_hand_downstream = passthrough("mixed_hand_downstream")
 def mixed_relay(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(mixed_macro_entry).named("hop").into(
         mixed_hand_downstream
-    ).sink("kafka")
+    ).output("kafka")
 
 
 # -- the §5 short forms ------------------------------------------------------
@@ -196,12 +196,12 @@ def mixed_relay(c: flezha.Channels) -> None:
 # channels body. No hand-written relay or tasklet stands beside them.
 
 
-@flezha.relay(id="sugar_do_nothing", sink="sugar_do_nothing_echo", codec="text")
+@flezha.relay(id="sugar_do_nothing", output="sugar_do_nothing_echo", codec="text")
 def sugar_do_nothing(value: str) -> str:
     return value
 
 
-@flezha.relay(id="sugar_store_input", sink="sugar_store_sink", codec="text")
+@flezha.relay(id="sugar_store_input", output="sugar_store_sink", codec="text")
 class SugarStoreInput:
     def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
         ctx.change({"push": value})
@@ -216,7 +216,7 @@ class SugarStoreInput:
 
 @flezha.relay(
     id="sugar_named_input",
-    sink="sugar_named_input_sink",
+    output="sugar_named_input_sink",
     input="prices",
     codec="text",
 )
@@ -228,7 +228,7 @@ def sugar_named_input(value: str) -> str:
     id="sugar_steps",
     run="steps",
     durable=FIXTURE_DURABLE,
-    sink="sugar_steps_placed",
+    output="sugar_steps_placed",
     input="order",
     codec="text",
 )
@@ -240,7 +240,7 @@ def sugar_steps(order: str) -> str:
     id="sugar_steps_per_input",
     run={"steps": {"each": "per_input"}},
     durable=FIXTURE_DURABLE,
-    sink="sugar_steps_per_input_out",
+    output="sugar_steps_per_input_out",
     codec="text",
 )
 def sugar_steps_per_input(value: str) -> str:
@@ -249,7 +249,7 @@ def sugar_steps_per_input(value: str) -> str:
 
 @flezha.relay(id="sugar_state_only", input="ticks", codec="text")
 class SugarStateOnly(SeenLog):
-    """No sink: what it was sent is proven by its state alone."""
+    """No output: what it was sent is proven by its state alone."""
 
     def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], None]) -> None:
         ctx.change({"push": value})
@@ -301,7 +301,7 @@ def hybrid_channel_relay(c: flezha.Channels) -> None:
         # The consumer edge first, so a refused plugin serialization leaves the
         # in-process fan-out already recorded — the reference's isolation.
         lambda edge: edge.named("hybrid_indicator").into(HybridConsumer),
-        lambda edge: edge.sink(encode=hybrid_encode),
+        lambda edge: edge.output(encode=hybrid_encode),
     )
 
 
@@ -331,7 +331,7 @@ def merged_input_relay(c: flezha.Channels) -> None:
     quotes = c.input("quotes", codec="text")
     c.merge().from_(ticks, tagged("ticks")).from_(quotes, tagged("quotes")).key_by(
         lambda value: value["symbol"]
-    ).into(MergeLabel).keyed().sink("merged")
+    ).into(MergeLabel).keyed().output("merged")
 
 
 # -- transform_chain ---------------------------------------------------------
@@ -347,7 +347,7 @@ transform_label = passthrough("transform_label_tasklet")
 def transform_chain_relay(c: flezha.Channels) -> None:
     c.input("trades", codec="text").filter(lambda trade: trade != "drop").flat_map(
         lambda trade: trade.split(",")
-    ).map(str.upper).key_by(prefix).into(transform_label).keyed().sink("transformed")
+    ).map(str.upper).key_by(prefix).into(transform_label).keyed().output("transformed")
 
 
 # -- cell_stress -----------------------------------------------------------
@@ -383,7 +383,7 @@ stress_d = flezha.tasklet(StressToP0, name="stress_d", cell_keys=STRESS_KEYS)
 def cell_stress_relay(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(stress_a).named("a_to_b").into(stress_b).named(
         "b_to_c"
-    ).into(stress_c).named("c_to_d").into(stress_d).sink("echo")
+    ).into(stress_c).named("c_to_d").into(stress_d).output("echo")
 
 
 # -- candle ------------------------------------------------------------------
@@ -421,7 +421,7 @@ candle = flezha.tasklet(Candle, name="candle_tasklet")
 
 @flezha.relay("candle", run={"flow": {"exactly": {"effectively_once": {"correction_ms": 600_000}}}})
 def candle_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(candle).keyed().sink("sink")
+    c.input("input", codec="text").into(candle).keyed().output("sink")
 
 
 # -- poison_probe / wedge_probe ----------------------------------------------
@@ -441,7 +441,7 @@ class PoisonProbe:
 
 @flezha.relay("poison_probe")
 def poison_probe_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").retry_backoff_ms(25).into(PoisonProbe).sink("out")
+    c.input("input", codec="text").retry_backoff_ms(25).into(PoisonProbe).output("out")
 
 
 _ABORTED = {"done": False}
@@ -473,7 +473,7 @@ class WedgeProbe:
 
 @flezha.relay("wedge_probe")
 def wedge_probe_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(WedgeProbe).sink("out")
+    c.input("input", codec="text").into(WedgeProbe).output("out")
 
 
 # -- session_timeout ---------------------------------------------------------
@@ -511,7 +511,7 @@ session_timeout = flezha.tasklet(SessionTimeout, name="session_timeout_tasklet")
 
 @flezha.relay("session_timeout")
 def session_timeout_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(session_timeout).sink("kafka")
+    c.input("input", codec="text").into(session_timeout).output("kafka")
 
 
 # -- bounded_mailbox_{drop_nothing,drop_newest,drop_oldest} ------------------
@@ -535,7 +535,7 @@ def _bounded_mailbox(policy: str) -> flezha.Relay:
 
     @flezha.relay(f"bounded_mailbox_{policy}")
     def relay(c: flezha.Channels) -> None:
-        c.input(f"{policy}_input", codec="text").on_full(policy).into(tasklet).sink(
+        c.input(f"{policy}_input", codec="text").on_full(policy).into(tasklet).output(
             f"{policy}_echo"
         )
 
@@ -567,7 +567,7 @@ partition_pass = flezha.tasklet(PartitionPass, name="partition_pass_tasklet")
 
 @flezha.relay("partition_pass")
 def partition_pass_relay(c: flezha.Channels) -> None:
-    c.input("in", codec="text").key_by(prefix).into(partition_pass).keyed().sink("input")
+    c.input("in", codec="text").key_by(prefix).into(partition_pass).keyed().output("input")
 
 
 # -- dynamic_cell ----------------------------------------------------------
@@ -595,7 +595,7 @@ def dynamic_cell_relay(c: flezha.Channels) -> None:
         # Filtered before keying: a dropped value answers no key, so the core
         # never mints a cell for it.
         lambda value: value != "drop"
-    ).key_by(prefix).into(dynamic_cell).sink("kafka")
+    ).key_by(prefix).into(dynamic_cell).output("kafka")
 
 
 # -- spawn_requester ---------------------------------------------------------
@@ -628,7 +628,7 @@ class SpawnRequester:
 
 @flezha.relay("spawn_requester")
 def spawn_requester_relay(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(SpawnRequester).sink("out")
+    c.input("in", codec="text").into(SpawnRequester).output("out")
 
 
 # -- spawn_hold_requester ----------------------------------------------------
@@ -648,7 +648,9 @@ class SpawnHoldRequester:
 
 @flezha.relay("spawn_hold_requester", run={"flow": {"exactly": "effectively_once"}})
 def spawn_hold_requester_relay(c: flezha.Channels) -> None:
-    c.input("in", codec="text").on_full("drop_nothing").into(SpawnHoldRequester).keyed().sink("out")
+    c.input("in", codec="text").on_full("drop_nothing").into(SpawnHoldRequester).keyed().output(
+        "out"
+    )
 
 
 # -- spawn_once_requester ----------------------------------------------------
@@ -656,7 +658,7 @@ def spawn_hold_requester_relay(c: flezha.Channels) -> None:
 # On each input it spawns `typed_once_steps` once, with no id, carrying the
 # input inside a JSON object its `order` entry decodes, and prints the result
 # as `spawn_result once <id> <outcome>`: the payload a spawn carries is the
-# spawned instance's first message, encoded by the no-codec sink rule.
+# spawned instance's first message, encoded by the no-codec output rule.
 
 
 @flezha.tasklet(name="spawn_once_requester")
@@ -667,12 +669,12 @@ class SpawnOnceRequester:
 
 @flezha.relay("spawn_once_requester")
 def spawn_once_requester_relay(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(SpawnOnceRequester).sink("out")
+    c.input("in", codec="text").into(SpawnOnceRequester).output("out")
 
 
 # -- call_response -----------------------------------------------------------
 #
-# Relays an outside caller calls and whose sink output answers it: from the
+# Relays an outside caller calls and whose output answers it: from the
 # first tasklet, from a downstream one, and from whichever of two filtered
 # paths the input took. `call_turn` is the steps
 # one, in fixtures_steps.py.
@@ -680,7 +682,7 @@ def spawn_once_requester_relay(c: flezha.Channels) -> None:
 
 @flezha.relay("call_echo")
 def call_echo_relay(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(passthrough("call_echo")).sink()
+    c.input("in", codec="text").into(passthrough("call_echo")).output()
 
 
 call_answer = stateless_step("call_answer", lambda value, ctx: ctx.emit(f"re:{value}"))
@@ -688,7 +690,7 @@ call_answer = stateless_step("call_answer", lambda value, ctx: ctx.emit(f"re:{va
 
 @flezha.relay("call_downstream")
 def call_downstream_relay(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(passthrough("call_parse")).into(call_answer).sink()
+    c.input("in", codec="text").into(passthrough("call_parse")).into(call_answer).output()
 
 
 # An input starting `no` takes the refused path, every other the accepted one.
@@ -699,14 +701,14 @@ call_refuse = stateless_step("call_refuse", lambda value, ctx: ctx.emit(f"refuse
 @flezha.relay("call_split")
 def call_split_relay(c: flezha.Channels) -> None:
     admitted = c.input("in", codec="text").into(passthrough("call_admit"))
-    admitted.filter(lambda value: not value.startswith("no")).into(call_accept).sink()
-    admitted.filter(lambda value: value.startswith("no")).into(call_refuse).sink()
+    admitted.filter(lambda value: not value.startswith("no")).into(call_accept).output()
+    admitted.filter(lambda value: value.startswith("no")).into(call_refuse).output()
 
 
 # -- parts ----------------------------------------------------------------
 #
 # For an input `n` the tasklet sends the parts `1` .. `n` and then emits
-# `done:<n>` on its sink `answer`, in a flow relay and in a
+# `done:<n>` on its output `answer`, in a flow relay and in a
 # `per_input` steps one. `retry:<n>` sends its parts and then fails
 # retryably the first time this process sees it, so the retry's parts number
 # from 0 again under the next attempt.
@@ -730,14 +732,14 @@ def _send_parts(value: str, ctx: flezha.Ctx[None, str]) -> None:
 def part_echo_relay(c: flezha.Channels) -> None:
     c.input("in", codec="text").retry_backoff_ms(25).into(
         stateless_step("part_echo", _send_parts)
-    ).sink("answer")
+    ).output("answer")
 
 
 @flezha.relay("part_echo_steps", **LOOP_KNOBS)
 def part_echo_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").retry_backoff_ms(25).into(
         stateless_step("part_echo_turn", _send_parts)
-    ).sink("answer")
+    ).output("answer")
 
 
 #: Every relay this app registers, in declaration order.

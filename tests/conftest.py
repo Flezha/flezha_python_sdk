@@ -80,7 +80,7 @@ echo = flezha.tasklet(Echo, name="echo")
 
 @flezha.relay("demo")
 def demo(c: flezha.Channels) -> None:
-    c.input("input").into(echo).named("mid").into(count_up).sink("out")
+    c.input("input").into(echo).named("mid").into(count_up).output("out")
 
 
 class FakeCore:
@@ -378,11 +378,11 @@ def compensating(seen: list[Any]) -> Any:
 
 
 def solo(task: flezha.Tasklet[Any, Any], factory: str = "solo") -> flezha.Relay:
-    """A one-tasklet relay wrapped around `task`, its output on a sink."""
+    """A one-tasklet relay wrapped around `task`, its output on an output."""
 
     @flezha.relay(factory)
     def relay(c: flezha.Channels) -> None:
-        c.input("in").into(task).sink()
+        c.input("in").into(task).output()
 
     return relay
 

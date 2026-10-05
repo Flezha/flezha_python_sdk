@@ -7,7 +7,7 @@ in this repository, `scripts/build-python-sdk.sh` in the core's.
 
 `Split` and `Tally` are ordinary tasklets with nothing local-mode about
 them: the same declaration deploys against a controller unchanged. What local
-mode supplies is the sink — the values `Tally` releases arrive here instead of
+mode supplies is the output — the values `Tally` releases arrive here instead of
 on a socket.
 
 State is held in memory and nothing is durable; the run says so on stderr.
@@ -53,14 +53,14 @@ class Tally:
 def word_count(c: Channels) -> None:
     # One Cell per word: the hop from `Split` to `Tally` is the runtime's,
     # not this file's.
-    c.input("lines", codec="text").into(Split).key_by(lambda word: word).into(Tally).keyed().sink(
+    c.input("lines", codec="text").into(Split).key_by(lambda word: word).into(Tally).keyed().output(
         "totals"
     )
 
 
 if __name__ == "__main__":
     with LocalRelay.start(word_count) as run:
-        run.on_sink("totals", lambda output: print(output.payload.decode()))
+        run.on_output("totals", lambda output: print(output.payload.decode()))
         run.feed("lines", "the quick brown fox")
         run.feed("lines", "the lazy dog")
         run.run_until_idle(10_000)

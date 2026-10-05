@@ -124,12 +124,12 @@ def every_key(c: flezha.Channels) -> None:
     c.compact_after_bytes(1 << 20)
     c.input("in").key_by(lambda value: str(value["k"])).into(keyed).retry_max(5).retry_backoff_ms(
         100
-    ).keyed().sink()
+    ).keyed().output()
 
 
 @flezha.relay("static_key")
 def static_key(c: flezha.Channels) -> None:
-    c.input("in").into(statics).sink()
+    c.input("in").into(statics).output()
 
 
 @flezha.relay(
@@ -139,7 +139,7 @@ def static_key(c: flezha.Channels) -> None:
     max_duration_ms=600_000,
 )
 def every_steps_key(c: flezha.Channels) -> None:
-    c.input("in").into(echo).sink()
+    c.input("in").into(echo).output()
 
 
 def _emitted() -> dict[str, set[str]]:
@@ -251,7 +251,7 @@ def _lines(topology: str, relay: flezha.Relay) -> list[str]:
     """The DERIVED declaration in the golden's columns, one line per channel.
 
     The consumers, the kind after the wiring rule, the ``named`` override and the
-    sink are all the core's answer to the record this builder submitted.
+    output are all the core's answer to the record this builder submitted.
     """
     rendered = []
     for channel in declare(relay)["channels"]:
@@ -293,7 +293,7 @@ hybrid_consumer = flezha.tasklet(HybridConsumer, name="hybrid_consumer_tasklet")
 
 @flezha.relay("hybrid_channel")
 def hybrid_channel(c: flezha.Channels) -> None:
-    c.input("input").into(hybrid_producer).sink("hybrid_indicator", encode=_bytes).into(
+    c.input("input").into(hybrid_producer).output("hybrid_indicator", encode=_bytes).into(
         hybrid_consumer
     )
 
@@ -314,7 +314,7 @@ block_b = flezha.tasklet(BlockB, name="block_b")
 
 @flezha.relay("commit_block_chain", run="steps")
 def commit_block_chain(c: flezha.Channels) -> None:
-    c.input("in").into(tier_commit_a).keyed().sink("mid", encode=_bytes).into(block_b)
+    c.input("in").into(tier_commit_a).keyed().output("mid", encode=_bytes).into(block_b)
 
 
 def test_the_hybrid_stream_topology_is_the_reference() -> None:
@@ -346,11 +346,11 @@ def _modes(relay: flezha.Relay) -> dict[str, str]:
 def test_key_by_alone_makes_the_consumer_dynamic_and_one_tasklet_can_be_both() -> None:
     @flezha.relay("keyed_plain")
     def keyed_plain(c: flezha.Channels) -> None:
-        c.input("in", codec="text").key_by(lambda value: value[:1]).into(plain).sink()
+        c.input("in", codec="text").key_by(lambda value: value[:1]).into(plain).output()
 
     @flezha.relay("single_plain")
     def single_plain(c: flezha.Channels) -> None:
-        c.input("in", codec="text").into(plain).sink()
+        c.input("in", codec="text").into(plain).output()
 
     assert _modes(keyed_plain) == {"plain": "dynamic"}
     assert _modes(single_plain) == {"plain": "single"}
@@ -369,7 +369,7 @@ def test_a_keyed_merge_makes_the_merged_tasklet_dynamic() -> None:
 def test_a_static_key_set_fed_by_key_by_is_refused_by_the_core() -> None:
     @flezha.relay("static_keyed")
     def static_keyed(c: flezha.Channels) -> None:
-        c.input("in").key_by(str).into(statics).sink()
+        c.input("in").key_by(str).into(statics).output()
 
     assert _modes(static_keyed) == {"statics": "static"}
     with pytest.raises(flezha.FlezhaError) as caught:

@@ -39,7 +39,7 @@ __all__ = [
 
 #: One link of a chain, exactly as the core deserializes it. A chain is one
 #: fluent sequence declared off a channel edge, in the order the author called
-#: it; the core reads the consumers, the channel kind, the sink and the name off
+#: it; the core reads the consumers, the channel kind, the output and the name off
 #: them. Closures never enter the record — they stay on the edge held under the
 #: chain that declared them, and ``validate`` attaches them to the consumers the
 #: core derived from that same chain.
@@ -154,12 +154,12 @@ class ChannelSpec:
     keyed: bool = False
     sink: str | None = None
     """The channel's name once a plugin end, a sink or a call, is attached;
-    ``None`` means none. The core's answer names no sink for a call."""
+    ``None`` means none. The core's answer names no output for a call."""
     decode: Callable[[Any], Any] | None = None
     sink_encode: Callable[[Any], bytes] | None = None
-    """The plugin sink's payload encoder, set with the sink by ``sink``.
+    """The plugin sink's payload encoder, set with the sink by ``output``.
 
-    It belongs to the sink frame alone: an inter-tasklet frame is decoded
+    It belongs to the output frame alone: an inter-tasklet frame is decoded
     with the class codec, so encoding one with this hands the consuming
     tasklet bytes it cannot read.
     """
@@ -488,7 +488,7 @@ class Edge(Generic[T]):
         self._close(node, {"link": "into", "tasklet": node.index})
         return Edge(self._builder, ("tasklet", node), {})
 
-    def sink(
+    def output(
         self,
         name: str | None = None,
         *,
@@ -498,20 +498,20 @@ class Edge(Generic[T]):
         """Terminate this edge's channel on the plugin layer, and answer the edge.
 
         The name written here IS the channel's name, everywhere one appears;
-        ``sink()`` leaves it derived as it would be without a sink at all.
-        ``sink(...).into(...)`` wires a consumer behind the sink, so one emit
+        ``output()`` leaves it derived as it would be without an output at all.
+        ``output(...).into(...)`` wires a consumer behind the output, so one emit
         reaches both. A channel with no consumer behind it is the plugin-bound
         terminal — terminality is the absence of further wiring, not a
         different method.
 
         ``encode`` turns a value into the plugin frame's bytes, and ``codec``
         names a format instead. With neither, bytes are sent as they are, a
-        string as UTF-8 and any other value as JSON, so a sink needs neither for
+        string as UTF-8 and any other value as JSON, so an output needs neither for
         a string, bytes or a JSON value.
         """
         link: dict[str, Any] = {"link": "sink"}
         channel = self._plug_channel(name)
-        # A chain of its own: the sink terminates the channel rather than this
+        # A chain of its own: the output terminates the channel rather than this
         # edge, so ``into(...)`` still chains after it.
         if name is not None:
             link["name"] = name
@@ -542,11 +542,11 @@ class Edge(Generic[T]):
         an instance of ``factory`` (after a ``key_by``, the one the key names,
         started unless ``create`` is false). ``channel`` names the callee's entry
         channel, and ``answer_channel`` the callee's channel whose output answers
-        (its first output for the request when unset). One ``codec`` writes the request as ``sink`` writes and reads
+        (its first output for the request when unset). One ``codec`` writes the request as ``output`` writes and reads
         the answer as ``input`` reads, JSON when none is named. The outcome
         arrives later as a :class:`~flezha.call.Response` on the entry channel
         ``<this channel>.response``, which must feed a tasklet, the calling one
-        included. A channel ends in one sink or one call.
+        included. A channel ends in one output or one call.
         """
         spec = self._plug_channel(None)
         named = self._builder.channel_codec(spec, codec, None) or "json"
@@ -566,9 +566,9 @@ class Edge(Generic[T]):
         """The channel a plugin end attaches to; an entry channel has none."""
         if self._from[0] != "tasklet":
             # Not a topology rule the core states: a record whose entry channel
-            # carries a sink derives a plugin channel with no producer, and
+            # carries an output derives a plugin channel with no producer, and
             # there is nothing in it that says which end fed the plugin.
-            raise FlezhaError("topology.sink_on_entry", {"channel": name or "<derived>"})
+            raise FlezhaError("topology.output_on_entry", {"channel": name or "<derived>"})
         return self._channel()
 
     # -- internals ---------------------------------------------------------

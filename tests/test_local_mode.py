@@ -1,7 +1,7 @@
 """The Python SDK's local mode: a user's own relay, its declared
 two-tasklet graph, and no controller anywhere.
 
-The graph and its expected sink output are read from
+The graph and its expected output are read from
 ``test/fixtures/local_mode_word_count.txt``, which the Rust, Java, Node and
 Elixir local-mode suites read too — so every core is compared against one
 recorded expectation instead of by inspection.
@@ -59,13 +59,13 @@ class Tally:
 
 @relay("local_word_count_python")
 def word_count(c: Channels) -> None:
-    c.input("lines", codec="text").into(Split).key_by(lambda word: word).into(Tally).keyed().sink(
+    c.input("lines", codec="text").into(Split).key_by(lambda word: word).into(Tally).keyed().output(
         "totals"
     )
 
 
 def scenario() -> tuple[list[str], Counter[str]]:
-    """The scenario every core runs: the lines to feed, and the sink values."""
+    """The scenario every core runs: the lines to feed, and the output values."""
     lines: list[str] = []
     totals: Counter[str] = Counter()
     for row in FIXTURE.read_text().splitlines():
@@ -80,7 +80,7 @@ def test_a_declared_graph_runs_locally_and_releases_the_recorded_output() -> Non
     lines, expected = scenario()
     released: list[Any] = []
     with LocalRelay.start(word_count) as run:
-        run.on_sink("totals", released.append)
+        run.on_output("totals", released.append)
         for line in lines:
             run.feed("lines", line)
         run.run_until_idle(20_000)
@@ -117,7 +117,7 @@ class Defaults:
 
 @relay("local_default_codecs_python")
 def default_codecs(c: Channels) -> None:
-    c.input("in").into(Defaults).sink("out")
+    c.input("in").into(Defaults).output("out")
 
 
 calls: list[str] = []
@@ -129,17 +129,17 @@ def echoless(tick: str) -> str:
     return f"got {tick}"
 
 
-def test_a_sinkless_short_form_whose_run_returns_a_value_runs_it_once() -> None:
+def test_a_short_form_with_no_output_whose_run_returns_a_value_runs_it_once() -> None:
     with LocalRelay.start(echoless) as run:
         run.feed("ticks", "a")
         run.run_until_idle(5_000)
     assert calls == ["a"], "a value with nowhere to go is left alone, never retried"
 
 
-def test_an_undeclared_entry_reads_json_and_an_undeclared_sink_follows_the_value() -> None:
+def test_an_undeclared_entry_reads_json_and_an_undeclared_output_follows_the_value() -> None:
     released: list[bytes] = []
     with LocalRelay.start(default_codecs) as run:
-        run.on_sink("out", lambda output: released.append(bytes(output.payload)))
+        run.on_output("out", lambda output: released.append(bytes(output.payload)))
         run.feed("in", '{"a":1}')
         run.run_until_idle(5_000)
     assert released == [b"a is 1", b'{"a":1}']

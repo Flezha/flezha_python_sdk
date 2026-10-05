@@ -25,7 +25,7 @@ def agent(c: flezha.Channels) -> None:
     (
         c.input("turn", codec="text")  # entry 1: `flz relay call`
         .into(Reply)
-        .sink("answer")  # to whoever called, and whoever listens
+        .output("answer")  # to whoever called, and whoever listens
     )
     (
         c.input("message")  # entry 2: the gateway, into the same Reply

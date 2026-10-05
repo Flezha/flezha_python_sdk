@@ -103,14 +103,14 @@ def test_a_call_to_a_named_instance_records_its_target_and_create_true() -> None
     ]
 
 
-def test_a_call_on_an_entry_channel_is_refused_as_a_sink_on_one_is() -> None:
+def test_a_call_on_an_entry_channel_is_refused_as_an_output_on_one_is() -> None:
     @flezha.relay("entry_call")
     def entry_call(c: flezha.Channels) -> None:
         c.input("in").call("pricing", deadline_ms=500)
 
     with pytest.raises(FlezhaError) as refused:
         _ = entry_call.spec
-    assert refused.value.code == "topology.sink_on_entry"
+    assert refused.value.code == "topology.output_on_entry"
 
 
 def test_every_envelope_case_of_the_shared_fixture_decodes_to_its_expected_fields() -> None:

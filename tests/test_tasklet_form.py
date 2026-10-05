@@ -266,7 +266,7 @@ def test_a_tasklet_that_emits_nothing_emits_nothing(fake_core: FakeCore) -> None
 
 
 def test_a_function_short_form_emits_its_value_and_nothing_for_none(fake_core: FakeCore) -> None:
-    @flezha.relay(id="maybe", sink="out", codec="text")
+    @flezha.relay(id="maybe", output="out", codec="text")
     def maybe(value: str) -> str | None:
         return None if value == "skip" else value
 
@@ -279,7 +279,7 @@ def test_a_function_short_form_emits_its_value_and_nothing_for_none(fake_core: F
 
 
 def test_a_class_short_form_emits_through_its_context(fake_core: FakeCore) -> None:
-    @flezha.relay(id="store_input", sink="sink", codec="text")
+    @flezha.relay(id="store_input", output="sink", codec="text")
     class StoreInput:
         def run(self, value: str, ctx: flezha.Ctx[dict[str, list[str]], str]) -> None:
             ctx.change(value)
@@ -308,10 +308,10 @@ class BareContext:
 
 
 @pytest.mark.parametrize("body", [Drain, BareContext])
-def test_a_class_short_form_whose_context_names_no_output_refuses_a_sink(body: type) -> None:
+def test_a_class_short_form_whose_context_names_no_output_refuses_an_output(body: type) -> None:
     with pytest.raises(FlezhaError) as caught:
-        flezha.relay(id="drain", sink="out")(body)
-    assert caught.value.code == "topology.sink_without_output"
+        flezha.relay(id="drain", output="out")(body)
+    assert caught.value.code == "topology.output_without_type"
 
 
 # -- the clock follows from what the class writes -----------------------------------
@@ -386,7 +386,7 @@ def test_seconds_reach_the_record_in_milliseconds() -> None:
 
     @flezha.relay("ttl_op")
     def keyed(c: flezha.Channels) -> None:
-        c.input("in").key_by(str).into(ttl).sink()
+        c.input("in").key_by(str).into(ttl).output()
 
     assert (_record(keyed)["cell_mode"], _record(keyed)["idle_ttl_ms"]) == ("dynamic", 60_000)
     assert "idle_ttl_ms" not in _record(solo(flezha.tasklet(Upcase, name="none")))

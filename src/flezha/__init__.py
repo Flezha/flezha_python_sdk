@@ -17,7 +17,7 @@ idiomatic errors.
 
     @flezha.relay("echo")
     def echo_relay(c: flezha.Channels) -> None:
-        c.input("input").into(Echo).sink("out")
+        c.input("input").into(Echo).output("out")
 
     flezha.create_runner("default").register_factory(echo_relay).run()
 """
@@ -31,7 +31,7 @@ from .codec import ChannelCodec, TypeCodec, ValueCodec
 from .control import Control, StartResult
 from .ctx import Ctx, SpawnHandle, SpawnResult
 from .errors import DeterminismWarning, FlezhaError, NonRetryableError
-from .local import LocalRelay, SinkOutput
+from .local import LocalRelay, LocalOutput
 from .logger import configure as configure_logging
 from .relay import Durable, Relay, Run, relay
 from .runner import ACTIVATION_SCHEMA_VERSION, Runner, create_runner
@@ -61,7 +61,7 @@ __all__ = [
     "create_runner",
     "Runner",
     "LocalRelay",
-    "SinkOutput",
+    "LocalOutput",
     "configure_logging",
     # codec
     "ChannelCodec",

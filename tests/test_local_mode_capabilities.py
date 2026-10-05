@@ -8,7 +8,7 @@ effectively-once, correction, partitioning, steps, liveness, restarts. Local
 mode refuses them by name rather than approximating them.
 
 What each test can assert is what a run with no controller can see. A durable
-write reaches a null sink, a parked payload has nowhere to park, and a partition
+write reaches a null output, a parked payload has nowhere to park, and a partition
 member's key range arrives with ``AddRelay``, so the assertions here are the
 output side of each capability, which is the half the language layer produces.
 """
@@ -21,7 +21,7 @@ from collections.abc import Callable, Iterable
 import pytest
 
 import app
-from flezha import FlezhaError, LocalRelay, Relay, SinkOutput
+from flezha import FlezhaError, LocalRelay, Relay, LocalOutput
 
 fixtures = app.module("fixtures")
 fixtures_state = app.module("fixtures_state")
@@ -39,16 +39,16 @@ def release(
     sink: str,
     inputs: Iterable[str],
     budget_ms: int = 20_000,
-) -> list[SinkOutput]:
-    """Run one class over ``inputs`` on ``channel``, and answer what ``sink`` released.
+) -> list[LocalOutput]:
+    """Run one class over ``inputs`` on ``channel``, and answer what ``output`` released.
 
     Read after the run is closed, not at the moment it settles: a released value
     can still be queued for the drain when the graph has nothing left to do, and
     closing is what hands the last of them over.
     """
-    released: list[SinkOutput] = []
+    released: list[LocalOutput] = []
     with LocalRelay.start(relay) as run:
-        run.on_sink(sink, released.append)
+        run.on_output(sink, released.append)
         for value in inputs:
             run.feed(channel, value)
         run.run_until_idle(budget_ms)
@@ -56,7 +56,7 @@ def release(
 
 
 def per_cell(
-    released: Iterable[SinkOutput], key: Callable[[SinkOutput], str]
+    released: Iterable[LocalOutput], key: Callable[[LocalOutput], str]
 ) -> dict[str, list[str]]:
     """What each key released, in that key's own order.
 
@@ -93,7 +93,7 @@ def test_shorthand_a_short_form_is_built_and_run_with_no_controller() -> None:
     )
 
 
-def test_keyed_channels_a_keyed_sink_stamps_the_key_the_class_resolved() -> None:
+def test_keyed_channels_a_keyed_output_stamps_the_key_the_class_resolved() -> None:
     # `partition_pass` is the manifest's only keyed-channel class. Partitioning
     # itself is the controller's (a member's key-group range arrives with
     # `AddRelay`), so what is asserted here is the half the language layer
@@ -114,9 +114,9 @@ def test_keyed_channels_a_keyed_sink_stamps_the_key_the_class_resolved() -> None
 
 
 def test_dynamic_cell_the_declared_filter_runs_before_keying_and_nothing_else_is_lost() -> None:
-    # The class's sink is not keyed, so a released value carries no cell stamp
+    # The class's output is not keyed, so a released value carries no cell stamp
     # and the per-key minting is not visible on this channel. It is asserted
-    # above, on `partition_pass`, whose tasklet is dynamic too and whose sink
+    # above, on `partition_pass`, whose tasklet is dynamic too and whose output
     # IS keyed. What this class shows that that one does not is the declared
     # filter: a value it rejects answers no key, so the core is never asked to
     # mint a Cell for it.
@@ -127,7 +127,7 @@ def test_dynamic_cell_the_declared_filter_runs_before_keying_and_nothing_else_is
         ["a:1", "b:1", "drop", "a:2"],
     )
 
-    # The sink is unkeyed, so a release carries no key stamp to group by; the
+    # The output is unkeyed, so a release carries no key stamp to group by; the
     # value's own prefix is what the declaration keyed it on.
     assert per_cell(released, lambda output: prefix(output.payload.decode())) == {
         "a": ["a:1", "a:2"],

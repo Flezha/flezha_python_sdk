@@ -98,7 +98,7 @@ def main() -> None:
 
 def local_sends(runner: flezha.Runner, script: str) -> None:
     """Each send of the drill once the test says go, by creating the file
-    ``when`` names: the test first proves the relay's sink is live, which a
+    ``when`` names: the test first proves the relay's output is live, which a
     send made at bind would race."""
     for send in json.loads(script):
         relay = send["relay"]

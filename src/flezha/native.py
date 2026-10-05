@@ -156,7 +156,7 @@ class Core:
         self._call("local_start", factory_id, relay_id)
 
     def local_on_sink(self, channel: str) -> None:
-        """Queue a declared sink for :meth:`local_next_output`."""
+        """Queue a declared output for :meth:`local_next_output`."""
         self._call("local_on_sink", channel)
 
     def local_feed(self, channel: str, payload: bytes) -> None:
@@ -164,7 +164,7 @@ class Core:
         self._call("local_feed", channel, payload)
 
     def local_next_output(self, timeout_ms: int) -> Any:
-        """The next value a sink released, or ``None`` on timeout."""
+        """The next value an output released, or ``None`` on timeout."""
         return self._call("local_next_output", timeout_ms)
 
     def local_run_until_idle(self, timeout_ms: int) -> None:

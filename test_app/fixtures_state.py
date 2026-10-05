@@ -50,7 +50,7 @@ tier_store = flezha.tasklet(TierStore, name="tier_store_tasklet")
 def bench_keyed_nopersist_relay(c: flezha.Channels) -> None:
     """Per-cell persistence off: the heap-only posture the bench isolates
     against the durable one."""
-    c.input("input", codec="text").on_full("drop_nothing").into(tier_store).keyed().sink("sink")
+    c.input("input", codec="text").on_full("drop_nothing").into(tier_store).keyed().output("sink")
 
 
 # -- store_input / stateful_counter / coalescing_counter / persistence_off ---
@@ -76,7 +76,7 @@ store_input = flezha.tasklet(StoreInput, name="store_input_tasklet")
 
 @flezha.relay("store_input")
 def store_input_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(store_input).sink("sink")
+    c.input("input", codec="text").into(store_input).output("sink")
 
 
 @flezha.tasklet(name="counter_entry_tasklet")
@@ -120,7 +120,7 @@ def persistence_off_relay(c: flezha.Channels) -> None:
 # -- sleeping_counter --------------------------------------------------------
 #
 # A flow relay that sleeps when idle: `key:delta` inputs fold into one running
-# total per key, and every input emits `key=total` on the `totals` sink. The
+# total per key, and every input emits `key=total` on the `totals` output. The
 # sleep e2e reads the total after a wake to prove the Cell came back with the
 # state it slept with.
 
@@ -143,7 +143,7 @@ sleeping_counter = flezha.tasklet(SleepingCounter, name="sleeping_counter_taskle
 
 @flezha.relay("sleeping_counter", durable=FIXTURE_DURABLE)
 def sleeping_counter_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").key_by(prefix).into(sleeping_counter).sink("totals")
+    c.input("input", codec="text").key_by(prefix).into(sleeping_counter).output("totals")
 
 
 @flezha.tasklet(name="tick_entry_tasklet")
@@ -209,7 +209,7 @@ resume_probe = flezha.tasklet(ResumeProbe, name="resume_probe_tasklet")
 
 @flezha.relay("resume_probe")
 def resume_probe_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(resume_probe).sink("total")
+    c.input("input", codec="text").into(resume_probe).output("total")
 
 
 @flezha.relay("bench_keyed")
@@ -218,7 +218,7 @@ def bench_keyed_relay(c: flezha.Channels) -> None:
     per-Cell persistence on, so the bench can isolate that cost."""
     c.input("input", codec="text").on_full("drop_nothing").into(
         tier_store, "tier_store_tasklet"
-    ).keyed().sink("sink")
+    ).keyed().output("sink")
 
 
 # -- schema_evolution_v1 / schema_evolution_v2 -------------------------------
@@ -285,12 +285,12 @@ evolving_cart_v2 = flezha.tasklet(
 
 @flezha.relay("schema_evolution_v1")
 def schema_evolution_v1_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(evolving_cart_v1).sink("total")
+    c.input("input", codec="text").into(evolving_cart_v1).output("total")
 
 
 @flezha.relay("schema_evolution_v2")
 def schema_evolution_v2_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(evolving_cart_v2).sink("total")
+    c.input("input", codec="text").into(evolving_cart_v2).output("total")
 
 
 # -- tier_store / checkpoint_store / checkpoint_batched_store / bench_checkpoint
@@ -307,7 +307,7 @@ def tier_store_relay(c: flezha.Channels) -> None:
     """
     c.input("input", codec="text").on_full("drop_nothing").retry_backoff_ms(300).into(
         tier_store, "tier_store_tasklet"
-    ).keyed().sink("sink")
+    ).keyed().output("sink")
 
 
 @flezha.relay("remote_tier_store", run={"flow": {"exactly": "effectively_once"}}, durable="remote")
@@ -357,7 +357,7 @@ tier_tally = flezha.tasklet(TierTally, name="tier_tally")
 def tier_chain_relay(c: flezha.Channels) -> None:
     c.input("input", codec="text").on_full("drop_nothing").into(tier_pass).key_by(prefix).retry_max(
         1_000
-    ).into(tier_tally).keyed().sink("sink")
+    ).into(tier_tally).keyed().output("sink")
 
 
 class CheckpointStore(KeyedUpsert):
@@ -377,7 +377,7 @@ checkpoint_store = flezha.tasklet(CheckpointStore, name="checkpoint_store_taskle
     "checkpoint_store", run={"flow": {"exactly": {"effectively_once": {"ack": "checkpoint"}}}}
 )
 def checkpoint_store_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(checkpoint_store).keyed().sink("sink")
+    c.input("input", codec="text").into(checkpoint_store).keyed().output("sink")
 
 
 @flezha.relay(
@@ -400,9 +400,9 @@ def checkpoint_batched_relay(c: flezha.Channels) -> None:
     drives the close itself — with ``commit:`` for the batch case, and with the
     delay alone for the quiet-Cell case.
     """
-    c.input("input", codec="text").into(checkpoint_store, "checkpoint_store_tasklet").keyed().sink(
-        "sink"
-    )
+    c.input("input", codec="text").into(
+        checkpoint_store, "checkpoint_store_tasklet"
+    ).keyed().output("sink")
 
 
 class BenchCheckpoint(KeyedUpsert):
@@ -426,6 +426,6 @@ def _bench_checkpoint() -> dict[str, Any]:
 
 @flezha.relay("bench_checkpoint", run=_bench_checkpoint())
 def bench_checkpoint_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").on_full("drop_nothing").into(bench_checkpoint).keyed().sink(
+    c.input("input", codec="text").on_full("drop_nothing").into(bench_checkpoint).keyed().output(
         "sink"
     )

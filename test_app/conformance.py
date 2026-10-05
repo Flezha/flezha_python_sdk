@@ -170,8 +170,8 @@ class Interpreter:
             return edge.retry_max(int(arg))
         if verb == "on_full":
             return edge.on_full(arg)
-        if verb == "sink":
-            return edge.sink(arg) if arg else edge.sink()
+        if verb == "output":
+            return edge.output(arg) if arg else edge.output()
         if verb == "into":
             # The result is that tasklet's output channel, addressed by role.
             self._handles[arg] = edge.into(self._tasklet(arg))
@@ -377,7 +377,7 @@ def declare_shorthand(declaration: dict[str, Any], settings: dict[str, Any]) -> 
             return value
 
     return flezha.relay(
-        id=declaration["id"], sink=declaration["sink"], input=declaration["input"], **settings
+        id=declaration["id"], output=declaration["sink"], input=declaration["input"], **settings
     )(body)
 
 

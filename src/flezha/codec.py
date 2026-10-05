@@ -24,7 +24,7 @@ Field evolution is additive: a body is decoded into the fields the class
 declares *now*, so a field added with a default takes its default when an older
 record does not carry it, and a field since removed is ignored.
 
-The payload formats a channel names on ``input`` and ``sink`` are here too, as
+The payload formats a channel names on ``input`` and ``output`` are here too, as
 :data:`ChannelCodec`.
 """
 
@@ -115,7 +115,7 @@ def decode(body: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 ChannelCodec = Literal["bytes", "text", "json", "msgpack"]
-"""A payload format a channel names on ``input`` and ``sink``.
+"""A payload format a channel names on ``input`` and ``output``.
 
 A payload between two tasklets names none: it stays in the MessagePack above.
 """
@@ -138,7 +138,7 @@ def channel_decoder(codec: ChannelCodec | None) -> Callable[[Any], Any]:
 
 
 def channel_encoder(codec: ChannelCodec | None, channel: ChannelSpec) -> Callable[[Any], bytes]:
-    """How ``sink`` writes a channel's payload: the named codec, or
+    """How ``output`` writes a channel's payload: the named codec, or
     :func:`plain_payload` when the channel names none."""
     if codec == "msgpack":
         return encode
@@ -158,7 +158,7 @@ def channel_encoder(codec: ChannelCodec | None, channel: ChannelSpec) -> Callabl
 def plain_payload(value: Any, owner: str) -> bytes:
     """Bytes as they are, a string as UTF-8 and anything else as JSON.
 
-    What a sink naming no codec sends, and what a steps completion carries.
+    What an output naming no codec sends, and what a steps completion carries.
     ``owner`` is the channel or tasklet a refusal names.
     """
     if isinstance(value, _BYTES):

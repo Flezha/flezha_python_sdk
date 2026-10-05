@@ -39,7 +39,7 @@ kept = flezha.tasklet(Kept, name="kept")
 
 @flezha.relay("kept_relay")
 def kept_relay(c: flezha.Channels) -> None:
-    c.input("input").into(kept).sink("out")
+    c.input("input").into(kept).output("out")
 
 
 def _activation(kind: str, relay: str, **fields: Any) -> dict[str, Any]:

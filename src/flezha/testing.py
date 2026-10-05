@@ -72,12 +72,12 @@ class TaskletTestHarness(Generic[S]):
         self._cell_key = cell_key
         self._relay = relay
         # The real channel builder, not a hand-written spec: one entry channel
-        # into the tasklet and one plugin sink so `ctx.emit` has somewhere to
+        # into the tasklet and one plugin output so `ctx.emit` has somewhere to
         # go — a tasklet under test emits to be observed, not to be routed.
-        # Driving the builder means the harness proves it too. The sink is
+        # Driving the builder means the harness proves it too. The output is
         # MessagePack so `outputs` reports exactly the value a handler emitted.
         channels = Channels("<harness>")
-        channels.input("in").into(task).sink(codec="msgpack")
+        channels.input("in").into(task).output(codec="msgpack")
         self._spec = ClassSpec(
             factory_id="<harness>",
             tasklets=channels.tasklets,

@@ -144,7 +144,7 @@ def test_a_filtered_input_is_consumed_and_reaches_no_handler(fake_core: FakeCore
 
     @flezha.relay("filtered")
     def filtered(c: flezha.Channels) -> None:
-        c.input("in").filter(lambda value: len(value) > 2).into(OnlyLong).sink()
+        c.input("in").filter(lambda value: len(value) > 2).into(OnlyLong).output()
 
     deps = deps_for(filtered, fake_core)
 
@@ -164,7 +164,7 @@ def test_a_key_request_answers_one_entry_per_payload(fake_core: FakeCore) -> Non
 
     @flezha.relay("routed_op")
     def routed_op(c: flezha.Channels) -> None:
-        c.input("in").key_by(lambda value: value["k"]).into(Routed).sink()
+        c.input("in").key_by(lambda value: value["k"]).into(Routed).output()
 
     deps = deps_for(routed_op, fake_core)
 
@@ -182,10 +182,10 @@ def test_a_key_request_answers_the_keyed_consumer_behind_an_unkeyed_one(
     @flezha.relay("split_keyed")
     def split_keyed(c: flezha.Channels) -> None:
         entry = c.input("in", codec="text")
-        entry.filter(lambda value: value == "drop").into(echo).sink("dropped")
+        entry.filter(lambda value: value == "drop").into(echo).output("dropped")
         entry.filter(lambda value: value != "drop").key_by(fixture_support.prefix).into(
             fixtures.transform_label
-        ).sink("out")
+        ).output("out")
 
     crossing = key_request(11, "split_keyed", b"a:1", b"drop")
     prepared = answered(crossing, deps_for(split_keyed, fake_core))["prepared"]
@@ -205,7 +205,7 @@ def test_a_per_payload_refusal_does_not_fail_the_whole_crossing(fake_core: FakeC
 
     @flezha.relay("picky_keys")
     def picky_keys(c: flezha.Channels) -> None:
-        c.input("in").key_by(key_of).into(Routed).sink()
+        c.input("in").key_by(key_of).into(Routed).output()
 
     deps = deps_for(picky_keys, fake_core)
 
@@ -293,7 +293,7 @@ def test_a_keyed_channel_with_no_key_is_refused_naming_it(fake_core: FakeCore) -
 
     @flezha.relay("keyed_sink")
     def keyed_sink(c: flezha.Channels) -> None:
-        c.input("in").into(Keyless).keyed().sink("out")
+        c.input("in").into(Keyless).keyed().output("out")
 
     deps = deps_for(keyed_sink, fake_core)
     (effect,) = answered(work_activation(18, "x", factory="keyed_sink"), deps)["effects"]
@@ -317,12 +317,12 @@ class Finisher:
 
 @flezha.relay("finishing_steps", run="steps")
 def _finishing_steps(c: flezha.Channels) -> None:
-    c.input("in").into(Finisher).sink()
+    c.input("in").into(Finisher).output()
 
 
 @flezha.relay("finishing_flow")
 def _finishing_flow(c: flezha.Channels) -> None:
-    c.input("in").into(Finisher).sink()
+    c.input("in").into(Finisher).output()
 
 
 @pytest.mark.parametrize(
@@ -487,7 +487,7 @@ def _steps_graph(c: flezha.Channels) -> None:
     edge = c.input("in").into(StepsProducer).named("handoff")
     edge.map(lambda value: value + 1).into(StepsB)
     edge.into(StepsC)
-    edge.sink()
+    edge.output()
 
 
 @flezha.relay("steps_emit", run="steps")
@@ -645,7 +645,7 @@ def test_an_entry_edge_transform_that_raises_makes_the_message_unreadable(
 
     @flezha.relay("strict_entry")
     def strict_entry(c: flezha.Channels) -> None:
-        c.input("in").map(strict).into(Record).sink()
+        c.input("in").map(strict).into(Record).output()
 
     deps = deps_for(strict_entry, fake_core)
     effects = answered(
@@ -677,7 +677,7 @@ def test_an_unreadable_message_is_told_apart_from_a_handler_failure(
 
 # -- merge and flat_map ----------------------------------------------------------
 #
-# Driven over the test app's own `merged_input` and `transform_chain`. Both sink
+# Driven over the test app's own `merged_input` and `transform_chain`. Both output
 # keyed, so a work activation names the cell it is handed to.
 
 
@@ -719,7 +719,7 @@ def _merged_edge(c: flezha.Channels) -> None:
     quotes = c.input("quotes", codec="text").into(echo)
     c.merge().from_(ticks, fixtures.tagged("ticks")).from_(
         quotes, fixtures.tagged("quotes")
-    ).key_by(lambda value: value["symbol"]).into(fixtures.MergeLabel).sink("merged")
+    ).key_by(lambda value: value["symbol"]).into(fixtures.MergeLabel).output("merged")
 
 
 def test_an_inter_tasklet_merge_source_is_mapped_and_keyed_as_it_is_released(
@@ -767,7 +767,7 @@ def test_a_cell_handed_a_fanned_payload_runs_only_the_values_keyed_to_it(
 def _fanned_static(c: flezha.Channels) -> None:
     c.input("in", codec="text").flat_map(lambda line: line.split(",")).into(
         fixtures.static_entry
-    ).sink()
+    ).output()
 
 
 def test_a_fan_into_a_static_consumer_runs_each_value_only_where_its_router_names(

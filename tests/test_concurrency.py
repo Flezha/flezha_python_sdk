@@ -87,7 +87,7 @@ def test_blocked_handlers_buy_threads_and_the_grown_ones_retire() -> None:
 
     @flezha.relay("blocking")
     def blocking(c: flezha.Channels) -> None:
-        c.input("in").into(Blocks).sink()
+        c.input("in").into(Blocks).output()
 
     core = FakeCore(
         [work_activation(i, "x", factory="blocking") for i in range(8)],
@@ -120,7 +120,7 @@ def test_the_supervisor_stops_growing_at_the_ceiling() -> None:
 
     @flezha.relay("capped")
     def capped(c: flezha.Channels) -> None:
-        c.input("in").into(Blocks).sink()
+        c.input("in").into(Blocks).output()
 
     core = FakeCore(
         [work_activation(i, "x", factory="capped") for i in range(20)],
@@ -254,7 +254,7 @@ def test_an_async_handler_is_driven_under_either_executor(kind: str) -> None:
 
     @flezha.relay("async_op")
     def async_op(c: flezha.Channels) -> None:
-        c.input("in").into(Slow).sink()
+        c.input("in").into(Slow).output()
 
     core = FakeCore([work_activation(i, f"v{i}", factory="async_op") for i in range(4)])
     deps = deps_for(async_op, core)
@@ -284,7 +284,7 @@ def test_a_drain_has_a_time_limit_and_says_what_it_abandoned(
 
     @flezha.relay("wedge")
     def wedge(c: flezha.Channels) -> None:
-        c.input("in").into(Wedged).sink()
+        c.input("in").into(Wedged).output()
 
     core = FakeCore([work_activation(1, "x", factory="wedge")])
     deps = deps_for(wedge, core)
@@ -362,5 +362,5 @@ def _assert_releases_the_gil(blocking_call: Any) -> None:
 
 
 def _payload_of(result: dict[str, Any]) -> Any:
-    # The sink names no codec, so a string output is its UTF-8 bytes.
+    # The output names no codec, so a string output is its UTF-8 bytes.
     return bytes(result["effects"][0]["outputs"][0]["payload"]).decode()

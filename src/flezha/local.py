@@ -27,15 +27,15 @@ from .executor import build as build_executor
 from .native import Core
 from .relay import Relay
 
-__all__ = ["LocalRelay", "SinkOutput"]
+__all__ = ["LocalRelay", "LocalOutput"]
 
 #: Bounded so a stopped run's drain thread leaves promptly.
 _OUTPUT_POLL_MS = 100
 
 
 @dataclass(slots=True)
-class SinkOutput:
-    """One value a graph released on a declared sink."""
+class LocalOutput:
+    """One value a graph released on a declared output."""
 
     channel: str
     payload: bytes
@@ -51,10 +51,10 @@ class LocalRelay:
     def __init__(self, core: Core, executor: Any) -> None:
         self._core = core
         self._executor = executor
-        self._sinks: dict[str, Callable[[SinkOutput], None]] = {}
+        self._sinks: dict[str, Callable[[LocalOutput], None]] = {}
         self._closed = threading.Event()
         self._drain = threading.Thread(
-            target=self._drain_outputs, name="flz-local-sink", daemon=True
+            target=self._drain_outputs, name="flz-local-output", daemon=True
         )
         self._drain.start()
 
@@ -81,10 +81,10 @@ class LocalRelay:
             raise
         return cls(core, executor)
 
-    def on_sink(self, channel: str, callback: Callable[[SinkOutput], None]) -> Self:
+    def on_output(self, channel: str, callback: Callable[[LocalOutput], None]) -> Self:
         """Deliver every value released on ``channel`` to ``callback``.
 
-        A sink channel takes the producing tasklet's name unless the
+        An output channel takes the producing tasklet's name unless the
         declaration named it.
         """
         # Registered with the core first: a channel the declaration does not
@@ -152,7 +152,7 @@ class LocalRelay:
 
     def _deliver(self, output: dict[str, Any]) -> None:
         if output.get("target") != "plugin":
-            # The core queues what a sink released and nothing else; an edge
+            # The core queues what an output released and nothing else; an edge
             # output is an in-process mailbox push that never leaves.
             raise RuntimeError(f"local mode released a {output.get('target')} output")
         channel = str(output["plugin_channel"])
@@ -160,4 +160,4 @@ class LocalRelay:
         if callback is None:
             return
         payload = bytes(output["payload"])
-        callback(SinkOutput(channel, payload, {k: v for k, v in output.get("metadata", ())}))
+        callback(LocalOutput(channel, payload, {k: v for k, v in output.get("metadata", ())}))

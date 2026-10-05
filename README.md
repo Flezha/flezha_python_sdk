@@ -26,7 +26,7 @@ class Echo:
 
 @flezha.relay("echo")
 def echo_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(Echo).sink("out")
+    c.input("input", codec="text").into(Echo).output("out")
 
 
 flezha.create_runner("default").register_factory(echo_relay).run()
@@ -41,11 +41,11 @@ flezha.create_runner("default").register_factory(echo_relay).run()
   six hours), `max_duration_ms` and `description`. The
   core refuses a setting under a parent that does not carry it, naming both.
 - **Preview an output while it is produced.** `ctx.part(value)` sends a
-  listener a preview of the tasklet's output while `run` is still working; a
-  sink never sees it.
-- **Answer a caller, or call another relay.** A channel ends in one `sink` or
-  one `call(...)`. The first sink output an input causes answers the outside
-  caller of that input, and still reaches the sink's plugins and listeners.
+  listener a preview of the tasklet's output while `run` is still working; an
+  output never sees it.
+- **Answer a caller, or call another relay.** A channel ends in one `output` or
+  one `call(...)`. The first output an input causes answers the outside
+  caller of that input, and still reaches the output's plugins and listeners.
   `call("pricing", deadline_ms=500)` or
   `call(factory="agent", deadline_ms=60_000, create=False, channel="turn")`
   sends each value, after the chain's transforms and key, to another relay
@@ -78,10 +78,10 @@ flezha.create_runner("default").register_factory(echo_relay).run()
   activation decode all run in parallel in Rust.
 - **Typed end to end**, shipping `py.typed`: a wrong edge is a type-checker
   error before it is a registration error.
-- **A channel names its payload format.** `codec=` on `input` and `sink` takes
+- **A channel names its payload format.** `codec=` on `input` and `output` takes
   `"bytes"`, `"text"`, `"json"` or `"msgpack"`. With none, an entry reads JSON and
-  a sink sends bytes unchanged, a string as UTF-8 and anything else as JSON, so a
-  sink needs no codec for a string, bytes or a JSON value. An Elixir entry
+  an output sends bytes unchanged, a string as UTF-8 and anything else as JSON, so an
+  output needs no codec for a string, bytes or a JSON value. An Elixir entry
   declared with no decoder hands over the binary instead.
 - **Never `pickle`.** Durable state is MessagePack from author-declared
   dataclasses, Pydantic models or attrs classes.

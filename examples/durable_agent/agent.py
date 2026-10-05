@@ -176,7 +176,7 @@ def durable_agent(c: flezha.Channels) -> None:
     """
     c.input("prompts", codec="text").retry_max(4).retry_backoff_ms(250).key_by(
         lambda prompt: prompt.split("|", 1)[0]
-    ).into(agent).keyed().sink("answers")
+    ).into(agent).keyed().output("answers")
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +235,7 @@ def agent_session(c: flezha.Channels) -> None:
     crash resumes at the last committed turn rather than at the start. The
     message ``"done"`` ends the session with its goal and turn count.
     """
-    c.input("messages").into(session_turn).sink("session_events")
+    c.input("messages").into(session_turn).output("session_events")
 
 
 if __name__ == "__main__":

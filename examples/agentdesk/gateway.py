@@ -21,7 +21,9 @@ def gateway(c: flezha.Channels) -> None:
     # every request arrives on "http"; kept as a handle to split it
     http = c.input("http").map(Request.of)
     # route 1: GET .../events gets the session's stream
-    http.filter(lambda request: not request.sends()).into(Watch).keyed().sink()  # a stream, or 404
+    http.filter(lambda request: not request.sends()).into(
+        Watch
+    ).keyed().output()  # a stream, or 404
     # route 2: POST .../messages is checked against the user's budget
     verdicts = (
         http.filter(Request.sends)
@@ -31,7 +33,7 @@ def gateway(c: flezha.Channels) -> None:
     )
     # a verdict: the message plus its user's tokens today; used twice
     # use 1: answer the POST
-    verdicts.into(Admit).keyed().sink()  # 202, or 429 over the budget
+    verdicts.into(Admit).keyed().output()  # 202, or 429 over the budget
     # use 2: pass an admitted message on to the user's session
     (
         verdicts.filter(admitted)

@@ -26,7 +26,7 @@ class Other:
 
 @flezha.relay("other")
 def other_op(c: flezha.Channels) -> None:
-    c.input("in").into(Other).sink()
+    c.input("in").into(Other).output()
 
 
 def declared(r: Runner) -> list[str]:
@@ -346,7 +346,7 @@ def test_a_plugin_is_enabled_by_name_and_bound_and_unbound_by_relay(
 
     monkeypatch.setattr(core, "admin_call", admin_call)
     control = runner().start(core=core).control()
-    control.enable_plugin("writer", "relay_file_sink", opts={"path": "out.txt"})
+    control.enable_plugin("writer", "relay_file_output", opts={"path": "out.txt"})
     control.enable_plugin(
         "feed", "relay_websocket", single=True, relay_id="my_echo", hooks=[["on_output", {}]]
     )
@@ -358,7 +358,7 @@ def test_a_plugin_is_enabled_by_name_and_bound_and_unbound_by_relay(
     assert calls == [
         (
             "PluginManager.enable",
-            ["writer", {"provider": "relay_file_sink", "opts": {"path": "out.txt"}}],
+            ["writer", {"provider": "relay_file_output", "opts": {"path": "out.txt"}}],
         ),
         (
             "PluginManager.enable",
@@ -458,12 +458,12 @@ def test_one_call_turns_diagnostics_on() -> None:
         root.setLevel(logging.NOTSET)
 
 
-@flezha.relay(id="short_flow", sink="out", codec="text")
+@flezha.relay(id="short_flow", output="out", codec="text")
 def short_flow(value: str) -> str:
     return value
 
 
-@flezha.relay(id="short_steps", run="steps", sink="placed", codec="text")
+@flezha.relay(id="short_steps", run="steps", output="placed", codec="text")
 def short_steps(value: str) -> str:
     return value
 
@@ -489,7 +489,7 @@ def test_register_modules_collects_a_short_form(runner: Any) -> None:
 
 
 def test_a_short_form_collides_with_one_of_the_other_kind(runner: Any) -> None:
-    @flezha.relay(id="short_flow", run="steps", sink="placed")
+    @flezha.relay(id="short_flow", run="steps", output="placed")
     def twin(value: str) -> str:
         return value
 

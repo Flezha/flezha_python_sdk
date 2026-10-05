@@ -44,8 +44,8 @@ RESERVED_PREFIX = "flz."
 #: derives them at flush time from the effect record, so none ride on the frame;
 #: otherwise the frame is written straight to the wire and the stamps have
 #: nowhere else to come from.
-#: Byte-shape and condition both mirror the Java host, because a sink
-#: deduplicates on them and two SDKs disagreeing about the shape is a sink that
+#: Byte-shape and condition both mirror the Java host, because an output
+#: deduplicates on them and two SDKs disagreeing about the shape is an output that
 #: silently stops deduplicating.
 CELL_STAMP = "flz.cell"
 SEQ_STAMP = "flz.seq"
@@ -187,7 +187,7 @@ class Ctx(Generic[S, O_contra]):
         # Separate from the `stable_id` ordinal on purpose: one counts
         # identifiers a handler asked for, the other counts frames it produced,
         # and a handler that does one and not the other must not shift the
-        # sequence the sink deduplicates on.
+        # sequence the output deduplicates on.
         self._emit_ordinal = 0
         self._compensating = compensating
         self.cell_key = cell_key
@@ -261,15 +261,15 @@ class Ctx(Generic[S, O_contra]):
         It previews the tasklet's own output channel and is encoded as
         :meth:`emit` would encode ``value`` there. It never waits: a part that
         cannot leave at once is dropped, and a replayed input sends none. A
-        listener receives it, numbered from 0 within each attempt; a sink never
+        listener receives it, numbered from 0 within each attempt; an output never
         does, and nothing about it is durable. Raises
-        :class:`~flezha.errors.FlezhaError` coded ``part.no_sink`` when the
-        output channel does not end in a sink (a call end is not one),
+        :class:`~flezha.errors.FlezhaError` coded ``part.no_output`` when the
+        output channel does not end in an output (a call end is not one),
         and ``part.outside_invocation`` through a context kept past its
         invocation.
         """
         # The core previews the tasklet's first output channel and refuses one
-        # that ends in no sink, so a channel with no plugin end sends no bytes.
+        # that ends in no output, so a channel with no plugin end sends no bytes.
         channel = self._outgoing[0] if self._outgoing else None
         payload = (
             channel.sink_encode(value)
@@ -309,7 +309,7 @@ class Ctx(Generic[S, O_contra]):
         The rest of the iteration still runs and commits; the instance then
         ends instead of waiting for its next input, a flow instance once every
         Cell is idle. In a ``once`` steps relay it sets the result the pass
-        ends with. ``result`` is encoded as a sink naming no codec encodes a
+        ends with. ``result`` is encoded as an output naming no codec encodes a
         value: bytes as they are, a string as UTF-8 and anything else as JSON;
         ``None`` carries no result. A later call in the same invocation replaces
         an earlier one.
@@ -329,7 +329,7 @@ class Ctx(Generic[S, O_contra]):
         """Start a steps instance of ``factory_id`` with ``payload`` as its
         first message, and answer a :class:`SpawnHandle` at once.
 
-        ``payload`` is encoded as a sink naming no codec encodes a value, the
+        ``payload`` is encoded as an output naming no codec encodes a value, the
         rule :meth:`complete` applies: bytes as they are, a string as UTF-8 and
         anything else as JSON. It enters the instance's first entry channel and
         is decoded by that channel's codec, so a ``text`` entry reads a string
@@ -504,12 +504,12 @@ class Ctx(Generic[S, O_contra]):
     ) -> dict[str, Any]:
         """The plugin frame, serialized once from the value as emitted.
 
-        An edge's transforms belong to that edge, so they never reach the sink.
+        An edge's transforms belong to that edge, so they never reach the output.
         """
         if channel.keyed and key is None:
             raise FlezhaError("runtime.key_required_on_keyed_channel", {"channel": channel.name})
         resolved = None if key is None else str(key)
-        # `sink` sets the encoder with the sink, so a plugin channel has one.
+        # `output` sets the encoder with the output, so a plugin channel has one.
         assert channel.sink_encode is not None
         stamps = self._meta_list(metadata) + self._identity_stamps(channel, resolved)
         self._emit_ordinal += 1

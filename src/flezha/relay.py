@@ -7,7 +7,7 @@ builds one:
 
     @flezha.relay("echo")
     def echo(c: flezha.Channels) -> None:
-        c.input("input").into(echo_task).sink("out")
+        c.input("input").into(echo_task).output("out")
 
 A channels body takes one parameter, annotated :class:`~flezha.builder.Channels`
 or not at all. The class settings are keywords of the decorator: ``run`` (a
@@ -20,7 +20,7 @@ emitted, or a tasklet class, which emits through its context:
 
 .. code-block:: python
 
-    @flezha.relay(id="echo", sink="out", codec="text")
+    @flezha.relay(id="echo", output="out", codec="text")
     def echo(value: str) -> str:
         return value
 """
@@ -202,7 +202,7 @@ def relay(
     durable: Durable | None = None,
     max_duration_ms: int | None = None,
     description: str | None = None,
-    sink: str | None = None,
+    output: str | None = None,
     input: str | None = None,
     codec: _codec.ChannelCodec | None = None,
     **settings: Unpack[TaskletSettings],
@@ -218,7 +218,7 @@ def relay(
 
     Over a tasklet body this is the short form, with the same class settings:
     an entry channel named by ``input`` (``"input"`` when none is written) and
-    decoded by ``codec``, the tasklet, and the ``sink`` plugin channel when one
+    decoded by ``codec``, the tasklet, and the ``output`` plugin channel when one
     is written. ``settings`` are the tasklet's own declarations, as
     :func:`~flezha.tasklet.tasklet` takes them.
     """
@@ -240,11 +240,11 @@ def relay(
             raise FlezhaError("topology.missing_factory_id", {"relay": name})
         if not _declares_channels(declaration):
             return _short_form(
-                id, declaration, class_settings, settings, sink=sink, input=input, codec=codec
+                id, declaration, class_settings, settings, output=output, input=input, codec=codec
             )
         written = [
             key
-            for key, value in {"sink": sink, "input": input, "codec": codec}.items()
+            for key, value in {"output": output, "input": input, "codec": codec}.items()
             if value is not None
         ]
         written += list(settings)
@@ -264,26 +264,26 @@ def _short_form(
     class_settings: dict[str, Any],
     settings: TaskletSettings,
     *,
-    sink: str | None,
+    output: str | None,
     input: str | None,
     codec: _codec.ChannelCodec | None,
 ) -> Relay:
     """One tasklet body as a whole relay: its entry channel, the
     tasklet named after the factory id and declared with ``settings``, and
-    the sink when one is written."""
+    the output when one is written."""
     name = body.__name__
     if inspect.isclass(body) and hasattr(body, "run") and hasattr(body, "channels"):
         raise FlezhaError("topology.short_form_with_topology", {"factory_id": factory_id})
     generated = Tasklet(body, name=factory_id, **settings)
     returned = output_type(generated)
     # An unresolvable hint degrades to the raw annotation, where `None` is the string.
-    if sink is not None and (returned is None or returned is type(None) or returned == "None"):
-        raise FlezhaError("topology.sink_without_output", {"factory_id": factory_id})
+    if output is not None and (returned is None or returned is type(None) or returned == "None"):
+        raise FlezhaError("topology.output_without_type", {"factory_id": factory_id})
 
     def channels(c: Channels) -> None:
         edge = c.input(input or "input", codec=codec).into(generated)
-        if sink is not None:
-            edge.sink(sink)
+        if output is not None:
+            edge.output(output)
 
     channels.__name__ = name
     channels.__doc__ = generated.doc

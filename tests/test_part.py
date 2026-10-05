@@ -45,12 +45,12 @@ class Parts:
 
 @flezha.relay("part_flow")
 def _flow(c: flezha.Channels) -> None:
-    c.input("in").into(Parts).sink("answer")
+    c.input("in").into(Parts).output("answer")
 
 
 @flezha.relay("part_steps", run={"steps": {"each": "per_input"}})
 def _steps(c: flezha.Channels) -> None:
-    c.input("in").into(Parts).sink("answer")
+    c.input("in").into(Parts).output("answer")
 
 
 @pytest.fixture(autouse=True)
@@ -58,7 +58,7 @@ def _clear() -> None:
     SEEN.clear()
 
 
-def test_each_items_parts_carry_the_token_the_index_and_the_sink_encoding(
+def test_each_items_parts_carry_the_token_the_index_and_the_output_encoding(
     fake_core: FakeCore,
 ) -> None:
     _recording(fake_core, SEEN)
@@ -97,13 +97,13 @@ def test_a_per_input_steps_stage_sends_its_parts(fake_core: FakeCore) -> None:
 
 
 def test_a_refused_part_fails_the_invocation_as_any_raise_does(fake_core: FakeCore) -> None:
-    refusal = FlezhaError("part.no_sink", {"tasklet": "parts", "relay": "op", "channel": ""})
+    refusal = FlezhaError("part.no_output", {"tasklet": "parts", "relay": "op", "channel": ""})
     _recording(fake_core, SEEN, refusal)
     deps = deps_for(_flow, fake_core)
     (effect,) = answered(work_activation(7, 1, factory="part_flow"), deps)["effects"]
 
     assert effect["verdict"] == "retryable"
-    assert effect["message"].endswith("(part.no_sink)")
+    assert effect["message"].endswith("(part.no_output)")
     assert "outputs" not in effect
 
 
@@ -143,20 +143,20 @@ def _to_tasklet(c: flezha.Channels) -> None:
 
 @flezha.relay("part_local")
 def _local(c: flezha.Channels) -> None:
-    c.input("in").into(Parts).sink("answer")
+    c.input("in").into(Parts).output("answer")
 
 
 def test_a_local_run_drops_every_part_and_releases_the_output_alone() -> None:
     released: list[bytes] = []
     with flezha.LocalRelay.start(_local) as run:
-        run.on_sink("answer", lambda output: released.append(bytes(output.payload)))
+        run.on_output("answer", lambda output: released.append(bytes(output.payload)))
         run.feed("in", b"3")
         run.run_until_idle(10_000)
     assert released == [b"done:3"]
 
 
-def test_the_core_refuses_a_part_whose_channel_ends_in_no_sink() -> None:
+def test_the_core_refuses_a_part_whose_channel_ends_in_no_output() -> None:
     with flezha.LocalRelay.start(_to_tasklet) as run:
         run.feed("in", "p")
         run.run_until_idle(10_000)
-    assert SEEN == ["part.no_sink"]
+    assert SEEN == ["part.no_output"]

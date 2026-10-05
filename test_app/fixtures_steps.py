@@ -3,8 +3,8 @@
 same factory ids, tasklet names, channel names and output bytes.
 
 Entry payloads and plugin frames are UTF-8 text on the wire, as in the
-reference: every entry names the text codec, and a bare ``sink(name)`` sends a
-string as its UTF-8 bytes, as the reference's does, so only a sink that prefixes
+reference: every entry names the text codec, and a bare ``output(name)`` sends a
+string as its UTF-8 bytes, as the reference's does, so only an output that prefixes
 what it sends declares an encoder. An inter-tasklet hop between two Python
 tasklets carries MessagePack, and the core derives that channel's journal
 codec from the channel's kind, so no fixture declares one.
@@ -180,14 +180,14 @@ echo = stateless_step("echo", _echo)
 
 @flezha.relay("echo_steps", run="steps", durable=FIXTURE_DURABLE)
 def echo_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(echo).sink("out")
+    c.input("in", codec="text").into(echo).output("out")
 
 
 # -- typed_once_steps -----------------------------------------------------
 #
 # A `once` steps relay whose entry decodes JSON: its one pass runs over the
 # message it was spawned or sent with, prints what it read, emits it to the
-# `placed` sink and completes with it.
+# `placed` output and completes with it.
 
 
 def _once_placed(value: dict[str, Any], ctx: flezha.Ctx[None, Any]) -> None:
@@ -202,7 +202,7 @@ once_placed = stateless_step("once_placed", _once_placed)
 
 @flezha.relay("typed_once_steps", run="steps", durable=FIXTURE_DURABLE)
 def typed_once_steps(c: flezha.Channels) -> None:
-    c.input("order", codec="json").into(once_placed).sink("placed")
+    c.input("order", codec="json").into(once_placed).output("placed")
 
 
 # -- commit_block_steps / sync_durable_steps ---------------------------
@@ -239,14 +239,14 @@ sync_durable_steps = flezha.relay("sync_durable_steps", run="steps", durable="re
 # -- optout_commit_block -----------------------------------------------------
 #
 # The opt-out twin with a live mid-chain signal: task A's output also reaches a
-# plugin sink, so the crash-resume drill can observe the mid-run point without
-# durable state. A crash re-runs the chain from the top, so the sink sees A's
+# plugin output, so the crash-resume drill can observe the mid-run point without
+# durable state. A crash re-runs the chain from the top, so the output sees A's
 # marker once per run and no journal file exists.
 
 
 @flezha.relay("optout_commit_block", run="steps", durable=False)
 def optout_commit_block(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(commit_a).sink(
+    c.input("in", codec="text").into(commit_a).output(
         "mid", encode=lambda value: f"a-ran:{value}".encode()
     ).into(block_b)
 
@@ -266,7 +266,7 @@ tier_commit_a = durable_step(
 
 @flezha.relay("tier_commit_block_steps", run="steps", durable=FIXTURE_DURABLE)
 def tier_commit_block_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(tier_commit_a).keyed().sink("mid").into(block_b)
+    c.input("in", codec="text").into(tier_commit_a).keyed().output("mid").into(block_b)
 
 
 # -- saga_block_steps -----------------------------------------------------
@@ -335,7 +335,7 @@ def keyed_saga_steps(c: flezha.Channels) -> None:
 #
 # A steps output's identity. Task A commits durable state AND emits once,
 # keyed `k` with one metadata pair, on a keyed hybrid channel; the output rides
-# A's Cell record and reaches the sink once A's stage commits. Task B blocks, so
+# A's Cell record and reaches the output once A's stage commits. Task B blocks, so
 # a SIGKILL lands with A committed and B unfinished.
 
 outbox_a = durable_step(
@@ -346,7 +346,7 @@ outbox_a = durable_step(
 
 @flezha.relay("outbox_block_steps", run="steps", durable=FIXTURE_DURABLE)
 def outbox_block_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(outbox_a).keyed().sink(
+    c.input("in", codec="text").into(outbox_a).keyed().output(
         "mid", encode=lambda value: f"a-out:{value}".encode()
     ).into(block_b)
 
@@ -373,7 +373,7 @@ undo_outbox_c = failing_step("undo_outbox_c")
 
 @flezha.relay("undo_outbox_steps", run="steps", durable=FIXTURE_DURABLE)
 def undo_outbox_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(undo_outbox_a).sink(
+    c.input("in", codec="text").into(undo_outbox_a).output(
         "mid", encode=lambda value: f"out:{value}".encode()
     ).into(undo_outbox_c)
 
@@ -397,7 +397,7 @@ failed_stage = stateless_step("failed_stage", _fail_on_b)
 
 @flezha.relay("failed_stage_steps", run="steps", durable=FIXTURE_DURABLE)
 def failed_stage_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(key_split).into(failed_stage).sink(
+    c.input("in", codec="text").into(key_split).into(failed_stage).output(
         "mid", encode=lambda value: f"lost:{value}".encode()
     )
 
@@ -408,7 +408,7 @@ def failed_stage_steps(c: flezha.Channels) -> None:
 #              └─▶ BranchC
 #
 # The tasklet TREE. Every tasklet commits durable state and compensates by
-# emitting an undo record, so both tree behaviours are observable at one sink:
+# emitting an undo record, so both tree behaviours are observable at one output:
 #
 #   * crash-resume — BranchD BLOCKS, so the SIGKILL lands with A, B and C
 #     committed and only D's subtree outstanding. The respawn re-runs D alone,
@@ -419,14 +419,14 @@ def failed_stage_steps(c: flezha.Channels) -> None:
 #     branches before the root they share: `undo-c`, `undo-b`, `undo-a`.
 #
 # The inter-task channels are hybrid, which is what makes a non-leaf
-# tasklet's forward and undo output visible at the sink.
+# tasklet's forward and undo output visible at the output.
 
 BRANCH_FAIL_ENV = "FLEZHA_BRANCH_FAIL"
 
 branch_a = durable_step("branch_a", compensate=undoing("undo-a"))
 branch_b = durable_step("branch_b", compensate=undoing("undo-b"))
 
-# The sibling leaf: emits straight to the sink, and its undo does too.
+# The sibling leaf: emits straight to the output, and its undo does too.
 branch_c = durable_step(
     "branch_c",
     emit=lambda value, ctx: ctx.emit(f"c:{value}"),
@@ -452,13 +452,13 @@ def branch_steps(c: flezha.Channels) -> None:
     mid = (
         c.input("in", codec="text")
         .into(branch_a)
-        .sink("mid", encode=lambda value: f"a:{value}".encode())
+        .output("mid", encode=lambda value: f"a:{value}".encode())
     )
-    bmid = mid.into(branch_b).sink("bmid", encode=lambda value: f"b:{value}".encode())
+    bmid = mid.into(branch_b).output("bmid", encode=lambda value: f"b:{value}".encode())
     # Fail fast into the one tasklet that fails: the compensation scenario is
     # about the rollback order, not the ladder that precedes it.
-    bmid.retry_max(1).into(branch_d).sink("d_out")
-    mid.into(branch_c).sink("c_out")
+    bmid.retry_max(1).into(branch_d).output("d_out")
+    mid.into(branch_c).output("c_out")
 
 
 # -- diamond_steps --------------------------------------------------------
@@ -501,10 +501,10 @@ def diamond_steps(c: flezha.Channels) -> None:
     fan = (
         c.input("in", codec="text")
         .into(diam_a)
-        .sink("dfan", encode=lambda value: f"a:{value}".encode())
+        .output("dfan", encode=lambda value: f"a:{value}".encode())
     )
-    fan.into(diam_b1).named("db1").into(diam_b2).sink("db2").into(diam_join)
-    fan.into(diam_c).sink("dc").into(diam_join).sink("j_out")
+    fan.into(diam_b1).named("db1").into(diam_b2).output("db2").into(diam_join)
+    fan.into(diam_c).output("dc").into(diam_join).output("j_out")
 
 
 # -- retry_steps ----------------------------------------------------------
@@ -513,7 +513,7 @@ def diamond_steps(c: flezha.Channels) -> None:
 # hybrid channel, and compensates by emitting an undo record; `retry_flaky`
 # fails its first FLEZHA_STEPS_RETRY_FAILS attempts (none by default — each
 # scenario arms it) and then emits `attempt:<n>:<input>`. One armed failure is
-# absorbed by the ladder, so the run completes and the sink sees attempt 2;
+# absorbed by the ladder, so the run completes and the output sees attempt 2;
 # arming more failures than the ladder has attempts exhausts it, RA rolls back
 # and the run reports an error.
 
@@ -545,16 +545,16 @@ retry_flaky = stateless_step("retry_flaky", _flaky)
 
 @flezha.relay("retry_steps", run="steps", durable=FIXTURE_DURABLE)
 def retry_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(retry_a).sink(
+    c.input("in", codec="text").into(retry_a).output(
         "mid", encode=lambda value: f"res:{value}".encode()
-    ).into(retry_flaky).sink("out")
+    ).into(retry_flaky).output("out")
 
 
 # -- the durable loop family -------------------------------------------------
 #
 # chat_loop_steps is the durable-loop + suspension shape. One iteration per
 # inbox item: TURN commits the turn to Cell state, so a resumed iteration is
-# visible in the WAL, and REPLY emits the answer to the sink. Between turns the
+# visible in the WAL, and REPLY emits the answer to the output. Between turns the
 # loop finds an empty inbox at a committed boundary and PARKS — the instance is
 # evicted and rehydrated by the next message. The turn whose payload is the
 # crash turn BLOCKS while the release variable is unset, so a SIGKILL lands with
@@ -638,7 +638,7 @@ LOOP_KNOBS: dict[str, Any] = {
 
 
 def chat_chain(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(chat_turn).named("mid").into(chat_reply).sink("out")
+    c.input("in", codec="text").into(chat_turn).named("mid").into(chat_reply).output("out")
 
 
 chat_loop_steps = flezha.relay("chat_loop_steps", **LOOP_KNOBS)(chat_chain)
@@ -646,7 +646,7 @@ chat_loop_steps = flezha.relay("chat_loop_steps", **LOOP_KNOBS)(chat_chain)
 
 @flezha.relay("stateless_loop_steps", **LOOP_KNOBS)
 def stateless_loop_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(chat_reply).sink("out")
+    c.input("in", codec="text").into(chat_reply).output("out")
 
 
 # keyed_loop_steps is a durable per-input loop keyed on its entry edge by
@@ -671,19 +671,19 @@ keyed_loop_count = flezha.tasklet(KeyedLoopCount, name="keyed_loop_count")
 
 @flezha.relay("keyed_loop_steps", **LOOP_KNOBS)
 def keyed_loop_steps(c: flezha.Channels) -> None:
-    c.input("trades", codec="text").key_by(prefix).into(keyed_loop_count).sink(
+    c.input("trades", codec="text").key_by(prefix).into(keyed_loop_count).output(
         "keyed_loop_steps_out"
     )
 
 
 @flezha.relay("chat_rewind_steps", **LOOP_KNOBS)
 def chat_rewind_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(chat_turn).named("mid").into(chat_reply_undoable).sink("out")
+    c.input("in", codec="text").into(chat_turn).named("mid").into(chat_reply_undoable).output("out")
 
 
 # failing_turn_loop_steps: a session whose turn can fail after `note`
 # committed. `note` records each message and its undo moves the latest one to
-# `undone`; `answer` replies `re:<message>` on the sink `answer`, and fails on
+# `undone`; `answer` replies `re:<message>` on the output `answer`, and fails on
 # `boom` always, on `boom-once` while the release env is unset (the first
 # runner of a crash drill), and on `boom-until-healed` until a `heal` turn set
 # its state. failing_turn_undo_all_steps is the same under
@@ -733,7 +733,7 @@ answer = flezha.tasklet(Answer, name="answer")
 
 
 def failing_turn_chain(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(note).named("noted").into(answer).sink("answer")
+    c.input("in", codec="text").into(note).named("noted").into(answer).output("answer")
 
 
 failing_turn_loop_steps = flezha.relay(
@@ -764,13 +764,13 @@ blocking_reply = stateless_step("blocking_reply", _blocking_reply)
 
 @flezha.relay("reply_block_loop_steps", **LOOP_KNOBS)
 def reply_block_loop_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(chat_turn).named("mid").into(blocking_reply).sink("out")
+    c.input("in", codec="text").into(chat_turn).named("mid").into(blocking_reply).output("out")
 
 
 # -- the bench chains --------------------------------------------------------
 #
 # What `mix bench.steps --scenario chain` drives: K durable pass-through
-# steps in a line, the payload unchanged, so the sink receives the seed input
+# steps in a line, the payload unchanged, so the output receives the seed input
 # and the bench reads its own seq and send timestamp back. Each chain position
 # needs its own tasklet, so the sixteen are generated rather than written out;
 # the edge names follow the reference, which spells them from the step TYPE
@@ -785,7 +785,7 @@ def bench_chain(factory_id: str, steps: int, persistent: bool) -> flezha.Relay:
         edge = c.input("in", codec="text").into(BENCH_STEPS[0])
         for at in range(1, steps):
             edge = edge.named(f"edge_BenchS{at}").into(BENCH_STEPS[at])
-        edge.sink("out")
+        edge.output("out")
 
     return declare
 
@@ -837,7 +837,7 @@ bench_turn = flezha.tasklet(BenchTurn, name="bench_turn")
     max_duration_ms=24 * 3_600_000,
 )
 def bench_loop_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(bench_turn).named("mid").into(chat_reply).sink("out")
+    c.input("in", codec="text").into(bench_turn).named("mid").into(chat_reply).output("out")
 
 
 # -- timer_loop_steps -----------------------------------------------------
@@ -895,7 +895,7 @@ timer_tock = stateless_step("tock", _tock)
 
 @flezha.relay("timer_loop_steps", **LOOP_KNOBS)
 def timer_loop_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(timer_tick).named("ticked").into(timer_tock).sink("out")
+    c.input("in", codec="text").into(timer_tick).named("ticked").into(timer_tock).output("out")
 
 
 # -- event_timer_steps ----------------------------------------------------
@@ -930,7 +930,7 @@ event_tick = flezha.tasklet(EventTick, name="event_tick")
 
 @flezha.relay("event_timer_steps", **LOOP_KNOBS)
 def event_timer_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(event_tick).sink("out")
+    c.input("in", codec="text").into(event_tick).output("out")
 
 
 # -- static_cell_steps ----------------------------------------------------
@@ -955,17 +955,17 @@ static_cell_step = flezha.tasklet(
 
 @flezha.relay("static_cell_steps", **LOOP_KNOBS)
 def static_cell_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(static_cell_step).sink("out")
+    c.input("in", codec="text").into(static_cell_step).output("out")
 
 
-# call_turn: a durable per-input loop whose turn's sink output answers the
+# call_turn: a durable per-input loop whose turn's output answers the
 # outside call.
 call_turn = stateless_step("call_turn", lambda value, ctx: ctx.emit(value))
 
 
 @flezha.relay("call_turn", **LOOP_KNOBS)
 def call_turn_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(call_turn).sink()
+    c.input("in", codec="text").into(call_turn).output()
 
 
 #: Every steps relay this app registers, in the reference's order.

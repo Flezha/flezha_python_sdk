@@ -73,7 +73,7 @@ def _quote(value: str, ctx: flezha.Ctx[None, Any]) -> None:
 
 @flezha.relay("call_pricing")
 def call_pricing_relay(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(stateless_step("pricing_quote", _quote)).sink("quotes")
+    c.input("in", codec="text").into(stateless_step("pricing_quote", _quote)).output("quotes")
 
 
 class OrderPriced:
@@ -92,7 +92,7 @@ def call_orders_relay(c: flezha.Channels) -> None:
         .named("order")
         .call("pricing", **CALL, answer_channel="quotes")
         .into(order_priced)
-        .sink("priced")
+        .output("priced")
     )
 
 
@@ -110,7 +110,7 @@ async def _agent_turn(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     **{**LOOP_KNOBS, "run": {"steps": {"each": "per_input", "on_failure": "keep_progress"}}},
 )
 def call_agent_steps(c: flezha.Channels) -> None:
-    c.input("turn", codec="text").into(stateless_step("agent_turn", _agent_turn)).sink()
+    c.input("turn", codec="text").into(stateless_step("agent_turn", _agent_turn)).output()
 
 
 gateway_resume = stateless_step(
@@ -141,7 +141,7 @@ def call_gateway_relay(c: flezha.Channels) -> None:
         .key_by(session_of)
         .into(outcome_log("gateway_log"))
         .keyed()
-        .sink("gateway_out")
+        .output("gateway_out")
     )
 
 
@@ -150,7 +150,7 @@ def call_tool_session_steps(c: flezha.Channels) -> None:
     tool_turn = account("tool_turn")
     tool = c.input("turn", codec="text").into(tool_turn).named("tool")
     tool.filter(is_request).call("pricing", **CALL).into(tool_turn)
-    tool.filter(is_outcome).into(outcome_log("tool_log")).sink("tool_out")
+    tool.filter(is_outcome).into(outcome_log("tool_log")).output("tool_out")
 
 
 #: Every relay this module registers, in the reference's order.

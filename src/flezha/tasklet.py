@@ -571,7 +571,7 @@ def _refuse_unannotated(task: Tasklet[Any, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 #: The keywords of a relay's short form, which a tasklet never takes.
-_RELAY_KEYWORDS = ("run", "durable", "sink", "input", "codec")
+_RELAY_KEYWORDS = ("run", "durable", "output", "input", "codec")
 
 
 @overload

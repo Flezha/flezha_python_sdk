@@ -37,7 +37,7 @@ def order_executor(c: flezha.Channels) -> None:
     declaration is exactly two `into` calls on the placed channel, written as
     one.
 
-    Nothing ends on a sink: the last step ends the instance with its result,
+    Nothing ends on an output: the last step ends the instance with its result,
     which `flz relay info` shows. Nothing names a channel either, so each one
     carries the name of the step that produces it.
     """
