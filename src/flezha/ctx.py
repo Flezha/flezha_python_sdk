@@ -9,8 +9,10 @@ value in a list until the completion carries it.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import inspect
 import json
-from collections.abc import Generator, Iterable, Mapping
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
@@ -20,6 +22,7 @@ from .errors import FlezhaError, NonRetryableError
 from .identity import cell_identity, stable_id
 
 if TYPE_CHECKING:
+    from .codec import ValueCodec
     from .native import Core
 
 __all__ = [
@@ -367,6 +370,82 @@ class Ctx(Generic[S, O_contra]):
             ),
         )
 
+    def effect(self, name: str, fn: Callable[[], Any], codec: ValueCodec | None = None) -> Any:
+        """Run ``fn``, a call to anything outside the instance (a model, a tool,
+        a service), and keep its result: when this invocation runs again (a
+        crash re-run, a replay, a wake, a move), the call returns the kept result
+        and ``fn`` does not run.
+
+        The result is kept, synced on the controller, before this returns. A
+        crash between ``fn`` finishing and that point runs ``fn`` again, so give
+        the outside service :meth:`stable_id` as an idempotency key where it
+        takes one. ``name`` names the call: a non-empty string of at most 255
+        bytes, counted per invocation, so a call of another name added before
+        this one leaves its kept result where it was. One call runs at a time;
+        a concurrent one is refused.
+
+        The result is encoded as an output naming no codec encodes a value
+        (bytes as they are, a string as UTF-8, anything else as JSON) and read
+        back as JSON, else text, else bytes; ``codec`` (a
+        :class:`~flezha.codec.ValueCodec`) encodes and decodes it instead. The
+        call returns the result as it reads back, on a first run and a re-run
+        alike. For an ``async def`` function the call is awaitable.
+
+        An invocation that took no input-log offset (local mode, a relay with no
+        input log) runs ``fn`` each time and keeps nothing. ``fn``'s own error
+        propagates and nothing is kept. Raises :class:`~flezha.errors.FlezhaError`
+        coded ``effect.bad_name``, ``effect.nested``, ``effect.outside_invocation``,
+        ``effect.too_large`` and ``effect.not_recorded`` (the only one retried).
+        """
+        if inspect.iscoroutinefunction(fn):
+            return self._effect_async(name, fn, codec)
+        status, kept = self._effect_begin(name)
+        if status == "kept":
+            return _effect_decode(kept, codec)
+        try:
+            value = fn()
+        except BaseException:
+            self._bridge.effect_release(self._token, self._item)
+            raise
+        return self._effect_finish(name, status, value, codec)
+
+    async def _effect_async(
+        self, name: str, fn: Callable[[], Any], codec: ValueCodec | None
+    ) -> Any:
+        status, kept = self._effect_begin(name)
+        if status == "kept":
+            return _effect_decode(kept, codec)
+        try:
+            value = await fn()
+        except BaseException:
+            self._bridge.effect_release(self._token, self._item)
+            raise
+        # The keep waits for the controller, so it waits off the event loop.
+        return await asyncio.to_thread(self._effect_finish, name, status, value, codec)
+
+    def _effect_begin(self, name: str) -> tuple[str, bytes | None]:
+        with _effect_refusals():
+            return self._bridge.effect_begin(self._token, self._item, name)
+
+    def _effect_finish(self, name: str, status: str, value: Any, codec: ValueCodec | None) -> Any:
+        """Keep a run's result where its invocation is recorded, and answer it
+        as it reads back."""
+        try:
+            encoded = (
+                codec.encode(value)
+                if codec is not None
+                else _codec.plain_payload(value, f"effect '{name}'")
+            )
+        except BaseException:
+            self._bridge.effect_release(self._token, self._item)
+            raise
+        if status == "unrecorded":
+            self._bridge.effect_release(self._token, self._item)
+            return _effect_decode(encoded, codec)
+        with _effect_refusals():
+            first = self._bridge.effect_end(self._token, self._item, encoded)
+        return _effect_decode(encoded if first is None else first, codec)
+
     # -- what the dispatcher collects ---------------------------------------
 
     def settle_return(self, returned: Any, hook: str) -> None:
@@ -390,7 +469,7 @@ class Ctx(Generic[S, O_contra]):
         if returned is not DROPPED and self._outgoing:
             self.emit(returned)
 
-    def effect(self, consumed_offset: int | None) -> dict[str, Any]:
+    def effect_record(self, consumed_offset: int | None) -> dict[str, Any]:
         """The effect record for this item, as the core folds it."""
         return {
             "verdict": "ok",
@@ -552,3 +631,31 @@ class Ctx(Generic[S, O_contra]):
                 raise FlezhaError("runtime.reserved_metadata_key", {"key": str(key)})
             out.append((str(key), str(value)))
         return out
+
+
+@contextlib.contextmanager
+def _effect_refusals() -> Iterator[None]:
+    """Mark an ``effect.*`` refusal non-retryable, but for ``effect.not_recorded``:
+    a call that could not be kept is the one worth running again."""
+    try:
+        yield
+    except FlezhaError as error:
+        if error.code.startswith("effect.") and error.code != "effect.not_recorded":
+            error.non_retryable = True  # type: ignore[attr-defined]
+        raise
+
+
+def _effect_decode(body: Any, codec: ValueCodec | None) -> Any:
+    """A kept result as it reads back: through ``codec``, or JSON, else text,
+    else bytes."""
+    if codec is not None:
+        return codec.decode(body)
+    raw = bytes(body)
+    try:
+        return json.loads(raw)
+    except ValueError:
+        pass
+    try:
+        return raw.decode()
+    except UnicodeDecodeError:
+        return raw

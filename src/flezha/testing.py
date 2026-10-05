@@ -24,7 +24,16 @@ from .dispatch import DispatchDeps, RegisteredClass, invoke, run_now
 from .errors import FlezhaError
 from .tasklet import Tasklet
 
-__all__ = ["TaskletTestHarness", "ReplayMismatch", "Outcome", "replay_equals"]
+__all__ = [
+    "TaskletTestHarness",
+    "ReplayMismatch",
+    "EffectReplayMismatch",
+    "Outcome",
+    "replay_equals",
+]
+
+#: The longest effect name, in bytes, as the core refuses it.
+_MAX_EFFECT_NAME = 255
 
 S = TypeVar("S")
 
@@ -44,6 +53,32 @@ class ReplayMismatch(AssertionError):
         )
 
 
+class EffectReplayMismatch(AssertionError):
+    """A replayed input made an outside call its live run kept through
+    ``ctx.effect`` some other way: its function ran again, or the kept result
+    was never asked for."""
+
+    def __init__(self, tasklet: str, name: str, what: str) -> None:
+        self.name = name
+        super().__init__(
+            f"{tasklet}: on the replay, effect '{name}' {what}. A re-run reads an outside "
+            f"call's result only through ctx.effect, with the same name in the same order."
+        )
+
+
+@dataclass(slots=True)
+class _Effects:
+    """One input's effect results, by ``(name, ordinal)``, and the invocation's
+    count of each name, the call whose function is running, and what a replay
+    asked for."""
+
+    kept: dict[tuple[str, int], bytes] = field(default_factory=dict)
+    replaying: bool = False
+    ordinals: dict[str, int] = field(default_factory=dict)
+    running: tuple[str, int] | None = None
+    asked: set[tuple[str, int]] = field(default_factory=set)
+
+
 @dataclass(slots=True)
 class Outcome:
     """What one invocation produced."""
@@ -58,6 +93,11 @@ class TaskletTestHarness(Generic[S]):
 
     ``async def`` handlers are driven exactly as the thread executor drives
     them, so a test needs no event loop of its own.
+
+    A ``ctx.effect`` keeps its result on a live :meth:`feed`; the n-th
+    ``feed(..., replay=True)`` replays the n-th live input and is served what it
+    kept, and raises :class:`EffectReplayMismatch` when a function runs there or
+    a kept result is never asked for.
     """
 
     def __init__(
@@ -96,6 +136,10 @@ class TaskletTestHarness(Generic[S]):
         # core releases them.
         self._spawns: dict[int, str] = {}
         self._spawn_count = 0
+        # Each live input's effect results, in order, and how many replays ran.
+        self._kept_effects: list[dict[tuple[str, int], bytes]] = []
+        self._replays = 0
+        self._effects = _Effects()
         if initial_state is not None:
             self._cell.state = initial_state
 
@@ -105,8 +149,21 @@ class TaskletTestHarness(Generic[S]):
         return self._cell.state
 
     def feed(self, value: Any, *, now: int = 0, replay: bool = False) -> Outcome:
-        """Run the tasklet against one input."""
-        return self._run(now, replay, lambda ctx: self._task(value, ctx), "run")
+        """Run the tasklet against one input; ``replay`` replays the next live
+        input, in order."""
+        if replay:
+            index = self._replays
+            self._replays += 1
+            kept = self._kept_effects[index] if index < len(self._kept_effects) else {}
+            self._effects = _Effects(kept=kept, replaying=True)
+        else:
+            self._effects = _Effects()
+            self._kept_effects.append(self._effects.kept)
+        outcome = self._run(now, replay, lambda ctx: self._task(value, ctx), "run")
+        unasked = [key for key in self._effects.kept if key not in self._effects.asked]
+        if replay and unasked:
+            raise EffectReplayMismatch(self._task.name, unasked[0][0], "was never asked for")
+        return outcome
 
     def apply_inputs(self, values: Iterable[Any], *, now: int = 0) -> list[Outcome]:
         """Run the tasklet against several inputs, in order."""
@@ -233,6 +290,39 @@ class TaskletTestHarness(Generic[S]):
         """A harness has no controller, so no listener: the part, already
         encoded by the context, is dropped."""
         del token, item, payload
+
+    def effect_begin(self, token: int, item: int, name: str) -> tuple[str, bytes | None]:
+        """The core's answer to a begun ``ctx.effect``, over this input's
+        results: the kept one, or run the function (on a live input only)."""
+        del token, item
+        if not name or len(name.encode()) > _MAX_EFFECT_NAME:
+            raise FlezhaError("effect.bad_name", {"name": repr(name)})
+        effects = self._effects
+        if effects.running is not None:
+            raise FlezhaError("effect.nested", {"name": name})
+        ordinal = effects.ordinals.get(name, 0)
+        effects.ordinals[name] = ordinal + 1
+        key = (name, ordinal)
+        effects.asked.add(key)
+        if key in effects.kept:
+            return "kept", effects.kept[key]
+        if effects.replaying:
+            raise EffectReplayMismatch(self._task.name, name, "ran its function")
+        effects.running = key
+        return "run", None
+
+    def effect_end(self, token: int, item: int, payload: bytes) -> bytes | None:
+        """Keep a live input's result, as the controller does."""
+        del token, item
+        effects = self._effects
+        assert effects.running is not None, "an end follows a begin that runs"
+        effects.kept[effects.running] = payload
+        effects.running = None
+        return None
+
+    def effect_release(self, token: int, item: int) -> None:
+        del token, item
+        self._effects.running = None
 
     # -- internals -----------------------------------------------------------
 

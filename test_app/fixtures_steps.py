@@ -236,6 +236,47 @@ sync_durable_steps = flezha.relay("sync_durable_steps", run="steps", durable="re
 )
 
 
+# -- effect_block_steps ------------------------------------------------------
+#
+# The one tasklet calls an outside function through ``ctx.effect``, then blocks
+# until released. The input names a file the function appends one line to per
+# run, so a SIGKILL after the effect and a resume on a released runner shows
+# whether the function ran again.
+
+
+def count_run(path: str) -> str:
+    with open(path, "a", encoding="utf-8") as runs:
+        runs.write("ran\n")
+    return "answer"
+
+
+async def _effect_block(value: str, ctx: flezha.Ctx[None, Any]) -> None:
+    ctx.effect("model", lambda: count_run(value))
+    await block_until_released()
+
+
+effect_block = stateless_step("effect_block", _effect_block)
+
+
+@flezha.relay("effect_block_steps", run="steps", durable=FIXTURE_DURABLE)
+def effect_block_steps(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(effect_block)
+
+
+# `effect_flow`: the same call in a flow relay at the default tier, which keeps
+# no input log, so nothing re-runs an input and nothing is kept.
+def _effect_once(value: str, ctx: flezha.Ctx[None, Any]) -> None:
+    ctx.effect("model", lambda: count_run(value))
+
+
+effect_once = stateless_step("effect_once", _effect_once)
+
+
+@flezha.relay("effect_flow")
+def effect_flow(c: flezha.Channels) -> None:
+    c.input("in", codec="text").into(effect_once)
+
+
 # -- optout_commit_block -----------------------------------------------------
 #
 # The opt-out twin with a live mid-chain signal: task A's output also reaches a
@@ -974,6 +1015,8 @@ ALL: list[flezha.Relay] = [
     typed_once_steps,
     commit_block_steps,
     sync_durable_steps,
+    effect_block_steps,
+    effect_flow,
     optout_commit_block,
     tier_commit_block_steps,
     saga_block_steps,

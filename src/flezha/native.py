@@ -90,6 +90,9 @@ class Core:
         "spawn_request",
         "spawn_result",
         "part",
+        "effect_begin",
+        "effect_end",
+        "effect_release",
         "admin_call",
         "send_message",
         "relays",
@@ -228,6 +231,21 @@ class Core:
     def part(self, token: int, item: int, payload: bytes) -> None:
         """Send a part of work item ``item`` of the activation ``token``. Never waits."""
         self._call("part", token, item, payload)
+
+    def effect_begin(self, token: int, item: int, name: str) -> tuple[str, bytes | None]:
+        """Begin ``ctx.effect(name)`` in work item ``item``: ``("kept", result)``,
+        ``("run", None)`` or ``("unrecorded", None)``. Never waits."""
+        status, kept = self._call("effect_begin", token, item, name)
+        return str(status), kept
+
+    def effect_end(self, token: int, item: int, payload: bytes) -> bytes | None:
+        """Keep a ``run`` begin's encoded result; waits for the controller.
+        ``None`` keeps this result; otherwise the result kept first."""
+        return self._call("effect_end", token, item, payload)
+
+    def effect_release(self, token: int, item: int) -> None:
+        """End a begun effect without keeping anything. Never waits."""
+        self._call("effect_release", token, item)
 
     def admin_call(self, verb: str, args: str) -> str:
         return str(self._call("admin_call", verb, args))

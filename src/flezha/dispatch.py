@@ -411,7 +411,7 @@ async def _run_work(cell: Cell, activation: dict[str, Any], deps: DispatchDeps) 
                 item.get("consumed_offset"),
                 index,
             )
-            effects.append(ctx.effect(item.get("consumed_offset")))
+            effects.append(ctx.effect_record(item.get("consumed_offset")))
         except Exception as error:  # noqa: BLE001 - the verdict is the report
             # The traceback is a host diagnostic, not a record: the verdict
             # below travels to the dead-letter entry and the controller's log.
@@ -592,7 +592,7 @@ async def _compensate(cell: Cell, activation: dict[str, Any], deps: DispatchDeps
         lambda c: task.compensate(outputs, c),  # type: ignore[misc]
     )
     ctx.settle_return(returned, "compensate")
-    return {"token": activation["token"], "outcome": "work", "effects": [ctx.effect(None)]}
+    return {"token": activation["token"], "outcome": "work", "effects": [ctx.effect_record(None)]}
 
 
 def _release_views(activation: dict[str, Any]) -> None:
