@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from flezha import Channels, Ctx, LocalOperator, operator, state, tasklet
+from flezha import Channels, Ctx, LocalRelay, relay, state, tasklet
 
 
 @tasklet(name="split")
@@ -49,7 +49,7 @@ class Tally:
         state.seen = change.seen
 
 
-@operator("local_word_count_example")
+@relay("local_word_count_example")
 def word_count(c: Channels) -> None:
     # One Cell per word: the hop from `Split` to `Tally` is the runtime's,
     # not this file's.
@@ -59,7 +59,7 @@ def word_count(c: Channels) -> None:
 
 
 if __name__ == "__main__":
-    with LocalOperator.start(word_count) as run:
+    with LocalRelay.start(word_count) as run:
         run.on_sink("totals", lambda output: print(output.payload.decode()))
         run.feed("lines", "the quick brown fox")
         run.feed("lines", "the lazy dog")

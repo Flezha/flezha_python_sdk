@@ -13,7 +13,7 @@ cannot disagree about which ones exist. A value leaves it only through
             ctx.emit(value.upper())
 
 The one other body is a short form's function, whose return value is its
-output; :mod:`flezha.operator` builds that one. Both produce a
+output; :mod:`flezha.relay` builds that one. Both produce a
 :class:`Tasklet`, and everything downstream — the graph, the dispatcher, the
 harness — sees only that.
 """
@@ -61,7 +61,7 @@ class TaskletSettings(TypedDict, total=False):
     """A tasklet's own declarations beyond its name.
 
     One list for every surface that declares a tasklet: ``flezha.tasklet``
-    and the short form of both operator decorators.
+    and the short form of both relay decorators.
     """
 
     logical_clock: bool
@@ -570,8 +570,8 @@ def _refuse_unannotated(task: Tasklet[Any, Any]) -> None:
 # The decorator
 # ---------------------------------------------------------------------------
 
-#: The keywords of an operator's short form, which a tasklet never takes.
-_OPERATOR_KEYWORDS = ("run", "durable", "sink", "input", "codec")
+#: The keywords of a relay's short form, which a tasklet never takes.
+_RELAY_KEYWORDS = ("run", "durable", "sink", "input", "codec")
 
 
 @overload
@@ -590,17 +590,17 @@ def tasklet(target: Any = None, /, **declarations: Any) -> Any:
 
     Declaring performs no I/O, opens no socket and starts no thread: it builds
     one :class:`Tasklet` and returns it. A function is refused: a whole
-    one-tasklet operator written as a function is the short form of
-    :func:`~flezha.operator.operator`.
+    one-tasklet relay written as a function is the short form of
+    :func:`~flezha.relay.relay`.
     """
-    written = [key for key in _OPERATOR_KEYWORDS if key in declarations]
+    written = [key for key in _RELAY_KEYWORDS if key in declarations]
     if written:
         raise FlezhaError(
-            "topology.operator_field_on_tasklet",
+            "topology.relay_field_on_tasklet",
             {
                 "tasklet": declarations.get("name") or getattr(target, "__name__", "<tasklet>"),
                 "fields": [f"`{key}`" for key in written],
-                "instead": "`@flezha.operator(id=...)`",
+                "instead": "`@flezha.relay(id=...)`",
             },
         )
 
@@ -609,8 +609,8 @@ def tasklet(target: Any = None, /, **declarations: Any) -> Any:
             raise _invalid(
                 getattr(inner, "__name__", str(inner)),
                 "is a function; a tasklet is a class whose `run(self, value, ctx)` takes the "
-                "value and the context. A whole one-tasklet operator written as a function "
-                "is `@flezha.operator(id=...)`",
+                "value and the context. A whole one-tasklet relay written as a function "
+                "is `@flezha.relay(id=...)`",
             )
         return Tasklet(inner, **declarations)
 

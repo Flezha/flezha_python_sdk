@@ -1,13 +1,13 @@
 """Starts a runner: a process that connects to the controller and serves your
-operators.
+relays.
 
-Declare every operator you want served before `start`. One runner can serve
+Declare every relay you want served before `start`. One runner can serve
 several, and `register_factory` is the same call for the steps kind.
 """
 
 import sys
 
-from echo_operator import echo_operator
+from echo_relay import echo_relay
 
 import flezha
 
@@ -16,20 +16,20 @@ def main() -> None:
     namespace = sys.argv[1] if len(sys.argv) > 1 else "default"
     flezha.configure_logging("info")
 
-    # the operators this runner serves
-    runner = flezha.create_runner(namespace).register_factory(echo_operator)
+    # the relays this runner serves
+    runner = flezha.create_runner(namespace).register_factory(echo_relay)
 
     # `run()` is `start()` followed by `await_termination()`. Splitting them
     # leaves room for the calls below, and still blocks until shutdown.
     runner.start()  # connects to the controller
 
-    # Everything `flz operator` and `flz plugin` do is also a method of
-    # `control()`, and `send` hands a message to an operator. Uncomment to drive
+    # Everything `flz relay` and `flz plugin` do is also a method of
+    # `control()`, and `send` hands a message to a relay. Uncomment to drive
     # this namespace from the application instead of from a terminal:
     #
     # control = runner.control()
-    # control.start_operator("echo", id="my_echo")
-    # control.enable_plugin("writer", "operator_file_sink", opts={"path": "echo-out.txt"})
+    # control.start_relay("echo", id="my_echo")
+    # control.enable_plugin("writer", "relay_file_sink", opts={"path": "echo-out.txt"})
     # control.bind_plugin("writer", "my_echo", hooks=[["on_output", {}]])
     # runner.send("my_echo", "hello world", "in", msg_id="hello-1")
     #

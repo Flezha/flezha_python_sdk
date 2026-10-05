@@ -114,12 +114,12 @@ def _checkpoint_class(factory_id: str, ack: Any) -> dict[str, Any]:
     from conftest import echo
     from flezha import graph
 
-    @flezha.operator(factory_id, run={"flow": {"exactly": {"effectively_once": {"ack": ack}}}})
-    def operator(c: flezha.Channels) -> None:
+    @flezha.relay(factory_id, run={"flow": {"exactly": {"effectively_once": {"ack": ack}}}})
+    def relay(c: flezha.Channels) -> None:
         c.input("input").into(echo, f"{factory_id}_tasklet").keyed().sink("sink")
 
-    assert submit(operator)["ack_granularity"] == "checkpoint"
-    return graph.to_host_class_decl(operator.spec)
+    assert submit(relay)["ack_granularity"] == "checkpoint"
+    return graph.to_host_class_decl(relay.spec)
 
 
 def test_holding_outputs_at_the_checkpoint_registers_with_its_delay() -> None:
@@ -223,11 +223,11 @@ def test_a_spawn_with_no_control_plane_answers_unavailable_until_its_invocation_
                     reads.append((error.code, error.class_))
             unread.append(ctx.spawn_steps("worker", value))
 
-    @flezha.operator("spawn_without_control_plane")
-    def operator(c: flezha.Channels) -> None:
+    @flezha.relay("spawn_without_control_plane")
+    def relay(c: flezha.Channels) -> None:
         c.input("in", codec="text").into(Spawner).sink("out")
 
-    with flezha.LocalOperator.start(operator) as run:
+    with flezha.LocalRelay.start(relay) as run:
         run.feed("in", "p")
         run.run_until_idle(10_000)
         with pytest.raises(FlezhaError) as released:
@@ -295,10 +295,10 @@ def test_the_core_refuses_a_local_send_held_elsewhere_or_with_an_id() -> None:
     try:
         with pytest.raises(FlezhaError) as caught:
             core.send_message("elsewhere", "in", b"x", None, None, True)
-        assert caught.value.code == "runtime.operator_not_local"
+        assert caught.value.code == "runtime.relay_not_local"
         with pytest.raises(FlezhaError) as caught:
             core.send_message("orders", "in", b"x", "m-1", None, True)
         assert caught.value.code == "usage.options_conflict"
-        assert isinstance(core.operators(), list)
+        assert isinstance(core.relays(), list)
     finally:
         core.free()

@@ -94,7 +94,7 @@ def _channel_json(channel: ChannelSpec) -> dict[str, Any]:
 
 def _keyed_consumers(spec: ClassSpec) -> set[int]:
     """The nodes some chain reaches through a `key` link: the cell mode is the
-    wiring's, so one tasklet can be keyed in one operator and single in another."""
+    wiring's, so one tasklet can be keyed in one relay and single in another."""
     keyed: set[int] = set()
     for channel in spec.channels:
         for chain in channel.chains:

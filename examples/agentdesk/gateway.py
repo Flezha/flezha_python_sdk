@@ -1,4 +1,4 @@
-"""The HTTP side of the desk: a flow operator that carries the HTTP plugin,
+"""The HTTP side of the desk: a flow relay that carries the HTTP plugin,
 answers every request, and calls the session a message is for.
 """
 
@@ -15,7 +15,7 @@ DEADLINE_MS = 60_000
 
 
 # each request and answer on disk before it runs
-@flezha.operator("gateway", run={"flow": {"exactly": "effectively_once"}})
+@flezha.relay("gateway", run={"flow": {"exactly": "effectively_once"}})
 def gateway(c: flezha.Channels) -> None:
     user = itemgetter("user")
     # every request arrives on "http"; kept as a handle to split it
@@ -37,7 +37,7 @@ def gateway(c: flezha.Channels) -> None:
         verdicts.filter(admitted)
         .map(itemgetter("message"))
         .key_by(user)  # the user's session
-        # call the "agent" operator; its answer comes back here
+        # call the "agent" relay; its answer comes back here
         .call(factory="agent", channel="message", deadline_ms=DEADLINE_MS)
         .map(used)  # the session's answer, as tokens used
         .key_by(user)

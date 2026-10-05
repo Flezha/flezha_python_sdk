@@ -65,12 +65,12 @@ class TaskletTestHarness(Generic[S]):
         task: Tasklet[Any, Any],
         *,
         cell_key: str | None = None,
-        operator: str = "harness",
+        relay: str = "harness",
         initial_state: S | None = None,
     ) -> None:
         self._task = task
         self._cell_key = cell_key
-        self._operator = operator
+        self._relay = relay
         # The real channel builder, not a hand-written spec: one entry channel
         # into the tasklet and one plugin sink so `ctx.emit` has somewhere to
         # go — a tasklet under test emits to be observed, not to be routed.
@@ -87,7 +87,7 @@ class TaskletTestHarness(Generic[S]):
         # The dispatcher's own cell store, so the state this harness reports
         # is the state a runner would hold.
         self._registered = RegisteredClass(self._spec)
-        self._cell = self._registered.cell(self._node, operator, cell_key)
+        self._cell = self._registered.cell(self._node, relay, cell_key)
         self._deps = DispatchDeps(registry=None, bridge=self)
         self.log: list[bytes] = []
         self._timers: list[dict[str, Any]] = []
@@ -239,7 +239,7 @@ class TaskletTestHarness(Generic[S]):
     def _run(self, now: int, replay: bool, body: Any, hook: str) -> Outcome:
         activation = {
             "token": 0,
-            "operator": self._operator,
+            "relay": self._relay,
             "cell_key": self._cell_key,
             "change_seq": self._change_seq,
         }

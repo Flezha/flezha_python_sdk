@@ -9,7 +9,7 @@ mode refuses them by name rather than approximating them.
 
 What each test can assert is what a run with no controller can see. A durable
 write reaches a null sink, a parked payload has nowhere to park, and a partition
-member's key range arrives with ``AddOperator``, so the assertions here are the
+member's key range arrives with ``AddRelay``, so the assertions here are the
 output side of each capability, which is the half the language layer produces.
 """
 
@@ -21,7 +21,7 @@ from collections.abc import Callable, Iterable
 import pytest
 
 import app
-from flezha import FlezhaError, LocalOperator, Operator, SinkOutput
+from flezha import FlezhaError, LocalRelay, Relay, SinkOutput
 
 fixtures = app.module("fixtures")
 fixtures_state = app.module("fixtures_state")
@@ -30,11 +30,11 @@ fixtures_state = app.module("fixtures_state")
 prefix = app.module("fixture_support").prefix
 
 #: The app's own registration list, keyed by the id `conformance.json` names.
-_REGISTERED: dict[str, Operator] = {operator.factory_id: operator for operator in fixtures.ALL}
+_REGISTERED: dict[str, Relay] = {relay.factory_id: relay for relay in fixtures.ALL}
 
 
 def release(
-    operator: Operator,
+    relay: Relay,
     channel: str,
     sink: str,
     inputs: Iterable[str],
@@ -47,7 +47,7 @@ def release(
     closing is what hands the last of them over.
     """
     released: list[SinkOutput] = []
-    with LocalOperator.start(operator) as run:
+    with LocalRelay.start(relay) as run:
         run.on_sink(sink, released.append)
         for value in inputs:
             run.feed(channel, value)
@@ -70,7 +70,7 @@ def per_cell(
     return grouped
 
 
-def declares(capability: str, factory_id: str) -> Operator:
+def declares(capability: str, factory_id: str) -> Relay:
     """The class under test, which is the one the manifest names for the capability."""
     listed = app.declared_fixtures()[capability]
     assert factory_id in listed, (
@@ -94,12 +94,12 @@ def test_shorthand_a_short_form_is_built_and_run_with_no_controller() -> None:
 
 
 def test_keyed_channels_a_keyed_sink_stamps_the_key_the_class_resolved() -> None:
-    # `partition_relay` is the manifest's only keyed-channel class. Partitioning
+    # `partition_pass` is the manifest's only keyed-channel class. Partitioning
     # itself is the controller's (a member's key-group range arrives with
-    # `AddOperator`), so what is asserted here is the half the language layer
+    # `AddRelay`), so what is asserted here is the half the language layer
     # owns: the key it resolves and the stamps it puts on the released value.
     released = release(
-        declares("keyed_channels", "partition_relay"),
+        declares("keyed_channels", "partition_pass"),
         "in",
         "input",
         ["a:1", "b:1", "a:2"],
@@ -116,7 +116,7 @@ def test_keyed_channels_a_keyed_sink_stamps_the_key_the_class_resolved() -> None
 def test_dynamic_cell_the_declared_filter_runs_before_keying_and_nothing_else_is_lost() -> None:
     # The class's sink is not keyed, so a released value carries no cell stamp
     # and the per-key minting is not visible on this channel. It is asserted
-    # above, on `partition_relay`, whose tasklet is dynamic too and whose sink
+    # above, on `partition_pass`, whose tasklet is dynamic too and whose sink
     # IS keyed. What this class shows that that one does not is the declared
     # filter: a value it rejects answers no key, so the core is never asked to
     # mint a Cell for it.
@@ -180,7 +180,7 @@ def test_a_controller_capability_is_refused_by_name_not_approximated() -> None:
     # `tier_store` is effectively-once, which needs a durable store to release
     # from, so a local run says so instead of running the graph.
     with pytest.raises(FlezhaError) as caught:
-        LocalOperator.start(fixtures_state.tier_store_operator)
+        LocalRelay.start(fixtures_state.tier_store_relay)
 
     assert caught.value.code == "runtime.local_needs_controller"
     assert caught.value.details["capability"] == "effectively_once", caught.value.details

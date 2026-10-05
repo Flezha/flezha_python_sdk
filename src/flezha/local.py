@@ -1,6 +1,6 @@
-"""Running a declared operator graph in this process, with no controller.
+"""Running a declared relay graph in this process, with no controller.
 
-:meth:`LocalOperator.start` takes the operator you deploy and runs the
+:meth:`LocalRelay.start` takes the relay you deploy and runs the
 ``channels`` graph it already declares — no local-mode member on the class, no
 second declaration. What runs is the deployed machinery: entry decode, edge
 transforms and keying, one Cell per resolved key with its own mailbox, the
@@ -25,9 +25,9 @@ from .dispatch import DispatchDeps, Registry
 from .errors import FlezhaError
 from .executor import build as build_executor
 from .native import Core
-from .operator import Operator
+from .relay import Relay
 
-__all__ = ["LocalOperator", "SinkOutput"]
+__all__ = ["LocalRelay", "SinkOutput"]
 
 #: Bounded so a stopped run's drain thread leaves promptly.
 _OUTPUT_POLL_MS = 100
@@ -43,8 +43,8 @@ class SinkOutput:
     metadata: dict[str, str] = field(default_factory=dict)
 
 
-class LocalOperator:
-    """One operator graph running in this process."""
+class LocalRelay:
+    """One relay graph running in this process."""
 
     __slots__ = ("_core", "_executor", "_sinks", "_drain", "_closed")
 
@@ -59,14 +59,14 @@ class LocalOperator:
         self._drain.start()
 
     @classmethod
-    def start(cls, operator: Operator) -> LocalOperator:
-        """Register ``operator``'s declared graph and start it locally.
+    def start(cls, relay: Relay) -> LocalRelay:
+        """Register ``relay``'s declared graph and start it locally.
 
         Raises naming the capability when the declaration needs a controller.
         """
         core = Core.create()
         try:
-            spec = operator.spec
+            spec = relay.spec
             registry = Registry()
             graph.declare(spec, core, registry)
             # Not `start`, which is the one call that dials a controller.

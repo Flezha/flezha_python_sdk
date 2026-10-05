@@ -1,7 +1,7 @@
-"""The desk's steps operator: one instance per order, which runs its steps
+"""The desk's steps relay: one instance per order, which runs its steps
 once and then ends.
 
-A steps operator declares its steps the way a flow operator declares its
+A steps relay declares its steps the way a flow relay declares its
 graph, on the same builder, and the controller schedules, restarts and
 relocates it in the same way. What differs is the lifecycle: each step's output
 is written down as it commits, so an instance that is interrupted resumes at
@@ -29,7 +29,7 @@ import flezha
 
 # one instance per order; each step runs once
 # a failed step undoes the finished ones
-@flezha.operator("order_executor", run={"steps": {"each": "once", "on_failure": "undo_all"}})
+@flezha.relay("order_executor", run={"steps": {"each": "once", "on_failure": "undo_all"}})
 def order_executor(c: flezha.Channels) -> None:
     """Two steps in order, then a fan-out: confirming the fill and booking the
     order are two independent consequences of the placement, and neither waits
@@ -38,7 +38,7 @@ def order_executor(c: flezha.Channels) -> None:
     one.
 
     Nothing ends on a sink: the last step ends the instance with its result,
-    which `flz operator info` shows. Nothing names a channel either, so each one
+    which `flz relay info` shows. Nothing names a channel either, so each one
     carries the name of the step that produces it.
     """
     (

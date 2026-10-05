@@ -1,6 +1,6 @@
-"""The ``operator_call`` fixtures: operators that call another operator from
+"""The ``relay_call`` fixtures: relays that call another relay from
 their graph and read the outcome as a :class:`flezha.Response`, the mirror of
-``sdk/rust/test_app/src/operator_call.rs``.
+``sdk/rust/test_app/src/relay_call.rs``.
 
 Every outcome is written as one line, ``<request>=ok:<answer>@<target>/<created>``
 or ``<request>=error:<code>@<target>/<created>``.
@@ -71,8 +71,8 @@ def _quote(value: str, ctx: flezha.Ctx[None, Any]) -> None:
         ctx.emit(f"price:{value}")
 
 
-@flezha.operator("call_pricing")
-def call_pricing_operator(c: flezha.Channels) -> None:
+@flezha.relay("call_pricing")
+def call_pricing_relay(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(stateless_step("pricing_quote", _quote)).response()
 
 
@@ -84,8 +84,8 @@ class OrderPriced:
 order_priced = flezha.tasklet(OrderPriced, name="order_priced")
 
 
-@flezha.operator("call_orders")
-def call_orders_operator(c: flezha.Channels) -> None:
+@flezha.relay("call_orders")
+def call_orders_relay(c: flezha.Channels) -> None:
     (
         c.input("in", codec="text")
         .into(stateless_step("order_ask", lambda value, ctx: ctx.emit(value)))
@@ -105,7 +105,7 @@ async def _agent_turn(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     ctx.emit(f"answer:{value}")
 
 
-@flezha.operator(
+@flezha.relay(
     "call_agent",
     **{**LOOP_KNOBS, "run": {"steps": {"each": "per_input", "on_failure": "keep_progress"}}},
 )
@@ -118,8 +118,8 @@ gateway_resume = stateless_step(
 )
 
 
-@flezha.operator("call_gateway", run={"flow": {"exactly": "effectively_once"}})
-def call_gateway_operator(c: flezha.Channels) -> None:
+@flezha.relay("call_gateway", run={"flow": {"exactly": "effectively_once"}})
+def call_gateway_relay(c: flezha.Channels) -> None:
     gateway_account = account("gateway_account")
     gateway = c.input("in", codec="text").into(gateway_account).named("gateway")
     (
@@ -145,7 +145,7 @@ def call_gateway_operator(c: flezha.Channels) -> None:
     )
 
 
-@flezha.operator("call_tool_session", **LOOP_KNOBS)
+@flezha.relay("call_tool_session", **LOOP_KNOBS)
 def call_tool_session_steps(c: flezha.Channels) -> None:
     tool_turn = account("tool_turn")
     tool = c.input("turn", codec="text").into(tool_turn).named("tool")
@@ -153,11 +153,11 @@ def call_tool_session_steps(c: flezha.Channels) -> None:
     tool.filter(is_outcome).into(outcome_log("tool_log")).sink("tool_out")
 
 
-#: Every operator this module registers, in the reference's order.
-ALL: list[flezha.Operator] = [
-    call_pricing_operator,
-    call_orders_operator,
+#: Every relay this module registers, in the reference's order.
+ALL: list[flezha.Relay] = [
+    call_pricing_relay,
+    call_orders_relay,
     call_agent_steps,
-    call_gateway_operator,
+    call_gateway_relay,
     call_tool_session_steps,
 ]

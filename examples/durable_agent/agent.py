@@ -166,7 +166,7 @@ class Agent:
 agent = flezha.tasklet(Agent, name="agent_turn", idle_ttl_seconds=15 * 60)
 
 
-@flezha.operator("durable_agent")
+@flezha.relay("durable_agent")
 def durable_agent(c: flezha.Channels) -> None:
     """One conversation per key, with a retry ladder on the model call.
 
@@ -180,7 +180,7 @@ def durable_agent(c: flezha.Channels) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The long-running side: a steps operator that suspends while it waits
+# The long-running side: a steps relay that suspends while it waits
 # ---------------------------------------------------------------------------
 
 
@@ -227,7 +227,7 @@ class SessionTurn:
 session_turn = flezha.tasklet(SessionTurn, name="session_turn")
 
 
-@flezha.operator("agent_session", run={"steps": {"each": "per_input"}}, max_duration_ms=3_600_000)
+@flezha.relay("agent_session", run={"steps": {"each": "per_input"}}, max_duration_ms=3_600_000)
 def agent_session(c: flezha.Channels) -> None:
     """A session that waits for the human between messages.
 

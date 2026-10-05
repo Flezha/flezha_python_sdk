@@ -32,7 +32,7 @@ from .executor import Executor
 from .executor import build as build_executor
 from .logger import logger
 from .native import ACTIVATION_SCHEMA_VERSION, Core, build_tier
-from .operator import Operator
+from .relay import Relay
 
 __all__ = ["Runner", "create_runner", "ACTIVATION_SCHEMA_VERSION"]
 
@@ -47,15 +47,15 @@ _STDIN_EOF_GRACE_MS = 5_000
 _started_slot = threading.Lock()
 
 
-def _operator_of(value: object) -> Operator:
-    """The operator a registration call was handed.
+def _relay_of(value: object) -> Relay:
+    """The relay a registration call was handed.
 
     A tasklet declares none, and saying so here is what keeps the refusal at
     the call the author wrote.
     """
-    if not isinstance(value, Operator):
+    if not isinstance(value, Relay):
         raise FlezhaError(
-            "topology.no_operator_exported", {"module": str(getattr(value, "__name__", value))}
+            "topology.no_relay_exported", {"module": str(getattr(value, "__name__", value))}
         )
     return value
 
@@ -65,7 +65,7 @@ class Runner:
 
     def __init__(self, namespace: str) -> None:
         self._namespace = namespace
-        self._operators: list[Operator] = []
+        self._relays: list[Relay] = []
         self._registry = Registry()
         self._core: Core | None = None
         self._executor: Executor | None = None
@@ -82,27 +82,27 @@ class Runner:
     def namespace(self) -> str:
         return self._namespace
 
-    def operators(self) -> list[str]:
-        """The ids of the operator instances bound on this runner now, a
+    def relays(self) -> list[str]:
+        """The ids of the relay instances bound on this runner now, a
         partition member by its member id, read without the controller.
         Refused with ``runtime.runner_not_started`` before :meth:`start`."""
         if self._core is None:
             raise FlezhaError("runtime.runner_not_started")
-        return self._core.operators()
+        return self._core.relays()
 
-    def register_factory(self, operator: Operator) -> Runner:
-        """Register an operator type of either kind, short form or full.
+    def register_factory(self, relay: Relay) -> Runner:
+        """Register a relay type of either kind, short form or full.
 
         The kind is read from what is handed in, never named by the call.
         Legal both before and after :meth:`start`; a post-start declaration
         reaches the core immediately and the controller at the next bind.
         """
-        return self._define(_operator_of(operator))
+        return self._define(_relay_of(relay))
 
     def register_modules(self, *modules: str) -> Runner:
         """Import the named modules and register everything they declare.
 
-        Every :class:`~flezha.operator.Operator` the module holds, short form
+        Every :class:`~flezha.relay.Relay` the module holds, short form
         or full. No implicit package scanning and no filesystem discovery: the
         modules are named, and one that cannot be imported raises its own
         :class:`ImportError`.
@@ -110,24 +110,24 @@ class Runner:
         for name in modules:
             module = importlib.import_module(name)
             for value in vars(module).values():
-                if isinstance(value, Operator):
+                if isinstance(value, Relay):
                     self._define(value)
         return self
 
-    def unregister_factory(self, operator: Operator) -> Runner:
+    def unregister_factory(self, relay: Relay) -> Runner:
         """Undeclare a type — the inverse of :meth:`register_factory`, taking what it took.
 
         Refuses one with live instances, and one never declared.
         """
-        factory_id = _operator_of(operator).factory_id
-        if not any(o.factory_id == factory_id for o in self._operators):
+        factory_id = _relay_of(relay).factory_id
+        if not any(o.factory_id == factory_id for o in self._relays):
             raise FlezhaError("runtime.class_not_registered", {"factory": factory_id})
         if self._started:
             registered = self._registry.get(factory_id)
             live = 0 if registered is None else registered.live_instances()
             if live:
                 raise FlezhaError(
-                    "runtime.operator_type_in_use",
+                    "runtime.relay_type_in_use",
                     {"factory_id": factory_id, "live_instances": live},
                 )
             if registered is not None:
@@ -141,7 +141,7 @@ class Runner:
                 "the declaration lapses when the context ends",
                 factory_id,
             )
-        self._operators = [o for o in self._operators if o.factory_id != factory_id]
+        self._relays = [o for o in self._relays if o.factory_id != factory_id]
         return self
 
     def executor(self, kind: str, **options: Any) -> Runner:
@@ -153,7 +153,7 @@ class Runner:
     def control(self) -> Control:
         """Administer this namespace from ordinary application code.
 
-        Start and stop operators, enable and disable plugins, read what is
+        Start and stop relays, enable and disable plugins, read what is
         running. The controller judges every call as the identity this
         connection proved, so no credential is held here and nothing expires.
         A user grants a namespace's applications the authority once, with
@@ -167,7 +167,7 @@ class Runner:
 
     def send(
         self,
-        operator_id: str,
+        relay_id: str,
         message: str,
         channel: str,
         *,
@@ -175,21 +175,21 @@ class Runner:
         key: str | None = None,
         local: bool = False,
     ) -> Any:
-        """Send ``message`` to the entry channel ``channel`` of ``operator_id``.
+        """Send ``message`` to the entry channel ``channel`` of ``relay_id``.
 
         Through the controller, under the same role check as :meth:`control`,
-        answering its verdict: ``{"to": <operator>, "verdict": "delivered" |
+        answering its verdict: ``{"to": <relay>, "verdict": "delivered" |
         "absorbed" | "suspended"}``. ``msg_id`` is stamped as ``flz.msg_id``, so
-        an operator whose input log still holds that id absorbs the repeat;
+        a relay whose input log still holds that id absorbs the repeat;
         ``key`` reaches the partition group member whose range owns it.
 
         ``local``: in process, without the controller: the message is on no
-        disk, is lost if the runner stops before handling it, and an operator's
+        disk, is lost if the runner stops before handling it, and a relay's
         input log does not cover it. It answers ``None``.
         """
         if self._core is None:
             raise FlezhaError("runtime.runner_not_started")
-        answer = self._core.send_message(operator_id, channel, message.encode(), msg_id, key, local)
+        answer = self._core.send_message(relay_id, channel, message.encode(), msg_id, key, local)
         return json.loads(answer)
 
     # -- lifecycle ---------------------------------------------------------
@@ -209,8 +209,8 @@ class Runner:
             # attempted.
             self._core = core or Core.create()
             determinism.install()
-            for operator in self._operators:
-                self._declare(operator)
+            for relay in self._relays:
+                self._declare(relay)
             self._core.start(self._namespace)
             self._observe_shutdown()
 
@@ -317,10 +317,10 @@ class Runner:
             self._holds_slot = False
             _started_slot.release()
 
-    def _define(self, operator: Operator) -> Runner:
-        if any(o.factory_id == operator.factory_id for o in self._operators):
-            raise FlezhaError("topology.duplicate_factory_id", {"factory_id": operator.factory_id})
-        self._operators.append(operator)
+    def _define(self, relay: Relay) -> Runner:
+        if any(o.factory_id == relay.factory_id for o in self._relays):
+            raise FlezhaError("topology.duplicate_factory_id", {"factory_id": relay.factory_id})
+        self._relays.append(relay)
         if self._started:
             # Declaring on a live core appends to the set its connect frame is
             # serialized from, which is the resync of record. An FFI host ships
@@ -329,12 +329,12 @@ class Runner:
             # The in-process Rust host, which owns the runner channel directly,
             # is the only one that can notify a live controller — OWED to
             # `sdk-abi-factory-resync`, and Java carries the same gap.
-            self._declare(operator)
+            self._declare(relay)
         return self
 
-    def _declare(self, operator: Operator) -> None:
+    def _declare(self, relay: Relay) -> None:
         assert self._core is not None
-        graph.declare(operator.spec, self._core, self._registry)
+        graph.declare(relay.spec, self._core, self._registry)
 
     def _observe_shutdown(self) -> None:
         """Shutdown is observed three ways, because the harness, a user and

@@ -1,7 +1,7 @@
 """The latest-document router :meth:`Channels.route_latest` expands to.
 
-A dynamically keyed tasklet cannot receive a broadcast, and fanning an
-operator-wide document out over a remembered key set emits keys this member
+A dynamically keyed tasklet cannot receive a broadcast, and fanning a
+relay-wide document out over a remembered key set emits keys this member
 may no longer own after a rescale. The router delivers on a key's own next
 traffic item instead, so every key it emits is one whose traffic just proved
 this member owns it, at the price of one item of latency per key.

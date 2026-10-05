@@ -92,7 +92,7 @@ class Core:
         "part",
         "admin_call",
         "send_message",
-        "operators",
+        "relays",
         "last_error",
     )
 
@@ -150,10 +150,10 @@ class Core:
 
     # -- local mode: the declared graph here, with no controller -----------
 
-    def local_start(self, factory_id: str, operator_id: str) -> None:
+    def local_start(self, factory_id: str, relay_id: str) -> None:
         """Start the declared class as a local run. The alternative to
         :meth:`start`, never an addition."""
-        self._call("local_start", factory_id, operator_id)
+        self._call("local_start", factory_id, relay_id)
 
     def local_on_sink(self, channel: str) -> None:
         """Queue a declared sink for :meth:`local_next_output`."""
@@ -234,7 +234,7 @@ class Core:
 
     def send_message(
         self,
-        operator: str,
+        relay: str,
         channel: str,
         message: bytes,
         msg_id: str | None,
@@ -243,11 +243,11 @@ class Core:
     ) -> str:
         """Send one message, through the controller or locally, answering as
         JSON: the verdict, or ``null`` for a local send."""
-        return str(self._call("send_message", operator, channel, message, msg_id, key, local))
+        return str(self._call("send_message", relay, channel, message, msg_id, key, local))
 
-    def operators(self) -> list[str]:
-        """The ids of the operator instances bound on this runner."""
-        return list(self._call("operators"))
+    def relays(self) -> list[str]:
+        """The ids of the relay instances bound on this runner."""
+        return list(self._call("relays"))
 
     # -- diagnostics -------------------------------------------------------
 

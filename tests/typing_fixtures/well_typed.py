@@ -30,6 +30,6 @@ class Render:
         ctx.emit(f"{invoice.order_id}:{invoice.total}")
 
 
-@flezha.operator("billing")
+@flezha.relay("billing")
 def billing(c: flezha.Channels) -> None:
     c.input("orders").into(Bill).named("invoices").into(Render).sink()

@@ -101,7 +101,7 @@ class Statics:
 statics = flezha.tasklet(Statics, cell_keys=["a", "b"], name="statics")
 
 
-@flezha.operator(
+@flezha.relay(
     "every_key",
     description="every flow key",
     run={
@@ -127,12 +127,12 @@ def every_key(c: flezha.Channels) -> None:
     ).keyed().sink()
 
 
-@flezha.operator("static_key")
+@flezha.relay("static_key")
 def static_key(c: flezha.Channels) -> None:
     c.input("in").into(statics).sink()
 
 
-@flezha.operator(
+@flezha.relay(
     "every_steps_key",
     run={"steps": {"each": "chained", "on_failure": "keep_progress"}},
     durable="remote",
@@ -149,8 +149,8 @@ def _emitted() -> dict[str, set[str]]:
         "channel": set(),
         "tasklet": set(),
     }
-    for operator in (every_key, static_key, every_steps_key):
-        decl = graph.to_host_class_decl(operator.spec)
+    for relay in (every_key, static_key, every_steps_key):
+        decl = graph.to_host_class_decl(relay.spec)
         emitted["class"] |= set(decl)
         for channel in decl.get("channels", []):
             emitted["channel"] |= set(channel)
@@ -189,7 +189,7 @@ def test_the_fixture_names_the_python_builder_as_a_reader() -> None:
 
 
 @pytest.mark.parametrize(
-    "operator,factory",
+    "relay,factory",
     [
         (every_key, "every_key"),
         (static_key, "static_key"),
@@ -197,9 +197,9 @@ def test_the_fixture_names_the_python_builder_as_a_reader() -> None:
     ],
 )
 def test_each_declaration_carries_the_python_language_byte(
-    operator: flezha.Operator, factory: str
+    relay: flezha.Relay, factory: str
 ) -> None:
-    decl = graph.to_host_class_decl(operator.spec)
+    decl = graph.to_host_class_decl(relay.spec)
     assert decl["factory_id"] == factory
     assert decl["sdk_lang"] == 7
     assert decl["change_format_id"] == 5
@@ -208,7 +208,7 @@ def test_each_declaration_carries_the_python_language_byte(
 def test_a_merge_serialises_each_source_as_a_chain_the_merge_link_closes() -> None:
     """The mapping is a `transform` link and the key a `key` link, so the one
     link a merge adds is the terminator the core reads the group off."""
-    merged = app.module("fixtures").merged_input_operator
+    merged = app.module("fixtures").merged_input_relay
     chains = [channel["chains"] for channel in graph.to_host_class_decl(merged.spec)["channels"]]
     source = [{"link": "transform"}, {"link": "key"}, {"link": "merge", "tasklet": 0, "group": 0}]
     assert chains[0] == chains[1] == [source]
@@ -247,14 +247,14 @@ def _golden(topology: str) -> list[str]:
     ]
 
 
-def _lines(topology: str, operator: flezha.Operator) -> list[str]:
+def _lines(topology: str, relay: flezha.Relay) -> list[str]:
     """The DERIVED declaration in the golden's columns, one line per channel.
 
     The consumers, the kind after the wiring rule, the ``named`` override and the
     sink are all the core's answer to the record this builder submitted.
     """
     rendered = []
-    for channel in declare(operator)["channels"]:
+    for channel in declare(relay)["channels"]:
         consumers = channel["consumers"]
         rendered.append(
             " | ".join(
@@ -291,7 +291,7 @@ hybrid_producer = flezha.tasklet(HybridProducer, name="hybrid_producer_tasklet")
 hybrid_consumer = flezha.tasklet(HybridConsumer, name="hybrid_consumer_tasklet")
 
 
-@flezha.operator("hybrid_channel")
+@flezha.relay("hybrid_channel")
 def hybrid_channel(c: flezha.Channels) -> None:
     c.input("input").into(hybrid_producer).sink("hybrid_indicator", encode=_bytes).into(
         hybrid_consumer
@@ -312,7 +312,7 @@ tier_commit_a = flezha.tasklet(TierCommitA, name="tier_commit_a")
 block_b = flezha.tasklet(BlockB, name="block_b")
 
 
-@flezha.operator("commit_block_chain", run="steps")
+@flezha.relay("commit_block_chain", run="steps")
 def commit_block_chain(c: flezha.Channels) -> None:
     c.input("in").into(tier_commit_a).keyed().sink("mid", encode=_bytes).into(block_b)
 
@@ -336,19 +336,19 @@ class Plain:
 plain = flezha.tasklet(Plain, name="plain")
 
 
-def _modes(operator: flezha.Operator) -> dict[str, str]:
+def _modes(relay: flezha.Relay) -> dict[str, str]:
     return {
         tasklet["name"]: tasklet["cell_mode"]
-        for tasklet in graph.to_host_class_decl(operator.spec)["tasklets"]
+        for tasklet in graph.to_host_class_decl(relay.spec)["tasklets"]
     }
 
 
 def test_key_by_alone_makes_the_consumer_dynamic_and_one_tasklet_can_be_both() -> None:
-    @flezha.operator("keyed_plain")
+    @flezha.relay("keyed_plain")
     def keyed_plain(c: flezha.Channels) -> None:
         c.input("in", codec="text").key_by(lambda value: value[:1]).into(plain).sink()
 
-    @flezha.operator("single_plain")
+    @flezha.relay("single_plain")
     def single_plain(c: flezha.Channels) -> None:
         c.input("in", codec="text").into(plain).sink()
 
@@ -358,7 +358,7 @@ def test_key_by_alone_makes_the_consumer_dynamic_and_one_tasklet_can_be_both() -
 
 
 def test_a_keyed_merge_makes_the_merged_tasklet_dynamic() -> None:
-    @flezha.operator("keyed_merge")
+    @flezha.relay("keyed_merge")
     def keyed_merge(c: flezha.Channels) -> None:
         c.merge().from_(c.input("a"), str).from_(c.input("b"), str).key_by(str).into(plain)
 
@@ -367,7 +367,7 @@ def test_a_keyed_merge_makes_the_merged_tasklet_dynamic() -> None:
 
 
 def test_a_static_key_set_fed_by_key_by_is_refused_by_the_core() -> None:
-    @flezha.operator("static_keyed")
+    @flezha.relay("static_keyed")
     def static_keyed(c: flezha.Channels) -> None:
         c.input("in").key_by(str).into(statics).sink()
 

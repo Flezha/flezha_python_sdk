@@ -23,11 +23,11 @@ def _b64(value: bytes | str) -> str:
     return base64.b64encode(value.encode() if isinstance(value, str) else value).decode()
 
 
-def _caller(codec: ChannelCodec | None) -> flezha.Operator:
+def _caller(codec: ChannelCodec | None) -> flezha.Relay:
     """A caller whose ``ask`` channel calls with ``codec``, the outcome fed back
     into the tasklet that made the call."""
 
-    @flezha.operator(f"caller_{codec}")
+    @flezha.relay(f"caller_{codec}")
     def caller(c: flezha.Channels) -> None:
         (
             c.input("in", codec="text")
@@ -76,7 +76,7 @@ def test_call_closes_its_chain_with_the_call_link_and_declares_the_response_chan
 
 
 def test_a_call_to_a_named_instance_records_its_target_and_create_true() -> None:
-    @flezha.operator("named_call")
+    @flezha.relay("named_call")
     def named_call(c: flezha.Channels) -> None:
         c.input("in").into(echo).call("pricing", deadline_ms=500).map(lambda r: r.request).into(
             echo
@@ -96,7 +96,7 @@ def test_a_call_to_a_named_instance_records_its_target_and_create_true() -> None
 
 
 def test_a_call_on_an_entry_channel_is_refused_as_a_sink_on_one_is() -> None:
-    @flezha.operator("entry_call")
+    @flezha.relay("entry_call")
     def entry_call(c: flezha.Channels) -> None:
         c.input("in").call("pricing", deadline_ms=500)
 
@@ -204,8 +204,8 @@ def test_the_reference_call_rows_refuse_or_derive_as_the_fixture_states() -> Non
         assert [" | ".join(p.strip() for p in line.split("|")) for line in golden] == lines
 
 
-def test_the_operator_call_fixtures_the_manifest_lists_pass_the_core() -> None:
+def test_the_relay_call_fixtures_the_manifest_lists_pass_the_core() -> None:
     fixtures = app.module("fixtures_call").ALL
-    assert [op.factory_id for op in fixtures] == app.declared_fixtures()["operator_call"]
-    for operator in fixtures:
-        declare(operator)
+    assert [op.factory_id for op in fixtures] == app.declared_fixtures()["relay_call"]
+    for relay in fixtures:
+        declare(relay)

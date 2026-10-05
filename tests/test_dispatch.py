@@ -142,7 +142,7 @@ def test_a_filtered_input_is_consumed_and_reaches_no_handler(fake_core: FakeCore
             seen.append(value)
             ctx.emit(value)
 
-    @flezha.operator("filtered")
+    @flezha.relay("filtered")
     def filtered(c: flezha.Channels) -> None:
         c.input("in").filter(lambda value: len(value) > 2).into(OnlyLong).sink()
 
@@ -162,7 +162,7 @@ def test_a_key_request_answers_one_entry_per_payload(fake_core: FakeCore) -> Non
         def run(self, value: dict[str, str], ctx: flezha.Ctx[None, dict[str, str]]) -> None:
             ctx.emit(value)
 
-    @flezha.operator("routed_op")
+    @flezha.relay("routed_op")
     def routed_op(c: flezha.Channels) -> None:
         c.input("in").key_by(lambda value: value["k"]).into(Routed).sink()
 
@@ -179,7 +179,7 @@ def test_a_key_request_answers_the_keyed_consumer_behind_an_unkeyed_one(
     """The keys are the keyed consumer's, whatever an unkeyed consumer declared
     before it filters out."""
 
-    @flezha.operator("split_keyed")
+    @flezha.relay("split_keyed")
     def split_keyed(c: flezha.Channels) -> None:
         entry = c.input("in", codec="text")
         entry.filter(lambda value: value == "drop").into(echo).sink("dropped")
@@ -203,7 +203,7 @@ def test_a_per_payload_refusal_does_not_fail_the_whole_crossing(fake_core: FakeC
             raise ValueError("no key")
         return value["k"]
 
-    @flezha.operator("picky_keys")
+    @flezha.relay("picky_keys")
     def picky_keys(c: flezha.Channels) -> None:
         c.input("in").key_by(key_of).into(Routed).sink()
 
@@ -222,7 +222,7 @@ def test_a_live_state_read_answers_json(deps: DispatchDeps) -> None:
     result = answered(
         {
             "token": 12,
-            "operator": "op",
+            "relay": "op",
             "tasklet": 1,
             "change_seq": 0,
             "factory": "demo",
@@ -239,7 +239,7 @@ def test_a_snapshot_and_a_restore_fold_round_trip(deps: DispatchDeps) -> None:
     snapshot = answered(
         {
             "token": 14,
-            "operator": "op",
+            "relay": "op",
             "tasklet": 1,
             "change_seq": 0,
             "factory": "demo",
@@ -251,7 +251,7 @@ def test_a_snapshot_and_a_restore_fold_round_trip(deps: DispatchDeps) -> None:
     restored = answered(
         {
             "token": 15,
-            "operator": "op",
+            "relay": "op",
             "tasklet": 1,
             "cell_key": "other",
             "change_seq": 0,
@@ -291,7 +291,7 @@ def test_a_keyed_channel_with_no_key_is_refused_naming_it(fake_core: FakeCore) -
         def run(self, value: str, ctx: flezha.Ctx[None, Any]) -> None:
             ctx.emit(value)
 
-    @flezha.operator("keyed_sink")
+    @flezha.relay("keyed_sink")
     def keyed_sink(c: flezha.Channels) -> None:
         c.input("in").into(Keyless).keyed().sink("out")
 
@@ -300,7 +300,7 @@ def test_a_keyed_channel_with_no_key_is_refused_naming_it(fake_core: FakeCore) -
     assert "out" in effect["message"]
 
 
-# -- a tasklet ending its operator ------------------------------------------------
+# -- a tasklet ending its relay ------------------------------------------------
 #
 # The host only carries the request in the item's effect. Ending the instance
 # after the iteration commits is the core's.
@@ -315,12 +315,12 @@ class Finisher:
         ctx.complete(_RESULTS[value])
 
 
-@flezha.operator("finishing_steps", run="steps")
+@flezha.relay("finishing_steps", run="steps")
 def _finishing_steps(c: flezha.Channels) -> None:
     c.input("in").into(Finisher).sink()
 
 
-@flezha.operator("finishing_flow")
+@flezha.relay("finishing_flow")
 def _finishing_flow(c: flezha.Channels) -> None:
     c.input("in").into(Finisher).sink()
 
@@ -357,9 +357,9 @@ def test_a_failed_item_carries_no_completion(fake_core: FakeCore) -> None:
     assert "complete" not in effect
 
 
-# -- timers inside a steps operator ------------------------------------------------
+# -- timers inside a steps relay ------------------------------------------------
 #
-# A steps tasklet arms and cancels timers exactly as a flow operator one does; only
+# A steps tasklet arms and cancels timers exactly as a flow relay one does; only
 # a compensate hook refuses them.
 
 
@@ -374,12 +374,12 @@ class TimerSetter:
             ctx.cancel_timer("processing_time", 60_000)
 
 
-@flezha.operator("timer_steps", run="steps")
+@flezha.relay("timer_steps", run="steps")
 def _timer_steps(c: flezha.Channels) -> None:
     c.input("in").into(TimerSetter)
 
 
-@flezha.operator("timer_flow")
+@flezha.relay("timer_flow")
 def _timer_flow(c: flezha.Channels) -> None:
     c.input("in").into(TimerSetter)
 
@@ -413,7 +413,7 @@ def test_a_timer_call_inside_a_compensate_hook_is_refused(fake_core: FakeCore) -
     deps = solo_deps(flezha.tasklet(_ArmsOnUndo, name="arms_on_undo"), fake_core)
     activation = {
         "token": 24,
-        "operator": "op",
+        "relay": "op",
         "tasklet": 0,
         "change_seq": 0,
         "factory": "solo",
@@ -439,7 +439,7 @@ def test_a_compensation_runs_over_the_recorded_outputs(fake_core: FakeCore) -> N
     result = answered(
         {
             "token": 20,
-            "operator": "op",
+            "relay": "op",
             "tasklet": 0,
             "change_seq": 0,
             "factory": "solo",
@@ -490,12 +490,12 @@ def _steps_graph(c: flezha.Channels) -> None:
     edge.sink()
 
 
-@flezha.operator("steps_emit", run="steps")
+@flezha.relay("steps_emit", run="steps")
 def _steps_emit(c: flezha.Channels) -> None:
     _steps_graph(c)
 
 
-@flezha.operator("steps_emit_stream")
+@flezha.relay("steps_emit_stream")
 def _steps_emit_stream(c: flezha.Channels) -> None:
     _steps_graph(c)
 
@@ -527,7 +527,7 @@ def test_a_structured_steps_releases_one_untransformed_edge_output(
     assert effect["outputs"][0]["event_time"] is None
 
 
-@flezha.operator("steps_carry", run={"steps": {"each": "chained"}})
+@flezha.relay("steps_carry", run={"steps": {"each": "chained"}})
 def _steps_carry(c: flezha.Channels) -> None:
     c.input("in").into(StepsProducer).named("carry")
 
@@ -542,7 +542,7 @@ def test_a_steps_terminal_nothing_consumes_hands_its_value_to_the_core_as_the_ca
     ] == [("edge", 1, 0, 3)]
 
 
-@flezha.operator("answering")
+@flezha.relay("answering")
 def _answering(c: flezha.Channels) -> None:
     c.input("in").into(echo).response()
 
@@ -598,7 +598,7 @@ def test_the_same_graph_on_a_flow_class_releases_one_output_per_consumer(
 
 
 # The other end of the same two arms: what the CONSUMER is handed. A stream
-# producer already applied the edge, so delivery applies nothing; a steps operator
+# producer already applied the edge, so delivery applies nothing; a steps relay
 # stage released the value raw, so delivery is the one application.
 
 
@@ -658,7 +658,7 @@ def test_an_entry_edge_transform_that_raises_makes_the_message_unreadable(
             raise KeyError("k")
         return value["k"]
 
-    @flezha.operator("strict_entry")
+    @flezha.relay("strict_entry")
     def strict_entry(c: flezha.Channels) -> None:
         c.input("in").map(strict).into(Record).sink()
 
@@ -708,7 +708,7 @@ def _plugin_payloads(result: dict[str, Any]) -> list[bytes]:
 def test_interleaved_merged_sources_each_reach_the_tasklet_under_their_own_mapping(
     fake_core: FakeCore,
 ) -> None:
-    deps = deps_for(fixtures.merged_input_operator, fake_core)
+    deps = deps_for(fixtures.merged_input_relay, fake_core)
     activation = wire_work(
         70, "merged_input", (0, b"MSFT:1"), (1, b"MSFT:2"), (0, b"MSFT:3"), cell="MSFT"
     )
@@ -720,7 +720,7 @@ def test_interleaved_merged_sources_each_reach_the_tasklet_under_their_own_mappi
 
 
 def test_a_merged_entry_source_is_keyed_on_its_mapped_value(fake_core: FakeCore) -> None:
-    deps = deps_for(fixtures.merged_input_operator, fake_core)
+    deps = deps_for(fixtures.merged_input_relay, fake_core)
     for channel in (0, 1):
         result = answered(
             key_request(71, "merged_input", b"AAPL:1", b"MSFT", channel=channel), deps
@@ -728,7 +728,7 @@ def test_a_merged_entry_source_is_keyed_on_its_mapped_value(fake_core: FakeCore)
         assert [answer["keys"] for answer in result["prepared"]] == [["AAPL"], ["MSFT"]]
 
 
-@flezha.operator("merged_edge")
+@flezha.relay("merged_edge")
 def _merged_edge(c: flezha.Channels) -> None:
     ticks = c.input("ticks", codec="text")
     quotes = c.input("quotes", codec="text").into(echo)
@@ -755,7 +755,7 @@ def test_an_inter_tasklet_merge_source_is_mapped_and_keyed_as_it_is_released(
 
 
 def test_a_fan_of_three_runs_the_handler_three_times_under_one_effect(fake_core: FakeCore) -> None:
-    deps = deps_for(fixtures.transform_chain_operator, fake_core)
+    deps = deps_for(fixtures.transform_chain_relay, fake_core)
     result = answered(wire_work(80, "transform_chain", (0, b"a:1,a:2,a:3"), cell="A"), deps)
     (effect,) = result["effects"]
     assert (effect["verdict"], effect["consumed_offset"]) == ("ok", 80)
@@ -764,7 +764,7 @@ def test_a_fan_of_three_runs_the_handler_three_times_under_one_effect(fake_core:
 
 def test_a_fan_then_key_by_answers_every_key_once_at_the_crossing(fake_core: FakeCore) -> None:
     activation = key_request(81, "transform_chain", b"a:1,b:2,c:3", b"a:1,a:2", b"drop")
-    result = answered(activation, deps_for(fixtures.transform_chain_operator, fake_core))
+    result = answered(activation, deps_for(fixtures.transform_chain_relay, fake_core))
     assert [answer["keys"] for answer in result["prepared"]] == [["A", "B", "C"], ["A"], []]
 
 
@@ -773,12 +773,12 @@ def test_a_cell_handed_a_fanned_payload_runs_only_the_values_keyed_to_it(
 ) -> None:
     """The core hands the raw payload to every key the crossing answered, and
     each cell re-applies the chain."""
-    deps = deps_for(fixtures.transform_chain_operator, fake_core)
+    deps = deps_for(fixtures.transform_chain_relay, fake_core)
     result = answered(wire_work(82, "transform_chain", (0, b"a:1,b:2,c:3"), cell="B"), deps)
     assert _plugin_payloads(result) == [b"B:2"]
 
 
-@flezha.operator("fanned_static")
+@flezha.relay("fanned_static")
 def _fanned_static(c: flezha.Channels) -> None:
     c.input("in", codec="text").flat_map(lambda line: line.split(",")).into(
         fixtures.static_entry
@@ -800,7 +800,7 @@ def test_a_fan_into_a_static_consumer_runs_each_value_only_where_its_router_name
     } == {"a": [b"a:1"], "b": [b"b:2"], "c": [], "d": [b"x:3"]}
 
 
-@flezha.operator("fanned_edge")
+@flezha.relay("fanned_edge")
 def _fanned_edge(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(echo).flat_map(
         lambda line: [part for part in line.split(",") if part]
@@ -831,7 +831,7 @@ def test_a_spawn_returns_before_the_controller_answers_and_its_refusal_stays_in_
     read is what raises it."""
     fake_core.spawn_answer_after_s = 0.5
     fake_core.spawn_answer = flezha.FlezhaError(
-        "quota.exceeded", {"kind": "max_operators", "current": 3, "limit": 3}
+        "quota.exceeded", {"kind": "max_relays", "current": 3, "limit": 3}
     )
     seen: dict[str, Any] = {}
 
@@ -855,7 +855,7 @@ def test_a_spawn_returns_before_the_controller_answers_and_its_refusal_stays_in_
     assert seen["pending"] is None
     assert (seen["refusal"].code, seen["refusal"].details["kind"]) == (
         "quota.exceeded",
-        "max_operators",
+        "max_relays",
     )
     assert (effect["verdict"], effect["outputs"][0]["payload"]) == ("ok", b"p")
 
@@ -915,9 +915,9 @@ def test_a_spawn_payload_is_what_a_text_or_json_entry_reads(fake_core: FakeCore)
 @pytest.mark.parametrize(
     ("code", "details"),
     [
-        ("operator.already_running", {"operator": "w1"}),
-        ("operator.factory_unknown", {"namespace": "default", "factory": "worker"}),
-        ("operator.factory_not_steps", {"namespace": "default", "factory": "worker"}),
+        ("relay.already_running", {"relay": "w1"}),
+        ("relay.factory_unknown", {"namespace": "default", "factory": "worker"}),
+        ("relay.factory_not_steps", {"namespace": "default", "factory": "worker"}),
         ("authz.no_role_binding", {}),
         ("spawn.timeout", {"seconds": 30}),
         ("spawn.unavailable", {}),

@@ -15,11 +15,11 @@ idiomatic errors.
         def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
             ctx.emit(value)
 
-    @flezha.operator("echo")
-    def echo_operator(c: flezha.Channels) -> None:
+    @flezha.relay("echo")
+    def echo_relay(c: flezha.Channels) -> None:
         c.input("input").into(Echo).sink("out")
 
-    flezha.create_runner("default").register_factory(echo_operator).run()
+    flezha.create_runner("default").register_factory(echo_relay).run()
 """
 
 from __future__ import annotations
@@ -31,9 +31,9 @@ from .codec import ChannelCodec, TypeCodec, ValueCodec
 from .control import Control, StartResult
 from .ctx import Ctx, SpawnHandle, SpawnResult
 from .errors import DeterminismWarning, FlezhaError, NonRetryableError
-from .local import LocalOperator, SinkOutput
+from .local import LocalRelay, SinkOutput
 from .logger import configure as configure_logging
-from .operator import Durable, Operator, Run, operator
+from .relay import Durable, Relay, Run, relay
 from .runner import ACTIVATION_SCHEMA_VERSION, Runner, create_runner
 from .tasklet import Tasklet, tasklet
 from .version import __version__
@@ -44,7 +44,7 @@ __all__ = [
     # authoring
     "tasklet",
     "state",
-    "operator",
+    "relay",
     "Channels",
     "Edge",
     "Merge",
@@ -53,14 +53,14 @@ __all__ = [
     "SpawnHandle",
     "SpawnResult",
     "Tasklet",
-    "Operator",
+    "Relay",
     "Run",
     "Durable",
     "DROPPED",
     # runner
     "create_runner",
     "Runner",
-    "LocalOperator",
+    "LocalRelay",
     "SinkOutput",
     "configure_logging",
     # codec

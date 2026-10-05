@@ -1,9 +1,9 @@
-"""A cell belongs to one operator.
+"""A cell belongs to one relay.
 
-One registered class serves every operator of its factory on a runner, such as
-each instance of a steps operator or each partition of a stream, and each has
+One registered class serves every relay of its factory on a runner, such as
+each instance of a steps relay or each partition of a stream, and each has
 cells of its own under the same tasklet and cell key. Every path that reads or
-writes a cell's state is driven here with two operators side by side.
+writes a cell's state is driven here with two relays side by side.
 """
 
 from __future__ import annotations
@@ -37,36 +37,36 @@ class Kept:
 kept = flezha.tasklet(Kept, name="kept")
 
 
-@flezha.operator("kept_operator")
-def kept_operator(c: flezha.Channels) -> None:
+@flezha.relay("kept_relay")
+def kept_relay(c: flezha.Channels) -> None:
     c.input("input").into(kept).sink("out")
 
 
-def _activation(kind: str, operator: str, **fields: Any) -> dict[str, Any]:
+def _activation(kind: str, relay: str, **fields: Any) -> dict[str, Any]:
     return {
         "token": 1,
-        "operator": operator,
+        "relay": relay,
         "tasklet": 0,
         "cell_key": None,
         "change_seq": 0,
-        "factory": "kept_operator",
+        "factory": "kept_relay",
         "kind": kind,
         **fields,
     }
 
 
-def _work(deps: DispatchDeps, operator: str, value: str) -> None:
-    activation = {**work_activation(1, value, factory="kept_operator"), "operator": operator}
+def _work(deps: DispatchDeps, relay: str, value: str) -> None:
+    activation = {**work_activation(1, value, factory="kept_relay"), "relay": relay}
     (effect,) = answered(activation, deps)["effects"]
     assert effect["verdict"] == "ok", effect
 
 
-def _read(deps: DispatchDeps, operator: str) -> Any:
-    return json.loads(answered(_activation("live_state_read", operator), deps)["json"])
+def _read(deps: DispatchDeps, relay: str) -> Any:
+    return json.loads(answered(_activation("live_state_read", relay), deps)["json"])
 
 
-def test_two_operators_of_one_factory_keep_their_own_cell(fake_core: FakeCore) -> None:
-    deps = deps_for(kept_operator, fake_core)
+def test_two_relays_of_one_factory_keep_their_own_cell(fake_core: FakeCore) -> None:
+    deps = deps_for(kept_relay, fake_core)
     _work(deps, "order_a", "a")
     _work(deps, "order_b", "b")
     _work(deps, "order_a", "c")
@@ -75,10 +75,10 @@ def test_two_operators_of_one_factory_keep_their_own_cell(fake_core: FakeCore) -
     assert _read(deps, "order_b") == {"seen": ["b"]}
 
 
-def test_a_restore_and_an_applied_state_reach_only_their_own_operator(
+def test_a_restore_and_an_applied_state_reach_only_their_own_relay(
     fake_core: FakeCore,
 ) -> None:
-    deps = deps_for(kept_operator, fake_core)
+    deps = deps_for(kept_relay, fake_core)
     restore = _activation(
         "restore_fold", "order_a", snapshot=None, changes=[{"bytes": codec.encode("r")}]
     )
@@ -92,8 +92,8 @@ def test_a_restore_and_an_applied_state_reach_only_their_own_operator(
     assert _read(deps, "order_c") == {"seen": []}
 
 
-def test_a_compensation_reads_its_own_operators_cell(fake_core: FakeCore) -> None:
-    deps = deps_for(kept_operator, fake_core)
+def test_a_compensation_reads_its_own_relays_cell(fake_core: FakeCore) -> None:
+    deps = deps_for(kept_relay, fake_core)
     _work(deps, "order_a", "a")
     _work(deps, "order_b", "b")
 
@@ -104,7 +104,7 @@ def test_a_compensation_reads_its_own_operators_cell(fake_core: FakeCore) -> Non
 
 
 def test_a_harness_restore_fills_the_cell_it_reads() -> None:
-    harness: TaskletTestHarness[dict[str, Any]] = TaskletTestHarness(kept, operator="order_a")
+    harness: TaskletTestHarness[dict[str, Any]] = TaskletTestHarness(kept, relay="order_a")
     harness.restore(changes=[codec.encode("r")])
 
     assert harness.state == {"seen": ["r"]}

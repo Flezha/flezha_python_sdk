@@ -40,7 +40,7 @@ RESERVED_PREFIX = "flz."
 
 #: The identity stamps a non-tier keyed plugin emit carries.
 #:
-#: Under the effectively-once tier, and for a durable steps operator, the controller
+#: Under the effectively-once tier, and for a durable steps relay, the controller
 #: derives them at flush time from the effect record, so none ride on the frame;
 #: otherwise the frame is written straight to the wire and the stamps have
 #: nowhere else to come from.
@@ -83,7 +83,7 @@ class SpawnHandle:
     ``wait()`` blocks for the answer; ``try_result()`` never waits and answers
     ``None`` while it is pending. Either raises :class:`~flezha.errors.FlezhaError`
     when the spawn reached no instance, its ``code`` the controller's (such as
-    ``operator.already_running``) or the core's (``spawn.timeout``,
+    ``relay.already_running``) or the core's (``spawn.timeout``,
     ``spawn.unavailable``). A resolved handle answers every read the same until
     the invocation ends, which releases it: a later read raises
     ``runtime.spawn_handle_released``, and a failure no read collected is
@@ -128,7 +128,7 @@ class Ctx(Generic[S, O_contra]):
         "_spec",
         "_node",
         "_outgoing",
-        "_operator",
+        "_relay",
         "_change_seq",
         "_now",
         "_bridge",
@@ -155,7 +155,7 @@ class Ctx(Generic[S, O_contra]):
         spec: ClassSpec,
         node: TaskNode,
         outgoing: list[ChannelSpec],
-        operator: str,
+        relay: str,
         cell_key: str | None,
         change_seq: int,
         now: int,
@@ -170,7 +170,7 @@ class Ctx(Generic[S, O_contra]):
         self._spec = spec
         self._node = node
         self._outgoing = outgoing
-        self._operator = operator
+        self._relay = relay
         self._change_seq = change_seq
         self._now = now
         self._bridge = bridge
@@ -213,7 +213,7 @@ class Ctx(Generic[S, O_contra]):
         if self._identity is None:
             # Lazily, because most invocations never ask and the identity is
             # the one part of the derivation that costs an allocation.
-            self._identity = cell_identity(self._operator, self._node.name, self.cell_key)
+            self._identity = cell_identity(self._relay, self._node.name, self.cell_key)
         answer = stable_id(self._identity, self._change_seq, self._ordinal)
         self._ordinal += 1
         return answer
@@ -308,7 +308,7 @@ class Ctx(Generic[S, O_contra]):
 
         The rest of the iteration still runs and commits; the instance then
         ends instead of waiting for its next input, a flow instance once every
-        Cell is idle. In a ``once`` steps operator it sets the result the pass
+        Cell is idle. In a ``once`` steps relay it sets the result the pass
         ends with. ``result`` is encoded as a sink naming no codec encodes a
         value: bytes as they are, a string as UTF-8 and anything else as JSON;
         ``None`` carries no result. A later call in the same invocation replaces
@@ -342,7 +342,7 @@ class Ctx(Generic[S, O_contra]):
         replay, passes its own ``id``. With one, ``if_running`` decides what a
         running instance under it gets: ``"deliver"`` (the default) feeds it
         ``payload``, ``"error"`` resolves the handle to a
-        :class:`~flezha.errors.FlezhaError` coded ``operator.already_running``.
+        :class:`~flezha.errors.FlezhaError` coded ``relay.already_running``.
 
         Never waits and never raises a controller refusal: every answer comes
         through the handle. A replayed invocation sends nothing and resolves to
@@ -535,7 +535,7 @@ class Ctx(Generic[S, O_contra]):
         if not channel.keyed or self._spec.records_effects:
             return []
         return [
-            (CELL_STAMP, f"{self._operator}/{self._node.name}/{self.cell_key or ''}"),
+            (CELL_STAMP, f"{self._relay}/{self._node.name}/{self.cell_key or ''}"),
             (SEQ_STAMP, f"{self._change_seq}.{self._emit_ordinal}"),
             (KEY_STAMP, key or ""),
         ]

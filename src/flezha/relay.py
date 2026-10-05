@@ -1,11 +1,11 @@
-"""The operator decorator: what an author declares and what a runner registers.
+"""The relay decorator: what an author declares and what a runner registers.
 
-An operator is its channel graph, so the decorated object is the function that
+A relay is its channel graph, so the decorated object is the function that
 builds one:
 
 .. code-block:: python
 
-    @flezha.operator("echo")
+    @flezha.relay("echo")
     def echo(c: flezha.Channels) -> None:
         c.input("input").into(echo_task).sink("out")
 
@@ -20,7 +20,7 @@ emitted, or a tasklet class, which emits through its context:
 
 .. code-block:: python
 
-    @flezha.operator(id="echo", sink="out", codec="text")
+    @flezha.relay(id="echo", sink="out", codec="text")
     def echo(value: str) -> str:
         return value
 """
@@ -42,9 +42,9 @@ __all__ = [
     "Each",
     "Exactly",
     "OnFailure",
-    "Operator",
+    "Relay",
     "Run",
-    "operator",
+    "relay",
 ]
 
 Each = Literal["once", "per_input", "chained"]
@@ -121,8 +121,8 @@ milliseconds, or ``False``, a kept flow instance never sleeps and a kept steps
 instance sleeps after six idle hours."""
 
 
-class Operator:
-    """One declared operator class, resolved to its spec.
+class Relay:
+    """One declared relay class, resolved to its spec.
 
     Registering performs no I/O: the decorator records the declaration and the
     spec is built on first use, so importing a declaring module opens no socket
@@ -149,7 +149,7 @@ class Operator:
         self.factory_id = factory_id
         self.declaration = declaration
         #: A short form's generated tasklet, named after the factory id and
-        #: wireable in another operator's body; ``None`` for a channels body.
+        #: wireable in another relay's body; ``None`` for a channels body.
         self.tasklet = tasklet
         self._settings = settings
         self._spec: ClassSpec | None = None
@@ -159,7 +159,7 @@ class Operator:
         self.doc = declaration.__doc__
 
     def __repr__(self) -> str:
-        return f"<flezha operator {self.factory_id}>"
+        return f"<flezha relay {self.factory_id}>"
 
     @property
     def spec(self) -> ClassSpec:
@@ -195,7 +195,7 @@ def _declares_channels(declaration: Any) -> bool:
     return annotation is None or (isinstance(annotation, type) and issubclass(annotation, Channels))
 
 
-def operator(
+def relay(
     id: str | None = None,
     *,
     run: Run | None = None,
@@ -206,8 +206,8 @@ def operator(
     input: str | None = None,
     codec: _codec.ChannelCodec | None = None,
     **settings: Unpack[TaskletSettings],
-) -> Callable[[Any], Operator]:
-    """Declare an operator: fed by the controller through entry channels.
+) -> Callable[[Any], Relay]:
+    """Declare a relay: fed by the controller through entry channels.
 
     ``id`` is the factory id. ``run`` is ``"flow"`` (the default) or
     ``"steps"``, bare or with its members, e.g.
@@ -224,7 +224,7 @@ def operator(
     """
     unknown = sorted(settings.keys() - TaskletSettings.__optional_keys__)
     if unknown:
-        raise TypeError(f"operator() got an unexpected keyword argument {unknown[0]!r}")
+        raise TypeError(f"relay() got an unexpected keyword argument {unknown[0]!r}")
     class_settings = {
         "run": run,
         "durable": durable,
@@ -232,12 +232,12 @@ def operator(
         "description": description,
     }
 
-    def decorate(declaration: Any) -> Operator:
+    def decorate(declaration: Any) -> Relay:
         name = getattr(declaration, "__name__", "<declaration>")
         if id is None:
             # A factory id is an address a user types, so it is written
             # rather than derived from the declaration's name.
-            raise FlezhaError("topology.missing_factory_id", {"operator": name})
+            raise FlezhaError("topology.missing_factory_id", {"relay": name})
         if not _declares_channels(declaration):
             return _short_form(
                 id, declaration, class_settings, settings, sink=sink, input=input, codec=codec
@@ -253,7 +253,7 @@ def operator(
                 "topology.short_form_field_on_full_form",
                 {"factory_id": id, "fields": [f"`{key}`" for key in written]},
             )
-        return Operator(id, declaration, class_settings)
+        return Relay(id, declaration, class_settings)
 
     return decorate
 
@@ -267,8 +267,8 @@ def _short_form(
     sink: str | None,
     input: str | None,
     codec: _codec.ChannelCodec | None,
-) -> Operator:
-    """One tasklet body as a whole operator: its entry channel, the
+) -> Relay:
+    """One tasklet body as a whole relay: its entry channel, the
     tasklet named after the factory id and declared with ``settings``, and
     the sink when one is written."""
     name = body.__name__
@@ -287,4 +287,4 @@ def _short_form(
 
     channels.__name__ = name
     channels.__doc__ = generated.doc
-    return Operator(factory_id, channels, class_settings, generated)
+    return Relay(factory_id, channels, class_settings, generated)

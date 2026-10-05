@@ -1,5 +1,5 @@
 """Starts the desk's runner: the process that connects to the controller and
-serves agentdesk's operators, in the `agents` namespace.
+serves agentdesk's relays, in the `agents` namespace.
 """
 
 from gateway import gateway

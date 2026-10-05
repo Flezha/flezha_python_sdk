@@ -27,11 +27,11 @@ from flezha.errors import FlezhaError
 CHECK_CORE = native.Core.create()
 
 
-def declare(operator: flezha.Operator) -> dict[str, Any]:
-    """Submit one operator's record, and answer what the core derived from it."""
+def declare(relay: flezha.Relay) -> dict[str, Any]:
+    """Submit one relay's record, and answer what the core derived from it."""
     from flezha import graph
 
-    return graph.validate(operator.spec, CHECK_CORE)
+    return graph.validate(relay.spec, CHECK_CORE)
 
 
 @flezha.state
@@ -78,7 +78,7 @@ class Echo:
 echo = flezha.tasklet(Echo, name="echo")
 
 
-@flezha.operator("demo")
+@flezha.relay("demo")
 def demo(c: flezha.Channels) -> None:
     c.input("input").into(echo).named("mid").into(count_up).sink("out")
 
@@ -121,7 +121,7 @@ class FakeCore:
         self.spawn_answer: dict[str, str] | FlezhaError | None = None
         #: How long after its request a spawn is answered, as a controller takes.
         self.spawn_answer_after_s = 0.0
-        #: The operator instances the core reports bound.
+        #: The relay instances the core reports bound.
         self.bound: list[str] = []
 
     # -- the ABI ----------------------------------------------------------
@@ -194,7 +194,7 @@ class FakeCore:
     def watch_stdin_eof(self, grace_ms: int) -> None:
         self.stdin_watch_grace_ms = grace_ms
 
-    def operators(self) -> list[str]:
+    def relays(self) -> list[str]:
         return list(self.bound)
 
     def free(self) -> None:
@@ -278,7 +278,7 @@ def work_activation(
     """
     return {
         "token": token,
-        "operator": "op",
+        "relay": "op",
         "tasklet": tasklet,
         "change_seq": 0,
         "factory": factory,
@@ -324,7 +324,7 @@ def key_request(
     """One key request over wire payloads, as the veneer produces it."""
     return {
         "token": token,
-        "operator": "op",
+        "relay": "op",
         "tasklet": 0,
         "change_seq": 0,
         "factory": factory,
@@ -345,8 +345,8 @@ def answered(activation: dict[str, Any], deps: Any) -> dict[str, Any]:
     return run_now(answer(activation, deps))
 
 
-def deps_for(operator: flezha.Operator, core: FakeCore) -> Any:
-    """A validated, registered `DispatchDeps` over one operator.
+def deps_for(relay: flezha.Relay, core: FakeCore) -> Any:
+    """A validated, registered `DispatchDeps` over one relay.
 
     Twelve tests across two files spelled `Registry() + validate + add +
     DispatchDeps` out longhand; this is that, once, so a change to what a
@@ -355,8 +355,8 @@ def deps_for(operator: flezha.Operator, core: FakeCore) -> Any:
     from flezha.dispatch import DispatchDeps, Registry
 
     registry = Registry()
-    declare(operator)
-    registry.add(operator.spec)
+    declare(relay)
+    registry.add(relay.spec)
     return DispatchDeps(registry=registry, bridge=core)
 
 
@@ -377,14 +377,14 @@ def compensating(seen: list[Any]) -> Any:
     return flezha.tasklet(Compensating, name="compensating")
 
 
-def solo(task: flezha.Tasklet[Any, Any], factory: str = "solo") -> flezha.Operator:
-    """A one-tasklet operator wrapped around `task`, its output on a sink."""
+def solo(task: flezha.Tasklet[Any, Any], factory: str = "solo") -> flezha.Relay:
+    """A one-tasklet relay wrapped around `task`, its output on a sink."""
 
-    @flezha.operator(factory)
-    def operator(c: flezha.Channels) -> None:
+    @flezha.relay(factory)
+    def relay(c: flezha.Channels) -> None:
         c.input("in").into(task).sink()
 
-    return operator
+    return relay
 
 
 def solo_deps(task: flezha.Tasklet[Any, Any], core: FakeCore, factory: str = "solo") -> Any:

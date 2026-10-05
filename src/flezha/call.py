@@ -1,6 +1,6 @@
-"""A graph's call to another operator, and the outcome that comes back.
+"""A graph's call to another relay, and the outcome that comes back.
 
-A ``call(...)`` end sends each value its chain yields to another operator; the
+A ``call(...)`` end sends each value its chain yields to another relay; the
 outcome arrives later as a :class:`Response` on the caller's Response channel,
 whose payload is the JSON envelope :func:`response_decoder` reads.
 """

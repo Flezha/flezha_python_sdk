@@ -1,6 +1,6 @@
 """The channel-graph DSL, and the specs it produces.
 
-The graph is built by calling an operator's declaration function with a
+The graph is built by calling a relay's declaration function with a
 :class:`Channels`; every fluent call answers a new :class:`Edge`, so a shared
 prefix can be branched without the arms colliding.
 
@@ -223,7 +223,7 @@ class ClassSpec:
 
 
 class Channels:
-    """The fluent builder an operator's declaration function receives."""
+    """The fluent builder a relay's declaration function receives."""
 
     def __init__(self, factory_id: str) -> None:
         self.factory_id = factory_id
@@ -277,7 +277,7 @@ class Channels:
         once, as a ``(key, document)`` pair; a document whose class-codec bytes
         equal the retained one is inert, and a key with no traffic receives
         nothing. The node is ``route_latest``, so a second router in one
-        operator is named with :meth:`route_latest_named`.
+        relay is named with :meth:`route_latest_named`.
         """
         return self._route_latest(documents, traffic, key, None)
 
@@ -540,7 +540,7 @@ class Edge(Generic[T]):
         channel: str | None = None,
         codec: ChannelCodec | None = None,
     ) -> Edge[Response[T, Any]]:
-        """End this edge's chain in a call to another operator, and answer the
+        """End this edge's chain in a call to another relay, and answer the
         edge of its Response channel.
 
         Each value that reaches the end, after this chain's transforms and key,

@@ -19,7 +19,7 @@
 # every tier against the release's free-threaded wheel for its version.
 #
 # What this cannot see is the fifteen-capability vocabulary the controller
-# owns: persistence, effectively-once, correction, partitioning, steps operators,
+# owns: persistence, effectively-once, correction, partitioning, steps relays,
 # liveness, restarts. Those are end-to-end scenarios and they run in the core's
 # own tree, against the commit it pins this repository at.
 set -euo pipefail
@@ -67,6 +67,6 @@ step "smoke"
 # disconnect ends the runner non-zero on purpose, so the orchestrator that owns
 # it restarts it.
 exec .core/flz-fake-controller \
-  --factory do_nothing --operator echo-1 --channel input \
+  --factory do_nothing --relay echo-1 --channel input \
   --input alpha --input beta --timeout-ms 60000 \
   -- .venv/bin/python test_app/runner.py smoke

@@ -39,7 +39,7 @@ class Dispatch:
         ctx.emit(shipment.tracking)
 
 
-@flezha.operator("mismatched")
+@flezha.relay("mismatched")
 def mismatched(c: flezha.Channels) -> None:
     # `Bill` produces Invoice; `Dispatch` accepts Shipment.
     c.input("orders").into(Bill).named("invoices").into(Dispatch).sink()

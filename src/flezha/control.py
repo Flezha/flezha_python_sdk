@@ -22,14 +22,14 @@ from .native import Core
 
 __all__ = ["Control", "StartResult", "StartOutcome"]
 
-#: What a start did: started the operator, or found a live instance already
+#: What a start did: started the relay, or found a live instance already
 #: holding the id it named and left it untouched.
 StartOutcome = Literal["started", "already_running"]
 
 
 @dataclass(frozen=True, slots=True)
 class StartResult:
-    """What a start answered: the id the operator runs under, the generated one
+    """What a start answered: the id the relay runs under, the generated one
     when the start named none, and what the start did."""
 
     id: str
@@ -44,7 +44,7 @@ class Control:
     def __init__(self, core: Core) -> None:
         self._core = core
 
-    def start_operator(
+    def start_relay(
         self,
         factory_id: str,
         *,
@@ -52,20 +52,20 @@ class Control:
         init_values: Any = None,
         opts: Any = None,
     ) -> StartResult:
-        """Start an operator, on the specification ``flz operator start`` takes.
+        """Start a relay, on the specification ``flz relay start`` takes.
 
         Without ``id`` the controller generates one, and the answer carries it.
         A start without an id that is retried after a lost answer starts a second
-        operator, and a second stream runs until it is stopped; passing an id
+        relay, and a second stream runs until it is stopped; passing an id
         prevents it, because a start of a live id answers ``already_running``.
         """
         fields = _given(factory_id=factory_id, id=id, init_values=init_values, opts=opts)
-        answer = self.call("Operator.start", fields)
+        answer = self.call("Relay.start", fields)
         return StartResult(answer["id"], answer["outcome"])
 
-    def stop_operator(self, operator_id: str) -> Any:
-        """Stop an operator, or the whole partition group it names."""
-        return self.call("Operator.stop", operator_id)
+    def stop_relay(self, relay_id: str) -> Any:
+        """Stop a relay, or the whole partition group it names."""
+        return self.call("Relay.stop", relay_id)
 
     def enable_plugin(
         self,
@@ -74,20 +74,20 @@ class Control:
         *,
         opts: dict[str, Any] | None = None,
         single: bool = False,
-        operator_id: str | None = None,
+        relay_id: str | None = None,
         hooks: list[Any] | None = None,
     ) -> Any:
         """Enable the plugin ``name`` in this namespace, of the provider
-        ``provider`` (for example ``"operator_websocket"``), on its ``opts``.
+        ``provider`` (for example ``"relay_websocket"``), on its ``opts``.
 
-        ``single`` runs one copy in the whole cluster. ``operator_id`` with
-        ``hooks`` binds that operator in the same call.
+        ``single`` runs one copy in the whole cluster. ``relay_id`` with
+        ``hooks`` binds that relay in the same call.
         """
         fields = _given(
             provider=provider,
             opts=opts or {},
             single=single or None,
-            operator_id=operator_id,
+            relay_id=relay_id,
             hooks=hooks,
         )
         return self.call("PluginManager.enable", name, fields)
@@ -95,37 +95,37 @@ class Control:
     def bind_plugin(
         self,
         name: str,
-        operator_id: str,
+        relay_id: str,
         *,
         hooks: list[Any] | None = None,
         channel: str | None = None,
     ) -> Any:
-        """Bind the operator ``operator_id`` to the enabled plugin ``name``."""
+        """Bind the relay ``relay_id`` to the enabled plugin ``name``."""
         return self.call(
             "PluginManager.bind",
             name,
-            _given(operator_id=operator_id, hooks=hooks, channel=channel),
+            _given(relay_id=relay_id, hooks=hooks, channel=channel),
         )
 
-    def unbind_plugin(self, name: str, operator_id: str) -> Any:
-        """Unbind the operator ``operator_id`` from the plugin ``name``, which stays enabled."""
-        return self.call("PluginManager.unbind", name, {"operator_id": operator_id})
+    def unbind_plugin(self, name: str, relay_id: str) -> Any:
+        """Unbind the relay ``relay_id`` from the plugin ``name``, which stays enabled."""
+        return self.call("PluginManager.unbind", name, {"relay_id": relay_id})
 
     def disable_plugin(self, name: str) -> Any:
         """Disable the plugin ``name``, stopping it wherever it runs."""
         return self.call("PluginManager.disable", name, {})
 
-    def list_operators(self) -> Any:
-        """The operator ids running in this namespace."""
-        return self.call("Operator.list_operators")
+    def list_relays(self) -> Any:
+        """The relay ids running in this namespace."""
+        return self.call("Relay.list_relays")
 
     def list_plugins(self) -> Any:
-        """The plugins enabled in this namespace: name, provider, single, bound operators."""
+        """The plugins enabled in this namespace: name, provider, single, bound relays."""
         return self.call("PluginManager.list")
 
-    def cell_state(self, operator_id: str, cell_key: str) -> Any:
+    def cell_state(self, relay_id: str, cell_key: str) -> Any:
         """One cell's live state, and the change sequence it was read at."""
-        return self.call("Operator.cell_state", operator_id, cell_key)
+        return self.call("Relay.cell_state", relay_id, cell_key)
 
     def call(self, verb: str, *args: Any) -> Any:
         """Any published function, by name.

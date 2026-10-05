@@ -44,20 +44,20 @@ __all__ = [
 class Cell:
     """One Cell of one declared class: what every activation kind operates on.
 
-    The `(registered, node, operator, key)` address every activation kind
+    The `(registered, node, relay, key)` address every activation kind
     names, and where `state` is read and written — so the lock stays inside
     :class:`RegisteredClass` and nothing else touches the cell table.
     """
 
     registered: RegisteredClass
     node: TaskNode
-    operator: str
+    relay: str
     key: str | None
     #: Where the cell's state is kept in its class's table.
     address: tuple[str, int, str | None] = field(init=False)
 
     def __post_init__(self) -> None:
-        self.address = (self.operator, self.node.index, self.key)
+        self.address = (self.relay, self.node.index, self.key)
 
     @property
     def task(self) -> Tasklet[Any, Any]:
@@ -88,7 +88,7 @@ class RegisteredClass:
             [channel for channel in spec.channels if channel.producer == node.index]
             for node in spec.tasklets
         ]
-        # Keyed by operator too: one class serves every operator of its
+        # Keyed by relay too: one class serves every relay of its
         # factory on this runner, such as each steps instance, and each has
         # cells of its own under the same tasklet and key.
         self._cells: dict[tuple[str, int, str | None], Any] = {}
@@ -109,13 +109,13 @@ class RegisteredClass:
             self._cells[cell.address] = state
 
     def live_instances(self) -> int:
-        """How many operators of this class have a materialised cell here."""
+        """How many relays of this class have a materialised cell here."""
         with self._lock:
-            return len({operator for operator, _node, _key in self._cells})
+            return len({relay for relay, _node, _key in self._cells})
 
-    def cell(self, node: TaskNode, operator: str, key: str | None) -> Cell:
+    def cell(self, node: TaskNode, relay: str, key: str | None) -> Cell:
         """The handle every activation kind operates through."""
-        return Cell(self, node, operator, key)
+        return Cell(self, node, relay, key)
 
     def channel_at(self, index: int) -> ChannelSpec | None:
         """The channel an activation names, or ``None`` when it names none.
@@ -311,7 +311,7 @@ async def invoke(
         spec=cell.registered.spec,
         node=cell.node,
         outgoing=cell.registered.outgoing[cell.node.index],
-        operator=cell.operator,
+        relay=cell.relay,
         cell_key=cell.key,
         change_seq=activation.get("change_seq", 0),
         now=now,
@@ -356,7 +356,7 @@ async def answer(activation: dict[str, Any], deps: DispatchDeps) -> dict[str, An
                 non_retryable=True,
             )
         cell = registered.cell(
-            tasklets[index], activation.get("operator", ""), activation.get("cell_key")
+            tasklets[index], activation.get("relay", ""), activation.get("cell_key")
         )
         return await _answer_kind(cell, activation, registered, deps)
     except Exception as error:  # noqa: BLE001 - every failure becomes a result
@@ -463,7 +463,7 @@ async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any, Any]) -> Non
     untransformed = channel is None or channel.kind == "entry" or cell.registered.spec.runs_in_steps
     edge = _edge_into(channel, cell.node.index) if untransformed else None
     # The entrance (the entry channel's decoder and the entry edge's
-    # transforms) is where a message the operator cannot read is told apart
+    # transforms) is where a message the relay cannot read is told apart
     # from a handler that fails on one it can.
     try:
         values = values_of(channel, edge, item.get("payload") or b"")

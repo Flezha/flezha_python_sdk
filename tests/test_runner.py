@@ -24,14 +24,14 @@ class Other:
         ctx.emit(value)
 
 
-@flezha.operator("other")
+@flezha.relay("other")
 def other_op(c: flezha.Channels) -> None:
     c.input("in").into(Other).sink()
 
 
 def declared(r: Runner) -> list[str]:
     """The factory ids ``r`` declares."""
-    return [o.factory_id for o in r._operators]  # type: ignore[attr-defined]
+    return [o.factory_id for o in r._relays]  # type: ignore[attr-defined]
 
 
 @pytest.fixture
@@ -59,7 +59,7 @@ def test_creating_a_runner_connects_nothing(runner: Any) -> None:
     r = runner("my_app")
     assert r.namespace == "my_app"
     with pytest.raises(FlezhaError) as refused:
-        r.operators()
+        r.relays()
     assert refused.value.code == "runtime.runner_not_started"
     assert declared(r) == []
 
@@ -131,7 +131,7 @@ def test_only_one_runner_may_be_started_per_process(runner: Any) -> None:
 
 
 def test_a_declaration_that_fails_releases_the_slot(runner: Any) -> None:
-    @flezha.operator("broken")
+    @flezha.relay("broken")
     def broken(c: flezha.Channels) -> None:
         c.input("dangling")
 
@@ -175,7 +175,7 @@ def test_removing_a_type_with_live_instances_is_refused(runner: Any) -> None:
         with pytest.raises(FlezhaError) as caught:
             r.unregister_factory(demo)
         assert (caught.value.code, caught.value.details) == (
-            "runtime.operator_type_in_use",
+            "runtime.relay_type_in_use",
             {"factory_id": "demo", "live_instances": 1},
         )
         assert declared(r) == ["demo"]
@@ -324,17 +324,17 @@ def test_a_start_takes_the_factory_first_and_answers_the_id_and_the_outcome(
 
     monkeypatch.setattr(core, "admin_call", admin_call)
     control = runner().start(core=core).control()
-    assert control.start_operator("echo") == flezha.StartResult("echo-k7m2qzxw4pd3fn2a", "started")
-    assert control.start_operator("echo", id="my_echo", init_values={"a": 1}) == flezha.StartResult(
+    assert control.start_relay("echo") == flezha.StartResult("echo-k7m2qzxw4pd3fn2a", "started")
+    assert control.start_relay("echo", id="my_echo", init_values={"a": 1}) == flezha.StartResult(
         "my_echo", "already_running"
     )
     assert calls == [
-        ("Operator.start", [{"factory_id": "echo"}]),
-        ("Operator.start", [{"factory_id": "echo", "id": "my_echo", "init_values": {"a": 1}}]),
+        ("Relay.start", [{"factory_id": "echo"}]),
+        ("Relay.start", [{"factory_id": "echo", "id": "my_echo", "init_values": {"a": 1}}]),
     ]
 
 
-def test_a_plugin_is_enabled_by_name_and_bound_and_unbound_by_operator(
+def test_a_plugin_is_enabled_by_name_and_bound_and_unbound_by_relay(
     runner: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     core = FakeCore()
@@ -346,9 +346,9 @@ def test_a_plugin_is_enabled_by_name_and_bound_and_unbound_by_operator(
 
     monkeypatch.setattr(core, "admin_call", admin_call)
     control = runner().start(core=core).control()
-    control.enable_plugin("writer", "operator_file_sink", opts={"path": "out.txt"})
+    control.enable_plugin("writer", "relay_file_sink", opts={"path": "out.txt"})
     control.enable_plugin(
-        "feed", "operator_websocket", single=True, operator_id="my_echo", hooks=[["on_output", {}]]
+        "feed", "relay_websocket", single=True, relay_id="my_echo", hooks=[["on_output", {}]]
     )
     control.bind_plugin("writer", "my_echo")
     control.bind_plugin("writer", "my_other", hooks=["on_output"], channel="in")
@@ -358,27 +358,27 @@ def test_a_plugin_is_enabled_by_name_and_bound_and_unbound_by_operator(
     assert calls == [
         (
             "PluginManager.enable",
-            ["writer", {"provider": "operator_file_sink", "opts": {"path": "out.txt"}}],
+            ["writer", {"provider": "relay_file_sink", "opts": {"path": "out.txt"}}],
         ),
         (
             "PluginManager.enable",
             [
                 "feed",
                 {
-                    "provider": "operator_websocket",
+                    "provider": "relay_websocket",
                     "opts": {},
                     "single": True,
-                    "operator_id": "my_echo",
+                    "relay_id": "my_echo",
                     "hooks": [["on_output", {}]],
                 },
             ],
         ),
-        ("PluginManager.bind", ["writer", {"operator_id": "my_echo"}]),
+        ("PluginManager.bind", ["writer", {"relay_id": "my_echo"}]),
         (
             "PluginManager.bind",
-            ["writer", {"operator_id": "my_other", "hooks": ["on_output"], "channel": "in"}],
+            ["writer", {"relay_id": "my_other", "hooks": ["on_output"], "channel": "in"}],
         ),
-        ("PluginManager.unbind", ["writer", {"operator_id": "my_echo"}]),
+        ("PluginManager.unbind", ["writer", {"relay_id": "my_echo"}]),
         ("PluginManager.disable", ["writer", {}]),
         ("PluginManager.list", []),
     ]
@@ -414,11 +414,11 @@ def test_a_send_hands_its_options_to_the_core_and_reads_the_answer(
     assert verdict == {"to": "prices#p1", "verdict": "absorbed"}
 
 
-def test_operators_are_the_instances_the_core_reports_bound(runner: Any) -> None:
+def test_relays_are_the_instances_the_core_reports_bound(runner: Any) -> None:
     core = FakeCore()
     core.bound = ["orders", "prices#p1"]
     r = runner().register_factory(demo).start(core=core)
-    assert r.operators() == ["orders", "prices#p1"]
+    assert r.relays() == ["orders", "prices#p1"]
 
 
 def test_the_double_answers_every_call_a_host_can_make_on_a_core() -> None:
@@ -458,12 +458,12 @@ def test_one_call_turns_diagnostics_on() -> None:
         root.setLevel(logging.NOTSET)
 
 
-@flezha.operator(id="short_flow", sink="out", codec="text")
+@flezha.relay(id="short_flow", sink="out", codec="text")
 def short_flow(value: str) -> str:
     return value
 
 
-@flezha.operator(id="short_steps", run="steps", sink="placed", codec="text")
+@flezha.relay(id="short_steps", run="steps", sink="placed", codec="text")
 def short_steps(value: str) -> str:
     return value
 
@@ -489,7 +489,7 @@ def test_register_modules_collects_a_short_form(runner: Any) -> None:
 
 
 def test_a_short_form_collides_with_one_of_the_other_kind(runner: Any) -> None:
-    @flezha.operator(id="short_flow", run="steps", sink="placed")
+    @flezha.relay(id="short_flow", run="steps", sink="placed")
     def twin(value: str) -> str:
         return value
 
@@ -506,4 +506,4 @@ def test_a_short_form_collides_with_one_of_the_other_kind(runner: Any) -> None:
 def test_registering_a_tasklet_is_refused(runner: Any) -> None:
     with pytest.raises(FlezhaError) as caught:
         runner().register_factory(Other)  # type: ignore[arg-type]
-    assert caught.value.code == "topology.no_operator_exported"
+    assert caught.value.code == "topology.no_relay_exported"

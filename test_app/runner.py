@@ -14,9 +14,9 @@ without connecting, and ``FLEZHA_REFUSAL_FIXTURE`` registers ONE row of that
 table in place of every fixture. Both are ``conformance.py``.
 
 ``FLEZHA_LOCAL_SEND_SCRIPT`` is the local-send drill: a JSON array of
-``{"operator", "channel", "message", "when"}`` sends this app's own code makes
+``{"relay", "channel", "message", "when"}`` sends this app's own code makes
 with ``local=True``, each once the file ``when`` names exists, printing
-``local_send <operator> ok`` or ``local_send <operator> err <code>`` per send,
+``local_send <relay> ok`` or ``local_send <relay> err <code>`` per send,
 in order.
 """
 
@@ -58,12 +58,12 @@ def main() -> None:
         # class the core refuses never reaches a controller.
         conformance.register_only(runner, refusal_fixture)
     else:
-        for operator in fixtures.ALL:
-            runner.register_factory(operator)
-        for operator in fixtures_steps.ALL:
-            runner.register_factory(operator)
-        for operator in fixtures_call.ALL:
-            runner.register_factory(operator)
+        for relay in fixtures.ALL:
+            runner.register_factory(relay)
+        for relay in fixtures_steps.ALL:
+            runner.register_factory(relay)
+        for relay in fixtures_call.ALL:
+            runner.register_factory(relay)
 
     # The configuration this run is under, before it starts: readiness is the
     # SDK's own startup line, which reports the wheel tier, the executor and the
@@ -98,17 +98,17 @@ def main() -> None:
 
 def local_sends(runner: flezha.Runner, script: str) -> None:
     """Each send of the drill once the test says go, by creating the file
-    ``when`` names: the test first proves the operator's sink is live, which a
+    ``when`` names: the test first proves the relay's sink is live, which a
     send made at bind would race."""
     for send in json.loads(script):
-        operator = send["operator"]
+        relay = send["relay"]
         while not os.path.exists(send["when"]):
             time.sleep(0.05)
         try:
-            runner.send(operator, send["message"], send["channel"], local=True)
-            print(f"local_send {operator} ok", flush=True)
+            runner.send(relay, send["message"], send["channel"], local=True)
+            print(f"local_send {relay} ok", flush=True)
         except flezha.FlezhaError as refusal:
-            print(f"local_send {operator} err {refusal.code}", flush=True)
+            print(f"local_send {relay} err {refusal.code}", flush=True)
 
 
 if __name__ == "__main__":

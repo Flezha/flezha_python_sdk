@@ -4,7 +4,7 @@ driven through THIS SDK's builder.
 ``flz_core/src/host/check_tests.rs`` is the same table driven against the record
 directly, because the core has no builder. This one maps the same step
 vocabulary onto the Python graph builder, so what is measured here is what an
-author of a Python operator actually writes.
+author of a Python relay actually writes.
 
 Two entry points, both off ``runner.py``:
 
@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import flezha
-from fixtures import hybrid_channel_operator
+from fixtures import hybrid_channel_relay
 from fixtures_call import render
 from fixtures_steps import tier_commit_block_steps
 from flezha import graph
@@ -55,7 +55,7 @@ SURFACES = (
 # The two topologies the fixture cites rather than re-spells: this app's own
 # fixtures, the twins of its seven-column table.
 CITED = {
-    "hybrid_channel": hybrid_channel_operator,
+    "hybrid_channel": hybrid_channel_relay,
     "commit_block_chain": tier_commit_block_steps,
 }
 
@@ -145,7 +145,7 @@ class Interpreter:
         """``<handle>.<link>…`` — a chain, a channel knob or a class flag."""
         head, _, rest = step.partition(".")
         if head == "class":
-            # Read by `class_settings` when the row's operator is declared.
+            # Read by `class_settings` when the row's relay is declared.
             return
         edge = self._handle(head)
         for link in rest.split("."):
@@ -286,10 +286,10 @@ def class_settings(steps: str) -> dict[str, Any]:
     return settings
 
 
-def operator_for(row: dict[str, str]) -> flezha.Operator:
-    """A row's operator. The cited twins are this app's own; the rest are built.
+def relay_for(row: dict[str, str]) -> flezha.Relay:
+    """A row's relay. The cited twins are this app's own; the rest are built.
 
-    Fresh per row: an operator memoises its own spec, and the class settings
+    Fresh per row: a relay memoises its own spec, and the class settings
     are the decorator's keywords rather than builder calls, passed as the row
     wrote them so the core judges the tree.
     """
@@ -301,7 +301,7 @@ def operator_for(row: dict[str, str]) -> flezha.Operator:
         interpreter.declare(c)
 
     channels.__name__ = row["topology"]
-    return flezha.operator(row["topology"], **class_settings(row["steps"]))(channels)
+    return flezha.relay(row["topology"], **class_settings(row["steps"]))(channels)
 
 
 def channels_of(derived: dict[str, Any]) -> list[dict[str, Any]]:
@@ -360,7 +360,7 @@ class PlainWithTopology(Plain):
         c.input("input")
 
 
-def declare_shorthand(declaration: dict[str, Any], settings: dict[str, Any]) -> flezha.Operator:
+def declare_shorthand(declaration: dict[str, Any], settings: dict[str, Any]) -> flezha.Relay:
     """Declare one short form exactly as an author writes it.
 
     A `.noout` row's body is annotated `-> None`, which is what an SDK that
@@ -379,7 +379,7 @@ def declare_shorthand(declaration: dict[str, Any], settings: dict[str, Any]) -> 
         def body(value: str) -> str:  # type: ignore[misc]
             return value
 
-    return flezha.operator(
+    return flezha.relay(
         id=declaration["id"], sink=declaration["sink"], input=declaration["input"], **settings
     )(body)
 
@@ -432,7 +432,7 @@ def judge(row: dict[str, str], core: Core) -> dict[str, Any]:
     if declarations:
         return judge_shorthand(row, declarations)
     try:
-        derived = graph.validate(operator_for(row).spec, core)
+        derived = graph.validate(relay_for(row).spec, core)
     except flezha.FlezhaError as refusal:
         return refused(row, refusal)
     return {"topology": row["topology"], "outcome": "accepted", "derived": channels_of(derived)}
@@ -469,4 +469,4 @@ def register_only(runner: flezha.Runner, topology: str) -> None:
     if declarations:
         drive_shorthand(declarations)
         return
-    runner.register_factory(operator_for(row))
+    runner.register_factory(relay_for(row))

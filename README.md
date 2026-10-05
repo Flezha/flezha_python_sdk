@@ -24,16 +24,16 @@ class Echo:
         ctx.emit(value)
 
 
-@flezha.operator("echo")
-def echo_operator(c: flezha.Channels) -> None:
+@flezha.relay("echo")
+def echo_relay(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(Echo).sink("out")
 
 
-flezha.create_runner("default").register_factory(echo_operator).run()
+flezha.create_runner("default").register_factory(echo_relay).run()
 ```
 
-- **One decorator, one settings tree.** `@flezha.operator` declares every
-  operator, over a channels body or, as the short form, one tasklet's body.
+- **One decorator, one settings tree.** `@flezha.relay` declares every
+  relay, over a channels body or, as the short form, one tasklet's body.
   Its keywords are the class settings: `run` (`"flow"`, the default, or
   `{"steps": {"each": "per_input", "on_failure": "keep_progress"}}`), `durable`
   (`False`, `"local"`, the default, or `"remote"`, with `sleep_after` in
@@ -43,11 +43,11 @@ flezha.create_runner("default").register_factory(echo_operator).run()
 - **Preview an output while it is produced.** `ctx.part(value)` sends a
   listener a preview of the tasklet's output while `run` is still working; a
   sink never sees it.
-- **Answer a caller, or call another operator.** A channel ends in one `sink`,
+- **Answer a caller, or call another relay.** A channel ends in one `sink`,
   one `response()` or one `call(...)`. `response()` answers the outside caller
   whose input caused the value. `call("pricing", deadline_ms=500)` or
   `call(factory="agent", deadline_ms=60_000, create=False, channel="turn")`
-  sends each value, after the chain's transforms and key, to another operator
+  sends each value, after the chain's transforms and key, to another relay
   (a factory call reaches the instance the chain's `key_by` names); one `codec=`
   writes the request and reads the answer, JSON when none is named. The outcome
   arrives later as a `flezha.Response` on the entry channel
@@ -63,9 +63,9 @@ flezha.create_runner("default").register_factory(echo_operator).run()
       .into(Outcome)  # Outcome.run takes a flezha.Response[str, str]
   )
   ```
-- **Run a graph with no controller.** `LocalOperator.start` takes the same
-  operator and runs its declared graph in this process — for trying Flezha out
-  and for developing an operator. State is held in memory and nothing is
+- **Run a graph with no controller.** `LocalRelay.start` takes the same
+  relay and runs its declared graph in this process — for trying Flezha out
+  and for developing a relay. State is held in memory and nothing is
   durable; every run says so.
 - **Python 3.11+**, CPython only. Two wheel tiers from one source: an `abi3`
   compatibility wheel per platform, and per-version free-threaded wheels.
@@ -83,7 +83,7 @@ flezha.create_runner("default").register_factory(echo_operator).run()
   dataclasses, Pydantic models or attrs classes.
 - **One error type.** Anything Flezha refuses raises `flezha.FlezhaError`: a
   program branches on its `code` (such as `topology.duplicate_factory_id` or
-  `operator.already_running`) or `class_`, and reads its `message`, `details`
+  `relay.already_running`) or `class_`, and reads its `message`, `details`
   and `hint`.
 
 Full documentation:

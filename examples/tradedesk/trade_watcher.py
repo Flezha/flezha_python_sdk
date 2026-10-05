@@ -1,7 +1,7 @@
 """The desk's stream: trades in, each price compared with its symbol's recent
 average, and an order started when a price jumps far enough above it.
 
-A flow operator runs for as long as the desk does. The exchange sends
+A flow relay runs for as long as the desk does. The exchange sends
 other messages beside its trades and delivers several trades in one message, so
 the wiring keeps the trade messages, splits each into its trades before
 anything else sees them, drops what the desk does not follow, and routes the
@@ -14,7 +14,7 @@ from track_prices import TrackPrices
 import flezha
 
 
-@flezha.operator("trade_watcher")
+@flezha.relay("trade_watcher")
 def trade_watcher(c: flezha.Channels) -> None:
     """Four transforms on the wiring, then two tasklets, and one place output
     leaves the desk.

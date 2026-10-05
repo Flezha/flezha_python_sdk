@@ -37,7 +37,7 @@ def cell_identity(instance_id: str, tasklet_name: str, cell_key: str | None) -> 
     tasklet = tasklet_name.encode()
     key = (cell_key or "").encode()
     for part, value, limit in (
-        ("operator id", instance_id, 255),
+        ("relay id", instance_id, 255),
         ("tasklet name", tasklet_name, 255),
         ("cell key", cell_key or "", 0xFFFF),
     ):

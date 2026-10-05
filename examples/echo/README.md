@@ -9,7 +9,7 @@ Three files, one for each part the guides describe:
 | File | Part | What it does |
 |---|---|---|
 | `echo_tasklet.py` | the tasklet | the processing stage: prefixes each message |
-| `echo_operator.py` | the operator | the graph: `in` feeds the tasklet, output lands on `out` |
+| `echo_relay.py` | the relay | the graph: `in` feeds the tasklet, output lands on `out` |
 | `runner.py` | the runner | this process: registers the echo factory and waits |
 
 ## Run it
@@ -27,8 +27,8 @@ python3 -m venv .venv
 Then, from another terminal:
 
 ```sh
-flz operator start echo --id my_echo
-flz operator send my_echo --text 'hello world' --await 2000
+flz relay start echo --id my_echo
+flz relay send my_echo --text 'hello world' --await 2000
 ```
 
 ```

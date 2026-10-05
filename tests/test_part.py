@@ -43,12 +43,12 @@ class Parts:
         ctx.part({"fired": timer["scheduled_at"]})
 
 
-@flezha.operator("part_flow")
+@flezha.relay("part_flow")
 def _flow(c: flezha.Channels) -> None:
     c.input("in").into(Parts).sink("answer")
 
 
-@flezha.operator("part_steps", run={"steps": {"each": "per_input"}})
+@flezha.relay("part_steps", run={"steps": {"each": "per_input"}})
 def _steps(c: flezha.Channels) -> None:
     c.input("in").into(Parts).sink("answer")
 
@@ -97,7 +97,7 @@ def test_a_per_input_steps_stage_sends_its_parts(fake_core: FakeCore) -> None:
 
 
 def test_a_refused_part_fails_the_invocation_as_any_raise_does(fake_core: FakeCore) -> None:
-    refusal = FlezhaError("part.no_sink", {"tasklet": "parts", "operator": "op", "channel": ""})
+    refusal = FlezhaError("part.no_sink", {"tasklet": "parts", "relay": "op", "channel": ""})
     _recording(fake_core, SEEN, refusal)
     deps = deps_for(_flow, fake_core)
     (effect,) = answered(work_activation(7, 1, factory="part_flow"), deps)["effects"]
@@ -136,24 +136,24 @@ class PartDrain:
         pass
 
 
-@flezha.operator("part_to_tasklet")
+@flezha.relay("part_to_tasklet")
 def _to_tasklet(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(RefusedPart).into(PartDrain)
 
 
-@flezha.operator("part_to_response")
+@flezha.relay("part_to_response")
 def _to_response(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(RefusedPart).response()
 
 
-@flezha.operator("part_local")
+@flezha.relay("part_local")
 def _local(c: flezha.Channels) -> None:
     c.input("in").into(Parts).sink("answer")
 
 
 def test_a_local_run_drops_every_part_and_releases_the_output_alone() -> None:
     released: list[bytes] = []
-    with flezha.LocalOperator.start(_local) as run:
+    with flezha.LocalRelay.start(_local) as run:
         run.on_sink("answer", lambda output: released.append(bytes(output.payload)))
         run.feed("in", b"3")
         run.run_until_idle(10_000)
@@ -161,8 +161,8 @@ def test_a_local_run_drops_every_part_and_releases_the_output_alone() -> None:
 
 
 def test_the_core_refuses_a_part_whose_channel_ends_in_no_sink() -> None:
-    for operator in (_to_tasklet, _to_response):
-        with flezha.LocalOperator.start(operator) as run:
+    for relay in (_to_tasklet, _to_response):
+        with flezha.LocalRelay.start(relay) as run:
             run.feed("in", "p")
             run.run_until_idle(10_000)
     assert SEEN == ["part.no_sink", "part.no_sink"]
