@@ -18,5 +18,6 @@ class Admit:
             else Http(
                 status=429,
                 body=f"{user} has used {verdict['spent']} of today's {DAILY_TOKENS} tokens",
-            )
+            ),
+            key=user,
         )

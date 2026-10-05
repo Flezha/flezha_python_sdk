@@ -141,11 +141,6 @@ def _to_tasklet(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(RefusedPart).into(PartDrain)
 
 
-@flezha.relay("part_to_response")
-def _to_response(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(RefusedPart).response()
-
-
 @flezha.relay("part_local")
 def _local(c: flezha.Channels) -> None:
     c.input("in").into(Parts).sink("answer")
@@ -161,8 +156,7 @@ def test_a_local_run_drops_every_part_and_releases_the_output_alone() -> None:
 
 
 def test_the_core_refuses_a_part_whose_channel_ends_in_no_sink() -> None:
-    for relay in (_to_tasklet, _to_response):
-        with flezha.LocalRelay.start(relay) as run:
-            run.feed("in", "p")
-            run.run_until_idle(10_000)
-    assert SEEN == ["part.no_sink", "part.no_sink"]
+    with flezha.LocalRelay.start(_to_tasklet) as run:
+        run.feed("in", "p")
+        run.run_until_idle(10_000)
+    assert SEEN == ["part.no_sink"]

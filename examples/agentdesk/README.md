@@ -20,7 +20,6 @@ the session's answer as it is written, and each user has a daily token budget.
 | `runner.py` | the runner: this process joins the `agents` namespace and registers the `agent` and `gateway` factories |
 | `agent.py` | a session, a steps relay: one turn per message, and a failed turn fails alone; and the `Message` the gateway sends it |
 | `reply.py` | answers a message with the demo model, sends the answer as it grows, and keeps the conversation |
-| `deliver.py` | hands the finished answer to whoever called |
 | `demo_model.py` | the demo model, and the `Answer` it gives |
 | `gateway.py` | the HTTP side, a flow relay: it carries the HTTP plugin, answers every request, and calls the session a message is for |
 | `request.py` | one HTTP request, as the plugin hands it to the gateway, the two routes the gateway knows, and the `Http` answer |

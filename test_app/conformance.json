@@ -29,7 +29,6 @@
     "untyped_tree",
     "shorthand",
     "shorthand_typed_output",
-    "response",
     "call"
   ],
   "dispatch": {

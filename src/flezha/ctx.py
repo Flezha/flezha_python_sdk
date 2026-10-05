@@ -264,7 +264,7 @@ class Ctx(Generic[S, O_contra]):
         listener receives it, numbered from 0 within each attempt; a sink never
         does, and nothing about it is durable. Raises
         :class:`~flezha.errors.FlezhaError` coded ``part.no_sink`` when the
-        output channel does not end in a sink (a ``response()`` end is not one),
+        output channel does not end in a sink (a call end is not one),
         and ``part.outside_invocation`` through a context kept past its
         invocation.
         """

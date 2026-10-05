@@ -49,6 +49,7 @@ def call_link(
     deadline_ms: int,
     create: bool,
     channel: str | None,
+    answer_channel: str | None,
     response: str,
 ) -> dict[str, Any]:
     """The ``call`` link the core reads, its Response channel named ``response``."""
@@ -60,6 +61,8 @@ def call_link(
     link.update(deadline_ms=deadline_ms, create=create)
     if channel is not None:
         link["channel"] = channel
+    if answer_channel is not None:
+        link["answer_channel"] = answer_channel
     link["response"] = response
     return link
 

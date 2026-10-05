@@ -958,14 +958,14 @@ def static_cell_steps(c: flezha.Channels) -> None:
     c.input("in", codec="text").into(static_cell_step).sink("out")
 
 
-# call_turn: a durable per-input loop whose turn answers the outside call
-# through `response()`.
+# call_turn: a durable per-input loop whose turn's sink output answers the
+# outside call.
 call_turn = stateless_step("call_turn", lambda value, ctx: ctx.emit(value))
 
 
 @flezha.relay("call_turn", **LOOP_KNOBS)
 def call_turn_steps(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(call_turn).response()
+    c.input("in", codec="text").into(call_turn).sink()
 
 
 #: Every steps relay this app registers, in the reference's order.

@@ -672,15 +672,15 @@ def spawn_once_requester_relay(c: flezha.Channels) -> None:
 
 # -- call_response -----------------------------------------------------------
 #
-# Relays an outside caller calls and whose graph answers it through
-# `response()`: from the first tasklet, from a downstream one, and from
-# whichever of two filtered paths the input took. `call_turn` is the steps
+# Relays an outside caller calls and whose sink output answers it: from the
+# first tasklet, from a downstream one, and from whichever of two filtered
+# paths the input took. `call_turn` is the steps
 # one, in fixtures_steps.py.
 
 
 @flezha.relay("call_echo")
 def call_echo_relay(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(passthrough("call_echo")).response()
+    c.input("in", codec="text").into(passthrough("call_echo")).sink()
 
 
 call_answer = stateless_step("call_answer", lambda value, ctx: ctx.emit(f"re:{value}"))
@@ -688,7 +688,7 @@ call_answer = stateless_step("call_answer", lambda value, ctx: ctx.emit(f"re:{va
 
 @flezha.relay("call_downstream")
 def call_downstream_relay(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(passthrough("call_parse")).into(call_answer).response()
+    c.input("in", codec="text").into(passthrough("call_parse")).into(call_answer).sink()
 
 
 # An input starting `no` takes the refused path, every other the accepted one.
@@ -699,8 +699,8 @@ call_refuse = stateless_step("call_refuse", lambda value, ctx: ctx.emit(f"refuse
 @flezha.relay("call_split")
 def call_split_relay(c: flezha.Channels) -> None:
     admitted = c.input("in", codec="text").into(passthrough("call_admit"))
-    admitted.filter(lambda value: not value.startswith("no")).into(call_accept).response()
-    admitted.filter(lambda value: value.startswith("no")).into(call_refuse).response()
+    admitted.filter(lambda value: not value.startswith("no")).into(call_accept).sink()
+    admitted.filter(lambda value: value.startswith("no")).into(call_refuse).sink()
 
 
 # -- parts ----------------------------------------------------------------

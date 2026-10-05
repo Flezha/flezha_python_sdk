@@ -73,7 +73,7 @@ def _quote(value: str, ctx: flezha.Ctx[None, Any]) -> None:
 
 @flezha.relay("call_pricing")
 def call_pricing_relay(c: flezha.Channels) -> None:
-    c.input("in", codec="text").into(stateless_step("pricing_quote", _quote)).response()
+    c.input("in", codec="text").into(stateless_step("pricing_quote", _quote)).sink("quotes")
 
 
 class OrderPriced:
@@ -90,7 +90,7 @@ def call_orders_relay(c: flezha.Channels) -> None:
         c.input("in", codec="text")
         .into(stateless_step("order_ask", lambda value, ctx: ctx.emit(value)))
         .named("order")
-        .call("pricing", **CALL)
+        .call("pricing", **CALL, answer_channel="quotes")
         .into(order_priced)
         .sink("priced")
     )
@@ -110,7 +110,7 @@ async def _agent_turn(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     **{**LOOP_KNOBS, "run": {"steps": {"each": "per_input", "on_failure": "keep_progress"}}},
 )
 def call_agent_steps(c: flezha.Channels) -> None:
-    c.input("turn", codec="text").into(stateless_step("agent_turn", _agent_turn)).response()
+    c.input("turn", codec="text").into(stateless_step("agent_turn", _agent_turn)).sink()
 
 
 gateway_resume = stateless_step(

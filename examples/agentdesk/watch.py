@@ -10,8 +10,10 @@ import flezha
 @flezha.tasklet(name="watch")
 class Watch:
     def run(self, request: Request, ctx: flezha.Ctx[None, Http]) -> None:
+        # keyed by the user: a sink of an effectively-once relay needs a key
         ctx.emit(
             Http(stream=request.user())
             if request.listens()
-            else Http(status=404, body="no such route")
+            else Http(status=404, body="no such route"),
+            key=request.user(),
         )

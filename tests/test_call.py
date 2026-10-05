@@ -36,7 +36,14 @@ def _caller(codec: ChannelCodec | None) -> flezha.Relay:
             .filter(lambda line: not line.startswith("drop"))
             .flat_map(lambda line: [line, f"{line}!"])
             .key_by(lambda line: line.split(":", 1)[0])
-            .call(factory="agent", deadline_ms=60_000, create=False, channel="turn", codec=codec)
+            .call(
+                factory="agent",
+                deadline_ms=60_000,
+                create=False,
+                channel="turn",
+                answer_channel="reply",
+                codec=codec,
+            )
             .map(lambda response: f"answered {response.request}={response.value}@{response.target}")
             .into(echo)
         )
@@ -64,6 +71,7 @@ def test_call_closes_its_chain_with_the_call_link_and_declares_the_response_chan
             "deadline_ms": 60_000,
             "create": False,
             "channel": "turn",
+            "answer_channel": "reply",
             "response": "ask.response",
         },
     ]

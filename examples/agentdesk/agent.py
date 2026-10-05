@@ -5,7 +5,6 @@ own, with its own state.
 
 from typing import TypedDict
 
-from deliver import Deliver
 from reply import Reply
 
 import flezha
@@ -26,9 +25,7 @@ def agent(c: flezha.Channels) -> None:
     (
         c.input("turn", codec="text")  # entry 1: `flz relay call`
         .into(Reply)
-        .sink("answer")  # to whoever listens; the chain goes on
-        .into(Deliver)
-        .response()  # to whoever called
+        .sink("answer")  # to whoever called, and whoever listens
     )
     (
         c.input("message")  # entry 2: the gateway, into the same Reply

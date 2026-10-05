@@ -542,21 +542,6 @@ def test_a_steps_terminal_nothing_consumes_hands_its_value_to_the_core_as_the_ca
     ] == [("edge", 1, 0, 3)]
 
 
-@flezha.relay("answering")
-def _answering(c: flezha.Channels) -> None:
-    c.input("in").into(echo).response()
-
-
-def test_an_emit_on_a_response_channel_leaves_as_a_sinks_plugin_output(
-    fake_core: FakeCore,
-) -> None:
-    deps = deps_for(_answering, fake_core)
-    (effect,) = answered(work_activation(41, 7, factory="answering"), deps)["effects"]
-    assert [(o["target"], o["plugin_channel"], _payload_of(o)) for o in effect["outputs"]] == [
-        ("plugin", "echo", 7)
-    ]
-
-
 def test_an_edge_payload_is_the_encoders_own_bytes(
     fake_core: FakeCore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
