@@ -57,7 +57,7 @@ step "lint"
 # The local-mode tests drive the fixture classes `test_app/` declares, so both
 # tiers are one run of the suite.
 step "unit and local mode"
-PYTHONPATH=src:tests PATH="${PWD}/.venv/bin:${PATH}" .venv/bin/python -m pytest tests -q
+PYTHONPATH=src:tests PATH="${PWD}/.venv/bin:${PATH}" .venv/bin/python -m pytest tests examples/starter -q
 PYTHONPATH=src .venv/bin/python -c "from flezha import native; print('tier:', native.build_tier())"
 
 step "smoke"
