@@ -17,7 +17,9 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from . import codec as _codec
 from .builder import ChannelSpec, ClassSpec, TaskNode
+from .tasklet import input_type, output_type
 from .version import __version__
 
 if TYPE_CHECKING:
@@ -77,7 +79,30 @@ def _compact(fields: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in fields.items() if value is not None}
 
 
-def _channel_json(channel: ChannelSpec) -> dict[str, Any]:
+def _value_type(spec: ClassSpec, channel: ChannelSpec) -> Any:
+    """The type a channel's API values have, where the declaration shows it: an
+    entry's is the input of the tasklet a chain wires it into with no transform,
+    an output's the output of the tasklet producing it."""
+    if channel.kind == "entry":
+        for chain in channel.chains:
+            links = [link for link in chain if link["link"] != "key"]
+            if links and links[0]["link"] == "into":
+                return input_type(spec.tasklets[links[0]["tasklet"]].task)
+        return None
+    if channel.sink is not None and channel.call_end is None and channel.producer is not None:
+        return output_type(spec.tasklets[channel.producer].task)
+    return None
+
+
+def _schema(spec: ClassSpec, channel: ChannelSpec) -> Any:
+    if channel.schema is not None:
+        return channel.schema
+    if channel.codec != "json":
+        return None
+    return _codec.json_schema(_value_type(spec, channel))
+
+
+def _channel_json(spec: ClassSpec, channel: ChannelSpec) -> dict[str, Any]:
     return _compact(
         {
             "name": channel.name,
@@ -88,6 +113,9 @@ def _channel_json(channel: ChannelSpec) -> dict[str, Any]:
             "retry_backoff_ms": channel.retry_backoff_ms,
             "overflow": channel.overflow,
             "keyed": channel.keyed,
+            "codec": channel.codec,
+            "schema": _schema(spec, channel),
+            "description": channel.description or None,
         }
     )
 
@@ -160,7 +188,7 @@ def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
             "sdk_version": __version__,
             "change_format_id": FORMAT_ID_MSGPACK,
             "compact_after_bytes": spec.compact_after_bytes,
-            "channels": [_channel_json(channel) for channel in spec.channels],
+            "channels": [_channel_json(spec, channel) for channel in spec.channels],
             "tasklets": [_tasklet_json(spec, node, keyed) for node in spec.tasklets],
         }
     )

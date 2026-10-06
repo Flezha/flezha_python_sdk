@@ -49,6 +49,7 @@ SURFACES = (
     "shorthand",
     "shorthand_typed_output",
     "call",
+    "schema",
 )
 
 # The two topologies the fixture cites rather than re-spells: this app's own
@@ -122,6 +123,7 @@ class Interpreter:
         self._handles: dict[str, Any] = {}
         self._tasklets: dict[str, flezha.Tasklet[Any, Any]] = {}
         self._mailbox = self._mailbox_capacities()
+        self._schemas = self._entry_schemas()
 
     def declare(self, builder: flezha.Channels) -> None:
         for step in self.steps:
@@ -132,7 +134,7 @@ class Interpreter:
     def _run_step(self, builder: flezha.Channels, step: str) -> None:
         verb, arg = split_call(step)
         if verb == "entry":
-            self._handles[arg] = builder.input(arg)
+            self._handles[arg] = builder.input(arg, schema=self._schemas.get(arg))
         elif verb == "branch":
             self._branch(arg)
         elif verb == "merge":
@@ -176,9 +178,9 @@ class Interpreter:
             # The result is that tasklet's output channel, addressed by role.
             self._handles[arg] = edge.into(self._tasklet(arg))
             return self._handles[arg]
-        if verb == "mailbox":
-            # Declared on the tasklet in this SDK, and read as that tasklet
-            # was built — one step earlier than the step that names it.
+        if verb in ("mailbox", "schema"):
+            # Declared on the tasklet or the entry in this SDK, and read as
+            # that was built, one step earlier than the step that names it.
             return edge
         raise AssertionError(f"the fixture spells a link this interpreter does not map: {verb}")
 
@@ -242,6 +244,15 @@ class Interpreter:
             if rest.startswith("mailbox("):
                 capacities[role] = int(split_call(rest)[1])
         return capacities
+
+    def _entry_schemas(self) -> dict[str, Any]:
+        """The schemas a row declares on its entries, read BEFORE the steps run:
+        ``input`` takes its schema as it declares the channel."""
+        return {
+            role: json.loads(split_call(rest)[1])
+            for role, _, rest in (step.partition(".") for step in self.steps)
+            if rest.startswith("schema(")
+        }
 
 
 def fixture_path() -> Path:

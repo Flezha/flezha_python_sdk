@@ -16,6 +16,7 @@ raises naming that rule rather than letting a child serve nothing.
 
 from __future__ import annotations
 
+import base64
 import importlib
 import json
 import os
@@ -24,6 +25,7 @@ import threading
 from types import TracebackType
 from typing import Any, Self
 
+from . import codec as _codec
 from . import determinism, graph
 from .control import Control
 from .dispatch import DispatchDeps, Registry
@@ -191,6 +193,27 @@ class Runner:
             raise FlezhaError("runtime.runner_not_started")
         answer = self._core.send_message(relay_id, channel, message.encode(), msg_id, key, local)
         return json.loads(answer)
+
+    def call(self, relay_id: str, channel: str, value: Any) -> Any:
+        """Call the entry channel ``channel`` of ``relay_id`` with ``value``.
+
+        Through the controller, under the same role check as :meth:`send`,
+        answering what the relay answers through its outputs. ``value`` is
+        encoded as an output naming no codec encodes it: bytes as they are, a
+        string as UTF-8, anything else as JSON. A JSON answer comes back as its
+        JSON value, a text answer as a string and a binary one as bytes; a
+        channel that does not answer gives ``{"accepted": True}``. A refusal
+        raises :class:`~flezha.errors.FlezhaError` with the controller's code.
+        """
+        payload = base64.b64encode(_codec.plain_payload(value, f"call of '{channel}'")).decode()
+        reply = self.control().call(
+            "Relay.call_channel", relay_id, channel, payload, {"payload": "base64"}
+        )
+        if "answer_codec" not in reply:
+            return reply
+        if reply["answer_codec"] in ("json", "text"):
+            return reply["answer"]
+        return base64.b64decode(reply["answer"])
 
     # -- lifecycle ---------------------------------------------------------
 

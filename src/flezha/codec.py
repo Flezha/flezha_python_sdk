@@ -33,6 +33,7 @@ from __future__ import annotations
 import base64
 import dataclasses
 import datetime as _datetime
+import enum
 import json
 import types
 import typing
@@ -62,6 +63,7 @@ __all__ = [
     "decode",
     "codec_for",
     "type_hints",
+    "json_schema",
     "assert_representable",
     "to_state_json",
     "from_state_json",
@@ -512,3 +514,96 @@ def _json_revive(value: Any) -> Any:
     if isinstance(value, list):
         return [_json_revive(v) for v in value]
     return value
+
+
+# ---------------------------------------------------------------------------
+# The JSON Schema a channel's value type derives, for its relay's API
+# ---------------------------------------------------------------------------
+
+_SCHEMA_SCALARS: tuple[tuple[type, str], ...] = (
+    (bool, "boolean"),
+    (int, "integer"),
+    (float, "number"),
+    (str, "string"),
+)
+
+
+def json_schema(type_: Any) -> dict[str, Any] | None:
+    """The JSON Schema of a ``TypedDict``, a dataclass, or a type with
+    ``model_json_schema()``, such as a pydantic model; ``None`` for any other
+    type, so derivation never refuses a class."""
+    if not isinstance(type_, type):
+        return None
+    if hasattr(type_, "model_json_schema"):
+        try:
+            return dict(type_.model_json_schema())
+        except Exception:  # noqa: BLE001 - a schema the type cannot give is no schema
+            return None
+    if dataclasses.is_dataclass(type_) or typing.is_typeddict(type_):
+        return _object_schema(type_, frozenset())
+    return None
+
+
+def _object_schema(cls: type, open_: frozenset[type]) -> dict[str, Any]:
+    # A type that contains itself reads as any value one level down.
+    if cls in open_:
+        return {}
+    hints = type_hints(cls, {})
+    if typing.is_typeddict(cls):
+        names = list(hints)
+        required = _typed_dict_required(cls, names)
+    else:
+        fields = dataclasses.fields(cls)  # type: ignore[arg-type]
+        names = [f.name for f in fields]
+        missing = dataclasses.MISSING
+        required = [f.name for f in fields if f.default is missing and f.default_factory is missing]
+    inner = open_ | {cls}
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {name: _value_schema(hints.get(name), inner) for name in names},
+    }
+    if required:
+        schema["required"] = required
+    return schema
+
+
+def _typed_dict_required(cls: type, names: list[str]) -> list[str]:
+    """The keys a ``TypedDict`` requires. Its ``__required_keys__`` cannot see a
+    ``NotRequired`` written as a postponed annotation, so a resolved hint
+    decides where it says."""
+    try:
+        hints = typing.get_type_hints(cls, include_extras=True)
+    except Exception:  # noqa: BLE001 - an unresolvable hint leaves the class's own answer
+        hints = {}
+    required = []
+    for name in names:
+        marker = get_origin(hints.get(name))
+        if marker is typing.Required or (
+            marker is not typing.NotRequired and name in cls.__required_keys__  # type: ignore[attr-defined]
+        ):
+            required.append(name)
+    return required
+
+
+def _value_schema(annotation: Any, open_: frozenset[type]) -> dict[str, Any]:
+    origin, args = get_origin(annotation), get_args(annotation)
+    if origin in (typing.Union, types.UnionType):
+        arms = [a for a in args if a is not type(None)]
+        return _value_schema(arms[0], open_) if len(arms) == 1 else {}
+    if origin in (list, set, frozenset, tuple):
+        return {"type": "array", "items": _value_schema(args[0], open_) if args else {}}
+    if origin is dict:
+        return {
+            "type": "object",
+            "additionalProperties": _value_schema(args[1], open_) if args else {},
+        }
+    if not isinstance(annotation, type):
+        return {}
+    for scalar, name in _SCHEMA_SCALARS:
+        if issubclass(annotation, scalar):
+            return {"type": name}
+    if issubclass(annotation, enum.Enum):
+        return {"enum": [member.value for member in annotation]}
+    if dataclasses.is_dataclass(annotation) or typing.is_typeddict(annotation):
+        return _object_schema(annotation, open_)
+    return json_schema(annotation) or {}

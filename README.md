@@ -67,6 +67,19 @@ flezha.create_runner("default").register_factory(echo_relay).run()
       .into(Outcome)  # Outcome.run takes a flezha.Response[str, str]
   )
   ```
+- **A relay's API.** Each entry channel is part of its relay's API, which
+  `flz relay info`, the HTTP API and AI agents read. `description=` on `input`
+  says what the channel is for. A JSON channel's schema is derived from the
+  input type of the tasklet it feeds (a `TypedDict`, a dataclass, or any type
+  with `model_json_schema()`), and `schema=` declares one instead. Application
+  code calls a channel by value with `runner.call`, beside `runner.send`, and
+  gets what the relay's outputs answer.
+
+  ```python
+  c.input("place", description="Places an order").into(Place).output("placed")
+
+  placed = runner.call("orders-eu", "place", {"pair": "EUR/USD", "amount": 1000})
+  ```
 - **Run a graph with no controller.** `LocalRelay.start` takes the same
   relay and runs its declared graph in this process — for trying Flezha out
   and for developing a relay. State is held in memory and nothing is

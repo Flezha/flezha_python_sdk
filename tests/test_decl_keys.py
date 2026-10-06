@@ -122,9 +122,9 @@ statics = flezha.tasklet(Statics, cell_keys=["a", "b"], name="statics")
 )
 def every_key(c: flezha.Channels) -> None:
     c.compact_after_bytes(1 << 20)
-    c.input("in").key_by(lambda value: str(value["k"])).into(keyed).retry_max(5).retry_backoff_ms(
-        100
-    ).keyed().output()
+    c.input("in", description="every key", schema={"type": "object"}).key_by(
+        lambda value: str(value["k"])
+    ).into(keyed).retry_max(5).retry_backoff_ms(100).keyed().output()
 
 
 @flezha.relay("static_key")

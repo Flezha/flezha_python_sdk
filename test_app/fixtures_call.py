@@ -1,6 +1,7 @@
 """The ``relay_call`` fixtures: relays that call another relay from
 their graph and read the outcome as a :class:`flezha.Response`, the mirror of
-``sdk/rust/test_app/src/relay_call.rs``.
+``sdk/rust/test_app/src/relay_call.rs``; and ``orders``, the relay whose API the
+``relay_api`` drill lists and calls.
 
 Every outcome is written as one line, ``<request>=ok:<answer>@<target>/<created>``
 or ``<request>=error:<code>@<target>/<created>``.
@@ -9,7 +10,7 @@ or ``<request>=error:<code>@<target>/<created>``.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, TypedDict
 
 import flezha
 from fixtures_steps import LOOP_KNOBS, stateless_step
@@ -154,6 +155,36 @@ def call_tool_session_steps(c: flezha.Channels) -> None:
 
 
 #: Every relay this module registers, in the reference's order.
+class Order(TypedDict):
+    pair: str
+    amount: float
+
+
+class Placed(TypedDict):
+    pair: str
+    amount: float
+    status: str
+
+
+class Place:
+    def run(self, order: Order, ctx: flezha.Ctx[None, Placed]) -> None:
+        ctx.emit({"pair": order["pair"], "amount": order["amount"], "status": "placed"})
+
+
+class Audit:
+    def run(self, line: str, ctx: flezha.Ctx[None, None]) -> None:
+        return None
+
+
+@flezha.relay("orders")
+def orders_relay(c: flezha.Channels) -> None:
+    """The ``relay_api`` fixture: ``place`` reads a JSON order, is described,
+    and answers through ``placed``; ``audit`` reads text and answers nothing."""
+    place = flezha.tasklet(Place, name="orders_place")
+    c.input("place", description="Places an order").into(place).output("placed")
+    c.input("audit", codec="text").into(flezha.tasklet(Audit, name="orders_audit"))
+
+
 ALL: list[flezha.Relay] = [
     call_pricing_relay,
     call_orders_relay,
@@ -161,3 +192,6 @@ ALL: list[flezha.Relay] = [
     call_gateway_relay,
     call_tool_session_steps,
 ]
+
+#: The ``relay_api`` fixtures.
+API: list[flezha.Relay] = [orders_relay]

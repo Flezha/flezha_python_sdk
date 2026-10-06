@@ -166,6 +166,13 @@ class ChannelSpec:
     call_end: ConsumerEdge | None = None
     """A ``call(...)`` end's chain, applied to each value before it becomes a
     request; its ``tasklet`` is -1, since a call feeds none."""
+    codec: str | None = None
+    """The format the relay's API announces for an entry's input or an
+    output's value: the named codec, ``custom`` for a callable, else JSON."""
+    schema: Any = None
+    """An entry's declared JSON Schema; ``None`` leaves it to derivation."""
+    description: str = ""
+    """What an entry channel is for, announced in the relay's API."""
 
 
 def _branch(tree: Any) -> str | None:
@@ -246,16 +253,26 @@ class Channels:
         *,
         decode: Callable[[Any], Any] | None = None,
         codec: ChannelCodec | None = None,
+        description: str = "",
+        schema: dict[str, Any] | None = None,
     ) -> Edge[Any]:
         """Declare a controller-fed entry channel.
 
         ``decode`` turns the wire bytes into the value a handler sees, ``codec``
         names a format from :data:`~flezha.codec.ChannelCodec` instead, and with
         neither the bytes are JSON.
+
+        ``description`` says what the channel is for, in the relay's API. A JSON
+        channel's schema is derived from the input type of the tasklet it feeds
+        (a ``TypedDict``, a dataclass, or a type with ``model_json_schema()``);
+        ``schema`` declares one instead.
         """
         channel = ChannelSpec(index=len(self.channels), name=name, kind="entry")
         named = self.channel_codec(channel, codec, decode)
         channel.decode = decode or _codec.channel_decoder(named)
+        channel.codec = "custom" if decode else named or "json"
+        channel.description = description
+        channel.schema = schema
         self.channels.append(channel)
         return Edge(self, ("entry", channel), {})
 
@@ -521,6 +538,7 @@ class Edge(Generic[T]):
         if channel.sink is None:
             channel.sink = channel.name
             channel.sink_encode = encode or _codec.channel_encoder(named, channel)
+            channel.codec = "custom" if encode else named or "json"
         return self
 
     def call(

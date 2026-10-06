@@ -17,7 +17,9 @@ table in place of every fixture. Both are ``conformance.py``.
 ``{"relay", "channel", "message", "when"}`` sends this app's own code makes
 with ``local=True``, each once the file ``when`` names exists, printing
 ``local_send <relay> ok`` or ``local_send <relay> err <code>`` per send,
-in order.
+in order. An entry with ``"call": true`` calls its ``value`` through the
+controller instead, printing ``call <relay> ok <answer JSON>`` or
+``call <relay> err <code>``.
 """
 
 from __future__ import annotations
@@ -62,7 +64,7 @@ def main() -> None:
             runner.register_factory(relay)
         for relay in fixtures_steps.ALL:
             runner.register_factory(relay)
-        for relay in fixtures_call.ALL:
+        for relay in [*fixtures_call.ALL, *fixtures_call.API]:
             runner.register_factory(relay)
 
     # The configuration this run is under, before it starts: readiness is the
@@ -104,11 +106,16 @@ def local_sends(runner: flezha.Runner, script: str) -> None:
         relay = send["relay"]
         while not os.path.exists(send["when"]):
             time.sleep(0.05)
+        verb = "call" if send.get("call") else "local_send"
         try:
-            runner.send(relay, send["message"], send["channel"], local=True)
-            print(f"local_send {relay} ok", flush=True)
+            if send.get("call"):
+                answer = runner.call(relay, send["channel"], send["value"])
+                print(f"call {relay} ok {json.dumps(answer, separators=(',', ':'))}", flush=True)
+            else:
+                runner.send(relay, send["message"], send["channel"], local=True)
+                print(f"local_send {relay} ok", flush=True)
         except flezha.FlezhaError as refusal:
-            print(f"local_send {relay} err {refusal.code}", flush=True)
+            print(f"{verb} {relay} err {refusal.code}", flush=True)
 
 
 if __name__ == "__main__":

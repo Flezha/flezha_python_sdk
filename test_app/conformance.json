@@ -29,7 +29,8 @@
     "untyped_tree",
     "shorthand",
     "shorthand_typed_output",
-    "call"
+    "call",
+    "schema"
   ],
   "dispatch": {
     "model": "thread-pool",
@@ -174,7 +175,8 @@
       "candle"
     ],
     "local_send": ["bench_keyed_nopersist", "store_input", "tier_store", "sugar_steps_per_input"],
-    "recorded_effects": ["effect_block_steps", "effect_flow"]
+    "recorded_effects": ["effect_block_steps", "effect_flow"],
+    "relay_api": ["orders"]
   },
   "docs": "docs/sdk/python_sdk.md"
 }

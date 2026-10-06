@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import logging
@@ -412,6 +413,48 @@ def test_a_send_hands_its_options_to_the_core_and_reads_the_answer(
         ("orders", "in", "hé".encode(), None, None, True),
     ]
     assert verdict == {"to": "prices#p1", "verdict": "absorbed"}
+
+
+def test_a_call_sends_the_value_as_an_output_encodes_it_and_reads_the_answer_by_its_format(
+    runner: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    core = FakeCore()
+    calls: list[tuple[str, Any]] = []
+    answers = iter(
+        [
+            {"answer": {"pair": "EUR/USD", "status": "placed"}, "answer_codec": "json"},
+            {"answer": "done", "answer_codec": "text"},
+            {"answer": base64.b64encode(b"\x01\x02").decode(), "answer_codec": "bytes"},
+            {"accepted": True},
+        ]
+    )
+
+    def admin_call(verb: str, args: str) -> str:
+        calls.append((verb, json.loads(args)))
+        return json.dumps(next(answers))
+
+    monkeypatch.setattr(core, "admin_call", admin_call)
+    r = runner().start(core=core)
+
+    assert r.call("orders", "place", {"pair": "EUR/USD"}) == {"pair": "EUR/USD", "status": "placed"}
+    assert r.call("orders", "audit", "checked") == "done"
+    assert r.call("orders", "raw", b"\x09") == b"\x01\x02"
+    assert r.call("orders", "audit", "checked") == {"accepted": True}
+
+    def sent(payload: bytes) -> list[Any]:
+        return [base64.b64encode(payload).decode(), {"payload": "base64"}]
+
+    assert calls == [
+        ("Relay.call_channel", ["orders", "place", *sent(b'{"pair":"EUR/USD"}')]),
+        ("Relay.call_channel", ["orders", "audit", *sent(b"checked")]),
+        ("Relay.call_channel", ["orders", "raw", *sent(b"\x09")]),
+        ("Relay.call_channel", ["orders", "audit", *sent(b"checked")]),
+    ]
+
+
+def test_a_call_before_start_is_refused(runner: Any) -> None:
+    with pytest.raises(FlezhaError, match="runtime.runner_not_started"):
+        runner().call("orders", "place", {})
 
 
 def test_relays_are_the_instances_the_core_reports_bound(runner: Any) -> None:
