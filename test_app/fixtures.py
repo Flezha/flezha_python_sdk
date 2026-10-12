@@ -458,7 +458,8 @@ class WedgeProbe:
     process — CPython has no way for user code to kill a worker outright (the
     dispatcher catches per item and the raise rides the retry ladder), so what
     the scenario asserts is that the Cell is served again and the aborting
-    item does not produce twice.
+    item does not produce twice. ``slow`` emits two seconds late, so the relay
+    can be stopped or moved while the activation still runs.
     """
 
     def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
@@ -468,6 +469,8 @@ class WedgeProbe:
         if value == "abort" and not _ABORTED["done"]:
             _ABORTED["done"] = True
             raise RuntimeError("wedge_probe: killing the worker holding this activation")
+        if value == "slow":
+            time.sleep(2)
         ctx.emit(f"ok:{value}")
 
 
