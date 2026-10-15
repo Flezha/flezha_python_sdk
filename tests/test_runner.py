@@ -69,7 +69,6 @@ def test_start_declares_then_connects(runner: Any) -> None:
     core = FakeCore()
     r = runner("my_app").register_factory(demo).start(core=core)
     try:
-        assert r is not None
         assert core.started == "my_app"
         assert len(core.declared) == 1
         assert json.loads(core.declared[0])["factory_id"] == "demo"

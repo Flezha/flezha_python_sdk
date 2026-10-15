@@ -83,7 +83,7 @@ def test_a_replay_that_runs_a_function_fails_naming_the_effect() -> None:
 
         def run(self, _: str, ctx: Ctx[None, Any]) -> None:
             self.calls += 1
-            for _ in range(self.calls):
+            for _call in range(self.calls):
                 ctx.effect("model", lambda: "same")
 
     harness: TaskletTestHarness[None] = TaskletTestHarness(OneMore)

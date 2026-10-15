@@ -68,20 +68,23 @@ jobs:
           .venv/bin/python -m pip install --quiet "pip>=25.1"
           .venv/bin/python -m pip install --quiet --group dev
 
-      - name: Type-check the public surface
-        run: PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python src/flezha
+      - name: Type-check the package and its tests
+        run: PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python src/flezha tests
 
-      # The fixture that MUST fail. A checker that stopped reporting the wrong
-      # edge would otherwise pass silently, and the registration-time refusal
+      # The fixtures that MUST fail, under the fixtures' own config because the
+      # package's config excludes them. A checker that stopped reporting a wrong edge or
+      # emit would otherwise pass silently, and the registration-time refusal
       # would be the only line of defence left.
-      - name: The wrong-edge fixture is still a type error
+      - name: The wrong-edge and wrong-emit fixtures are still type errors
         run: |
           set -euo pipefail
-          if PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python \
-              tests/typing_fixtures/wrong_edge.py; then
-            echo "wrong_edge.py type-checked clean; the edge generics have stopped working" >&2
-            exit 1
-          fi
+          for fixture in wrong_edge wrong_emit; do
+            if PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python \
+                --project tests/typing_fixtures "tests/typing_fixtures/${fixture}.py"; then
+              echo "${fixture}.py type-checked clean; the typed surface has stopped working" >&2
+              exit 1
+            fi
+          done
           PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python \
             tests/typing_fixtures/well_typed.py
 

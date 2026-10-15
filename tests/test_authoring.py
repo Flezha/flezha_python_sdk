@@ -30,6 +30,8 @@ from flezha.testing import TaskletTestHarness
 if TYPE_CHECKING:
     from decimal import Decimal
 
+    from flezha.relay import Ack
+
 fixtures = app.module("fixtures")
 
 
@@ -168,7 +170,7 @@ def test_an_ack_at_checkpoint_reaches_the_declaration_as_the_tree() -> None:
         def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
             ctx.emit(value)
 
-    ack = {"checkpoint": {"every": 4, "outputs": "at_checkpoint", "max_delay_ms": 250}}
+    ack: Ack = {"checkpoint": {"every": 4, "outputs": "at_checkpoint", "max_delay_ms": 250}}
 
     @flezha.relay("compose", run={"flow": {"exactly": {"effectively_once": {"ack": ack}}}})
     def compose(c: flezha.Channels) -> None:

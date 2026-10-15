@@ -61,6 +61,7 @@ def test_every_crossing_names_a_declared_entry_point() -> None:
         and node.func.attr == "_call"
         and node.args
         and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
     }
     assert crossings, "no crossing found; `_call` is how this module reaches the veneer"
     unknown = crossings - set(native.Core.ENTRY_POINTS) - {"free"}
@@ -249,6 +250,7 @@ def test_the_payload_view_is_a_buffer_and_copies_only_on_request() -> None:
     import msgpack
 
     body = msgpack.packb({"a": 1})
+    assert body is not None
     view = _view_of(body)
     assert not isinstance(view, bytes)
     assert len(view) == len(body)

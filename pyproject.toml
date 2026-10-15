@@ -79,6 +79,10 @@ testpaths = ["tests"]
 
 [tool.pyright]
 include = ["src", "tests"]
+# The fixtures that MUST fail. Pyright drops an excluded file even when it is
+# named on the command line, so each is checked against
+# `tests/typing_fixtures/pyrightconfig.json`, which lifts this exclusion.
+exclude = ["tests/typing_fixtures/wrong_edge.py", "tests/typing_fixtures/wrong_emit.py"]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
 reportMissingImports = "warning"

@@ -30,11 +30,17 @@ pytestmark = pytest.mark.skipif(
 
 
 def _check(path: pathlib.Path) -> list[dict[str, object]]:
-    """Run pyright over one path and return its diagnostics."""
+    """Run pyright over one path and return its diagnostics.
+
+    Under the fixtures' config: the package's, without its exclusion of the
+    fixtures that must fail.
+    """
     result = subprocess.run(
         [
             "pyright",
             "--outputjson",
+            "--project",
+            str(_FIXTURES),
             "--pythonpath",
             sys.executable,
             str(path),

@@ -345,7 +345,7 @@ def answered(activation: dict[str, Any], deps: Any) -> dict[str, Any]:
     return run_now(answer(activation, deps))
 
 
-def deps_for(relay: flezha.Relay, core: FakeCore) -> Any:
+def deps_for(relay: flezha.Relay, core: FakeCore | native.Core) -> Any:
     """A validated, registered `DispatchDeps` over one relay.
 
     Twelve tests across two files spelled `Registry() + validate + add +
