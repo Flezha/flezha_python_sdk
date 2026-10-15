@@ -147,6 +147,29 @@ def test_event_time_is_advanced_through_the_registered_timers() -> None:
     assert fired == [100, 300]
 
 
+def test_event_time_fires_each_pending_timer_once_and_never_a_cancelled_one() -> None:
+    fired: list[int] = []
+
+    class Cancelling:
+        def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
+            ctx.timer_at_event_time(100)
+            ctx.timer_at_event_time(100)
+            cancelled = ctx.timer_at_event_time(200)
+            ctx.timer_at_event_time(300)
+            ctx.cancel_timer("event_time", cancelled)
+
+        def on_timer(self, timer: dict[str, object], ctx: flezha.Ctx[None, None]) -> None:
+            fired.append(int(timer["scheduled_at"]))  # type: ignore[arg-type]
+
+    harness: TaskletTestHarness[None] = TaskletTestHarness(
+        flezha.tasklet(Cancelling, name="cancelling")
+    )
+    harness.feed("x")
+    assert len(harness.advance_event_time(150)) == 1
+    assert len(harness.advance_event_time(400)) == 1
+    assert fired == [100, 300]
+
+
 def test_a_compensation_is_driven_over_recorded_outputs() -> None:
     seen: list[Any] = []
     harness: TaskletTestHarness[None] = TaskletTestHarness(compensating(seen))

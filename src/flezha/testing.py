@@ -130,7 +130,8 @@ class TaskletTestHarness(Generic[S]):
         self._cell = self._registered.cell(self._node, relay, cell_key)
         self._deps = DispatchDeps(registry=None, bridge=self)
         self.log: list[bytes] = []
-        self._timers: list[dict[str, Any]] = []
+        # Pending timers by (kind, scheduled_at), as the core keeps them.
+        self._timers: set[tuple[str, int]] = set()
         self._change_seq = 0
         # Answers by handle, until the invocation that made them ends, as the
         # core releases them.
@@ -173,6 +174,7 @@ class TaskletTestHarness(Generic[S]):
         """Fire a per-cell timer. ``now`` IS the scheduled time, as it is live."""
         if self._task.on_timer is None:
             raise FlezhaError("runtime.timer_without_on_timer", {"tasklet": self._task.name})
+        self._timers.discard((kind, scheduled_at))
         return self._run(
             scheduled_at,
             False,
@@ -183,16 +185,12 @@ class TaskletTestHarness(Generic[S]):
         )
 
     def advance_event_time(self, to: int) -> list[Outcome]:
-        """Fire every event-time timer registered at or before ``to``, in order."""
-        due = sorted(
-            (
-                timer
-                for timer in self._timers
-                if timer["kind"] == "event_time" and timer["scheduled_at"] <= to
-            ),
-            key=lambda timer: timer["scheduled_at"],
-        )
-        return [self.fire_timer("event_time", timer["scheduled_at"]) for timer in due]
+        """Fire each pending event-time timer at or before ``to``, earliest
+        first; what a firing registers or cancels counts, as it does live."""
+        outcomes: list[Outcome] = []
+        while due := [at for kind, at in self._timers if kind == "event_time" and at <= to]:
+            outcomes.append(self.fire_timer("event_time", min(due)))
+        return outcomes
 
     def compensate(self, outputs: list[Any]) -> Outcome:
         """Run the declared compensation over recorded forward outputs."""
@@ -340,7 +338,9 @@ class TaskletTestHarness(Generic[S]):
         ctx.settle_return(returned, hook)
         self.log.extend(ctx.changes)
         self._change_seq += len(ctx.changes)
-        self._timers.extend(timer for timer in ctx.timers if timer["register"])
+        for timer in ctx.timers:
+            apply = self._timers.add if timer["register"] else self._timers.discard
+            apply((timer["kind"], timer["scheduled_at"]))
         return Outcome(
             outputs=[_codec.decode(output["payload"]) for output in ctx.outputs],
             changes=[self._task.decode_change(body) for body in ctx.changes],
