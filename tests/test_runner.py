@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 import flezha
-from conftest import FakeCore, demo, work_activation
+from conftest import FakeCore, answered, demo, leave, work_activation
 from flezha import logger, native
 from flezha.errors import FlezhaError
 from flezha.runner import Runner
@@ -179,6 +179,46 @@ def test_removing_a_type_with_live_instances_is_refused(runner: Any) -> None:
             {"factory_id": "demo", "live_instances": 1},
         )
         assert declared(r) == ["demo"]
+    finally:
+        r.stop()
+        r.drain()
+
+
+def test_a_cell_that_left_starts_again_from_its_initial_state(runner: Any) -> None:
+    from flezha.dispatch import dispatch_now
+
+    core = FakeCore()
+    r = runner().register_factory(demo).start(core=core)
+    try:
+        deps = r._executor._deps  # type: ignore[attr-defined]
+        read = {**leave(3, whole_relay=False, tasklet=1), "kind": "live_state_read"}
+        dispatch_now(work_activation(1, "abc", tasklet=1), core, deps)
+        assert json.loads(answered(read, deps)["json"])["count"] == 3
+
+        dispatch_now(leave(2, whole_relay=False, tasklet=1), core, deps)
+
+        assert core.completed[-1] == {"token": 2, "outcome": "state_applied"}
+        assert json.loads(answered(read, deps)["json"])["count"] == 0
+    finally:
+        r.stop()
+        r.drain()
+
+
+def test_a_type_whose_relays_all_left_can_be_removed(runner: Any) -> None:
+    from flezha.dispatch import dispatch_now
+
+    core = FakeCore()
+    r = runner().register_factory(demo).start(core=core)
+    try:
+        deps = r._executor._deps  # type: ignore[attr-defined]
+        dispatch_now(work_activation(1, "abc"), core, deps)
+        dispatch_now(work_activation(2, "abc", tasklet=1), core, deps)
+
+        dispatch_now(leave(3, whole_relay=True), core, deps)
+
+        assert core.completed[-1] == {"token": 3, "outcome": "state_applied"}
+        r.unregister_factory(demo)
+        assert declared(r) == []
     finally:
         r.stop()
         r.drain()

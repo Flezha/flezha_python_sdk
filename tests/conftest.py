@@ -338,6 +338,19 @@ def key_request(
     }
 
 
+def leave(token: int, *, whole_relay: bool, tasklet: int = 0) -> dict[str, Any]:
+    """A leave for relay ``op``, as the veneer produces it."""
+    return {
+        "token": token,
+        "relay": "op",
+        "tasklet": tasklet,
+        "change_seq": 0,
+        "factory": "demo",
+        "kind": "leave",
+        "whole_relay": whole_relay,
+    }
+
+
 def answered(activation: dict[str, Any], deps: Any) -> dict[str, Any]:
     """The answer for one activation, driven with no event loop."""
     from flezha.dispatch import answer, run_now

@@ -108,6 +108,15 @@ class RegisteredClass:
         with self._lock:
             self._cells[cell.address] = state
 
+    def forget(self, cell: Cell, whole_relay: bool) -> None:
+        """Drop a cell that left this runner, or every cell of its relay."""
+        with self._lock:
+            if whole_relay:
+                for address in [a for a in self._cells if a[0] == cell.relay]:
+                    del self._cells[address]
+            else:
+                self._cells.pop(cell.address, None)
+
     def live_instances(self) -> int:
         """How many relays of this class have a materialised cell here."""
         with self._lock:
@@ -392,6 +401,9 @@ async def _answer_kind(
         return _prepare(activation, registered)
     if kind == "compensate_run":
         return await _compensate(cell, activation, deps)
+    if kind == "leave":
+        registered.forget(cell, bool(activation.get("whole_relay")))
+        return {"token": token, "outcome": "state_applied"}
     return failed(token, f"unknown activation kind `{kind}`", non_retryable=True)
 
 
