@@ -21,7 +21,7 @@ from collections.abc import Callable, Iterable
 import pytest
 
 import app
-from flezha import FlezhaError, LocalRelay, Relay, LocalOutput
+from flezha import FlezhaError, LocalOutput, LocalRelay, Relay
 
 fixtures = app.module("fixtures")
 fixtures_state = app.module("fixtures_state")

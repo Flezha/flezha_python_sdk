@@ -31,7 +31,7 @@ from .codec import ChannelCodec, TypeCodec, ValueCodec
 from .control import Control, StartResult
 from .ctx import Ctx, SpawnHandle, SpawnResult
 from .errors import DeterminismWarning, FlezhaError, NonRetryableError
-from .local import LocalRelay, LocalOutput
+from .local import LocalOutput, LocalRelay
 from .logger import configure as configure_logging
 from .relay import Durable, Relay, Run, relay
 from .runner import ACTIVATION_SCHEMA_VERSION, Runner, create_runner
