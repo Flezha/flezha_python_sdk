@@ -94,8 +94,7 @@ flezha.create_runner("default").register_factory(echo_relay).run()
 - **A channel names its payload format.** `codec=` on `input` and `output` takes
   `"bytes"`, `"text"`, `"json"` or `"msgpack"`. With none, an entry reads JSON and
   an output sends bytes unchanged, a string as UTF-8 and anything else as JSON, so an
-  output needs no codec for a string, bytes or a JSON value. An Elixir entry
-  declared with no decoder hands over the binary instead.
+  output needs no codec for a string, bytes or a JSON value.
 - **Never `pickle`.** Durable state is MessagePack from author-declared
   dataclasses, Pydantic models or attrs classes.
 - **One error type.** Anything Flezha refuses raises `flezha.FlezhaError`: a
