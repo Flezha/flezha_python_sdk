@@ -123,9 +123,13 @@ class Control:
         """The plugins enabled in this namespace: name, provider, single, bound relays."""
         return self.call("PluginManager.list")
 
-    def cell_state(self, relay_id: str, cell_key: str) -> Any:
-        """One cell's live state, and the change sequence it was read at."""
-        return self.call("Relay.cell_state", relay_id, cell_key)
+    def cell_state(self, relay_id: str, cell: str | None = None) -> Any:
+        """A relay's live state, and the change sequence it was read at.
+
+        ``cell`` is ``<tasklet>[/<cell_key>]``: a tasklet's Cells, or one of
+        them; ``None`` reads every Cell of the relay.
+        """
+        return self.call("Relay.cell_state", relay_id, cell)
 
     def call(self, verb: str, *args: Any) -> Any:
         """Any published function, by name.
