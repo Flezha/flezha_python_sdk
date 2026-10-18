@@ -4,7 +4,7 @@ The Flezha Python SDK — a poll host over `flz_core`, the runner kernel the
 Rust, Java, Node and Ruby SDKs also drive.
 
 **Support tier:**
-[tier 2](https://github.com/flezha/flezha/blob/main/docs/publishing/maturity.md#sdk-python),
+[tier 2](https://github.com/flezha/flezha/blob/main/docs/public/publishing/maturity.md#sdk-python),
 passes the full conformance run in CI exactly as tier 1 does, with every capability
 present, and is permanently supported; it is not yet run by the maintainer in a live
 deployment, so a defect specific to it is likely to be found by its users first.
@@ -103,6 +103,6 @@ flezha.create_runner("default").register_factory(echo_relay).run()
   and `hint`.
 
 Full documentation:
-[`docs/sdk/python_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/sdk/python_sdk.md).
+[`docs/internal/sdk/python_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/python_sdk.md).
 
 Licensed under Apache-2.0.

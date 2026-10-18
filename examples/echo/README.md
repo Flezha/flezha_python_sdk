@@ -67,6 +67,6 @@ Once the package is published, the step goes away.
 
 [`docs/guides/runner_deployment.md`](../../../../docs/guides/runner_deployment.md)
 walks through what each of the three parts is and why the split is the way it
-is. [`docs/sdk/python_sdk.md`](../../../../docs/sdk/python_sdk.md) covers the
+is. [`docs/internal/sdk/python_sdk.md`](../../../../docs/internal/sdk/python_sdk.md) covers the
 rest of the SDK. [`examples/echo_deployment`](../echo_deployment)
 starts a controller and this runner together with Docker.

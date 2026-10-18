@@ -125,5 +125,5 @@ Once the package is published, the step goes away.
 ## Where to go next
 
 The tradedesk in [`../tradedesk`](../tradedesk/README.md) is the Part 2 project, and
-[`docs/sdk/calls.md`](../../../../docs/sdk/calls.md) is the contract `flz relay call`
+[`docs/internal/sdk/calls.md`](../../../../docs/internal/sdk/calls.md) is the contract `flz relay call`
 follows.

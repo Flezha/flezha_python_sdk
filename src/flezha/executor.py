@@ -449,7 +449,7 @@ class AsyncioExecutor(_Host):
     its own thread.
 
     The fetcher stays a real thread here too. ``poll`` blocks in native code,
-    and ``docs/sdk/poll_core.md`` is explicit that fetching on a runtime's
+    and ``docs/internal/sdk/poll_core.md`` is explicit that fetching on a runtime's
     shared I/O pool starves everything else that pool serves — so the loop's
     default executor is never borrowed for it.
 

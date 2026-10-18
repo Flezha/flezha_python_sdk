@@ -178,5 +178,5 @@
     "recorded_effects": ["effect_block_steps", "effect_flow"],
     "relay_api": ["orders"]
   },
-  "docs": "docs/sdk/python_sdk.md"
+  "docs": "docs/internal/sdk/python_sdk.md"
 }
