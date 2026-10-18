@@ -68,25 +68,10 @@ jobs:
           .venv/bin/python -m pip install --quiet "pip>=25.1"
           .venv/bin/python -m pip install --quiet --group dev
 
+      # The fixtures that must fail are judged by tests/test_typing.py, which
+      # asserts each fixture's error count, the types named and the line.
       - name: Type-check the package and its tests
         run: PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python src/flezha tests
-
-      # The fixtures that MUST fail, under the fixtures' own config because the
-      # package's config excludes them. A checker that stopped reporting a wrong edge or
-      # emit would otherwise pass silently, and the registration-time refusal
-      # would be the only line of defence left.
-      - name: The wrong-edge and wrong-emit fixtures are still type errors
-        run: |
-          set -euo pipefail
-          for fixture in wrong_edge wrong_emit; do
-            if PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python \
-                --project tests/typing_fixtures "tests/typing_fixtures/${fixture}.py"; then
-              echo "${fixture}.py type-checked clean; the typed surface has stopped working" >&2
-              exit 1
-            fi
-          done
-          PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python \
-            tests/typing_fixtures/well_typed.py
 
   # Both wheel tiers, built from the wrapper crate, whose one dependency is the
   # core at a git tag, so a job needs cargo and git and no checkout of the core.
