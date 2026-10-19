@@ -8,6 +8,8 @@ the surface exists to give. One declaration per export, mirroring what
 
 from typing import Any
 
+WAIT_CORE_BOUND: int
+
 class NativeError(RuntimeError):
     """A failure the native library reported; its message is the JSON error document."""
 

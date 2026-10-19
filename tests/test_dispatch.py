@@ -932,20 +932,22 @@ def test_each_failure_a_read_meets_is_the_one_error_with_its_code(
     assert effect["verdict"] == "ok"
 
 
-def test_if_running_without_an_id_is_refused_at_the_call_and_sends_nothing(
+def test_if_running_without_an_id_raises_the_cores_refusal_and_sends_nothing(
     fake_core: FakeCore,
 ) -> None:
+    raised: list[flezha.FlezhaError] = []
+
     @flezha.tasklet(name="spawner")
     class Spawner:
         def run(self, value: str, ctx: flezha.Ctx[None, None]) -> None:
-            ctx.spawn_steps("worker", value, if_running="error")
+            try:
+                ctx.spawn_steps("worker", value, if_running="error")
+            except flezha.FlezhaError as error:
+                raised.append(error)
 
-    (effect,) = answered(work_activation(93, "p", factory="solo"), solo_deps(Spawner, fake_core))[
-        "effects"
-    ]
-    assert effect["message"].startswith("ValueError: ")
-    assert "if_running" in effect["message"]
-    assert "id=" in effect["message"]
+    answered(work_activation(93, "p", factory="solo"), solo_deps(Spawner, fake_core))
+    (error,) = raised
+    assert error.code == "spawn.if_running_without_id"
     assert fake_core.spawns == []
 
 

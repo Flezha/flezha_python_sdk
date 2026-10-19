@@ -20,6 +20,7 @@ from . import codec as _codec
 from .builder import DROPPED, ChannelSpec, ClassSpec, ConsumerEdge, TaskNode, apply_transforms
 from .errors import FlezhaError, NonRetryableError
 from .identity import cell_identity, stable_id
+from .native import load_extension
 
 if TYPE_CHECKING:
     from .codec import ValueCodec
@@ -64,10 +65,6 @@ IfRunning = Literal["deliver", "error"]
 #: How a spawn reached its instance.
 SpawnOutcome = Literal["spawned", "delivered", "skipped_on_replay"]
 
-#: The waiting read's own bound: none. The core ends every wait at the
-#: request's deadline, 30 seconds after it was made.
-_UNTIL_DEADLINE_MS = 2**64 - 1
-
 
 @dataclass(frozen=True, slots=True)
 class SpawnResult:
@@ -102,7 +99,7 @@ class SpawnHandle:
 
     def wait(self) -> SpawnResult:
         """Block for the answer, up to the core's deadline for the request."""
-        result = self._read(_UNTIL_DEADLINE_MS)
+        result = self._read(load_extension().WAIT_CORE_BOUND)
         assert result is not None, "a read that reaches the deadline resolves to a timeout"
         return result
 
@@ -352,11 +349,6 @@ class Ctx(Generic[S, O_contra]):
         ``skipped_on_replay``, where a timer registers again, because a spawn is
         an external side effect and a timer is internal state.
         """
-        if if_running is not None and not id:
-            raise ValueError(
-                f"{self._node.name}: if_running applies only to a running instance named by "
-                f"id; pass id= with if_running, or drop if_running to start a new instance"
-            )
         return SpawnHandle(
             self._bridge,
             self._bridge.spawn_request(

@@ -25,7 +25,7 @@ __all__ = ["Core", "ACTIVATION_SCHEMA_VERSION", "load_extension", "build_tier"]
 #: The activation schema version this package was written against. The
 #: extension refuses a mismatch at context creation, naming both versions,
 #: before any controller connection is attempted.
-ACTIVATION_SCHEMA_VERSION = 4
+ACTIVATION_SCHEMA_VERSION = 5
 
 
 def load_extension() -> Any:

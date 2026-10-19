@@ -384,11 +384,8 @@ async def _answer_kind(
             "outcome": "snapshot",
             "state": cell.task.encode_state(cell.state),
         }
-    # Two names for one read: a live query and a migration handover both want
-    # the state as JSON, and only the outcome key differs.
-    if kind in ("live_state_read", "migration_serialize"):
-        outcome = "state_json" if kind == "live_state_read" else "migration_state"
-        return {"token": token, "outcome": outcome, "json": _codec.to_state_json(cell.state)}
+    if kind == "live_state_read":
+        return {"token": token, "outcome": "state_json", "json": _codec.to_state_json(cell.state)}
     if kind == "apply_state":
         cell.state = _codec.from_state_json(activation.get("state_json"))
         return {"token": token, "outcome": "state_applied"}

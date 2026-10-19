@@ -217,6 +217,8 @@ class FakeCore:
         replay: bool,
         offset: int | None,
     ) -> int:
+        if if_running and not id:
+            raise FlezhaError("spawn.if_running_without_id", {})
         with self._lock:
             self.spawns.append(
                 {
