@@ -2,8 +2,8 @@
 
 The package ships ``py.typed``, so the native module needs a stub or every call
 through it is untyped — which would quietly hollow out the checking the rest of
-the surface exists to give. One declaration per export, mirroring
-``NATIVE_SURFACE``.
+the surface exists to give. One declaration per export, mirroring what
+``native_surface()`` lists.
 """
 
 from typing import Any

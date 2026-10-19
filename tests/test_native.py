@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+import contract
 from flezha import native
 from flezha.errors import FlezhaError
 
@@ -30,27 +31,29 @@ def test_the_build_tier_is_reported() -> None:
     assert isinstance(ffi.free_threaded(), bool)
 
 
-def test_every_entry_point_this_package_calls_is_one_the_veneer_exports() -> None:
-    """The wrapper adds no ABI surface.
+def test_the_extension_exports_the_surface_this_package_wraps() -> None:
+    """The extension's table against the C ABI fixture, the loaded module and the wrapper.
 
-    A veneer entry point added there and not here would be a method that
-    quietly does not exist; one added here and not there would raise at the
-    first call rather than at import.
-    """
-    exported = {name for name, _abi, _blocking in ffi.native_surface()}
-    for entry in native.Core.ENTRY_POINTS:
-        assert f"Core.{entry}" in exported or entry in exported, entry
-    assert hasattr(ffi.Core, "free")
-
-
-def test_every_crossing_names_a_declared_entry_point() -> None:
-    """`_call` is the only site that touches the veneer, and it names by string.
-
-    `ENTRY_POINTS` is what the test above checks against the extension, so a
-    method forwarding to a name that is not in it would cross unchecked.
+    Every row resolves on the loaded module and names an entry point
+    ``abi_surface.txt`` lists, so the veneer adds no ABI surface; every entry
+    point the wrapper declares is a row, and every crossing ``native.py`` makes
+    names one it declares. A veneer export renamed or removed fails here
+    rather than at the first call.
     """
     import ast
     import pathlib
+
+    fixture = contract.member("test/fixtures/abi_surface.txt").read_text().splitlines()
+    listed = {line.strip() for line in fixture if line.strip() and not line.startswith("#")}
+    surface = ffi.native_surface()
+    for name, abi, _blocking in surface:
+        assert abi in listed, f"{name} names {abi}, which flz_core_ffi does not export"
+        owner, _, attr = name.rpartition(".")
+        assert hasattr(ffi.Core if owner else ffi, attr), f"{name} is not exported"
+
+    exported = {name for name, _abi, _blocking in surface}
+    for entry in native.Core.ENTRY_POINTS:
+        assert f"Core.{entry}" in exported or entry in exported, entry
 
     source = pathlib.Path(native.__file__).read_text()
     crossings = {
@@ -66,21 +69,6 @@ def test_every_crossing_names_a_declared_entry_point() -> None:
     assert crossings, "no crossing found; `_call` is how this module reaches the veneer"
     unknown = crossings - set(native.Core.ENTRY_POINTS) - {"free"}
     assert not unknown, f"{sorted(unknown)} is forwarded but not declared in ENTRY_POINTS"
-
-
-def test_every_export_names_a_c_abi_entry_point() -> None:
-    for name, abi, _blocking in ffi.native_surface():
-        assert abi.startswith("flz_core_"), f"{name} names {abi}"
-
-
-def test_a_schema_mismatch_refuses_before_connecting() -> None:
-    with pytest.raises(ffi.SchemaMismatch) as caught:
-        ffi.Core(native.ACTIVATION_SCHEMA_VERSION + 1)
-    error = FlezhaError.from_document(str(caught.value))
-    assert (error.code, error.details) == (
-        "runtime.schema_mismatch",
-        {"shim": native.ACTIVATION_SCHEMA_VERSION + 1, "core": native.ACTIVATION_SCHEMA_VERSION},
-    )
 
 
 def test_a_schema_mismatch_reaches_the_package_as_its_own_error(
