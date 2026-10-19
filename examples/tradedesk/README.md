@@ -1,12 +1,12 @@
-# Tradedesk: the Python project for guides Part 2
+# Tradedesk: the Python project of the tradedesk tutorial
 
-The toy trader the [Part 2 guides](../../../../docs/guides/guides.md) build, as a
+The toy trader the [tradedesk tutorial](https://github.com/flezha/flezha/blob/main/docs/public/tutorials/tradedesk/tradedesk.md) builds, as a
 standalone project. Nothing here depends on the Flezha source tree:
 `requirements.txt` names one released version of `flezha`, the way your own
 project would. It needs Python 3.11 or later.
 
-It holds the desk's two relays and the runner that serves them. The guides
-write them one tasklet at a time.
+It holds the desk's two relays and the runner that serves them. The tutorial
+writes them one tasklet at a time.
 
 | File | What is in it |
 |---|---|
@@ -28,9 +28,7 @@ takes and hands on are dicts, typed as `TypedDict`s, beside it in its own file.
 ## Run it
 
 You need a controller running, the `trading` namespace created and a key for it
-([`docs/guides/tradedesk/authorization.md`](../../../../docs/guides/tradedesk/authorization.md)
-and
-[`namespaces.md`](../../../../docs/guides/tradedesk/namespaces.md)).
+([Open the desk](https://github.com/flezha/flezha/blob/main/docs/public/tutorials/tradedesk/open_the_desk.md) does both).
 
 ```sh
 python3 -m venv .venv
@@ -142,6 +140,6 @@ Once the package is published, the step goes away.
 
 ## Where to go next
 
-The echo in [`../echo`](../echo/README.md) is the Part 1 project, and
-[`docs/guides/runner_deployment.md`](../../../../docs/guides/runner_deployment.md)
+The echo in [`../echo`](../echo/README.md) is the project of the getting-started pages, and
+[Building blocks](https://github.com/flezha/flezha/blob/main/docs/public/topics/core/building_blocks.md)
 walks through what a tasklet, a relay and a runner each are.

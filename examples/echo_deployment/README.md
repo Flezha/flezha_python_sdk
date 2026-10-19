@@ -5,10 +5,11 @@ in and comes back. The runner is the standalone Python hello world in
 [`examples/echo`](../echo), and this folder
 is the deployment around it.
 
-This is the same `echo` the guides build by hand in
-[`docs/guides/runner_deployment.md`](../../../../docs/guides/runner_deployment.md).
-Running it here first is the fast way to see the pieces move; the guide is
-where you learn what each one is.
+This is the same `echo`
+[Up and running](https://github.com/flezha/flezha/blob/main/docs/public/getting_started/up_and_running.md)
+starts by hand. Running it here first is the fast way to see the pieces move;
+[Building blocks](https://github.com/flezha/flezha/blob/main/docs/public/topics/core/building_blocks.md)
+is where you learn what each one is.
 
 ## With Docker
 

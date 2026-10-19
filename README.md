@@ -43,49 +43,6 @@ flezha.create_runner("default").register_factory(echo_relay).run()
 - **Preview an output while it is produced.** `ctx.part(value)` sends a
   listener a preview of the tasklet's output while `run` is still working; an
   output never sees it.
-- **Answer a caller, or call another relay.** A channel ends in one `output` or
-  one `call(...)`. The first output an input causes answers the outside
-  caller of that input, and still reaches the output's plugins and listeners.
-  `call("pricing", deadline_ms=500)` or
-  `call(factory="agent", deadline_ms=60_000, create=False, channel="turn")`
-  sends each value, after the chain's transforms and key, to another relay
-  (a factory call reaches the instance the chain's `key_by` names);
-  `answer_channel=` names the callee's channel whose output answers; one `codec=`
-  writes the request and reads the answer, JSON when none is named. The outcome
-  arrives later as a `flezha.Response` on the entry channel
-  `<channel>.response`, which must feed a tasklet, the calling one included:
-  `request`, `ok`, then `value` or `error` (a `FlezhaError`, `call.timeout`
-  once the deadline passes), `target` (the callee's instance id) and `created`.
-
-  ```python
-  (
-      c.input("in", codec="text")
-      .into(Account)
-      .named("gateway")
-      .key_by(lambda line: line.split(":", 1)[0])
-      .call(factory="agent", deadline_ms=30_000, codec="text")
-      .into(Outcome)  # Outcome.run takes a flezha.Response[str, str]
-  )
-  ```
-- **A relay's API.** Each entry channel is part of its relay's API, which
-  `flz relay info`, the HTTP API and AI agents read. `description=` on `input`
-  says what the channel is for. A JSON channel's schema is derived from the
-  input type of the tasklet it feeds (a `TypedDict`, a dataclass, or any type
-  with `model_json_schema()`), and `schema=` declares one instead. Application
-  code calls a channel by value with `runner.call`, beside `runner.send`, and
-  gets what the relay's outputs answer.
-
-  ```python
-  c.input("place", description="Places an order").into(Place).output("placed")
-
-  placed = runner.call("orders-eu", "place", {"pair": "EUR/USD", "amount": 1000})
-  ```
-- **Run a graph with no controller.** `LocalRelay.start` takes the same
-  relay and runs its declared graph in this process — for trying Flezha out
-  and for developing a relay. State is held in memory and nothing is
-  durable; every run says so.
-- **Python 3.11+**, CPython only. Two wheel tiers from one source: an `abi3`
-  compatibility wheel per platform, and per-version free-threaded wheels.
 - **The GIL bounds only handler bodies.** Every blocking core call releases it,
   so transport, framing, durability, retries, credit, routing and the
   activation decode all run in parallel in Rust.
@@ -102,7 +59,54 @@ flezha.create_runner("default").register_factory(echo_relay).run()
   `relay.already_running`) or `class_`, and reads its `message`, `details`
   and `hint`.
 
+## Install
+
+```bash
+pip install flezha
+```
+
+`flezha` 0.1.0 is not on PyPI yet. Until it is, build a wheel from a checkout as
+[`examples/echo`](examples/echo/README.md#building-from-a-checkout) shows.
+Optional extras: `flezha[pydantic]`, `flezha[attrs]`, `flezha[uvloop]`; the SDK
+imports none of them unconditionally.
+
+## Supported Python versions
+
+Python **3.11 or newer**, CPython only. The native module needs the CPython C
+API, so PyPy and GraalPy are out of scope.
+
+Two wheel tiers ship from one source, with one API and one set of semantics:
+
+| Tier | Wheels | What it is for |
+| --- | --- | --- |
+| Compatibility | one `abi3` wheel per platform, targeting 3.11 | every supported interpreter at or above the floor |
+| Performance | per-version free-threaded wheels, from `cp314t` | handler bodies that execute in parallel |
+
+`abi3` has no free-threaded form before CPython 3.15's `abi3t`, which is why the
+performance tier is per version. It starts at 3.14t, because PyO3 refuses the
+free-threaded build of CPython below 3.14. The runner names its tier in its
+startup line.
+
+## The native library
+
+A prebuilt wheel carries the native module, `flezha.flz_core_ffi`, so installing
+needs no Rust toolchain. A platform with no prebuilt wheel falls back to the
+source distribution, which needs a stable Rust toolchain and fetches the core at
+the git tag `native/Cargo.toml` names.
+
+## Local mode, testing and the relay API
+
+- **Local mode**: `LocalRelay.start` runs a relay's declared graph in your own
+  process, with no controller. See
+  [Local mode](https://github.com/flezha/flezha/blob/main/docs/public/topics/core/running_and_testing.md#local-mode).
+- **Testing**: `flezha.testing.TaskletTestHarness` drives one tasklet and checks
+  its replay. See
+  [Check a tasklet on its own](https://github.com/flezha/flezha/blob/main/docs/public/topics/core/running_and_testing.md#check-a-tasklet-on-its-own).
+- **The relay API**: a relay's entry channels, answering a caller, `call(...)`
+  to another relay, and `runner.send` and `runner.call` from application code.
+  See [Sending and calling](https://github.com/flezha/flezha/blob/main/docs/public/topics/core/sending_and_calling.md).
+
 Full documentation:
-[`docs/internal/sdk/python_sdk.md`](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/python_sdk.md).
+[the Python SDK guide](https://github.com/flezha/flezha/blob/main/docs/internal/sdk/python_sdk.md).
 
 Licensed under Apache-2.0.
