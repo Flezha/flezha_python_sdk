@@ -166,26 +166,6 @@ def test_removing_an_undeclared_type_is_refused_naming_it(runner: Any) -> None:
     )
 
 
-def test_removing_a_type_with_live_instances_is_refused(runner: Any) -> None:
-    from flezha.dispatch import dispatch_now
-
-    core = FakeCore()
-    r = runner().register_factory(demo).start(core=core)
-    try:
-        deps = r._executor._deps  # type: ignore[attr-defined]
-        dispatch_now(work_activation(1, "abc"), core, deps)
-        with pytest.raises(FlezhaError) as caught:
-            r.unregister_factory(demo)
-        assert (caught.value.code, caught.value.details) == (
-            "runtime.relay_type_in_use",
-            {"factory_id": "demo", "live_instances": 1},
-        )
-        assert declared(r) == ["demo"]
-    finally:
-        r.stop()
-        r.drain()
-
-
 def test_a_cell_that_left_starts_again_from_its_initial_state(runner: Any) -> None:
     from flezha.dispatch import dispatch_now
 
@@ -206,32 +186,13 @@ def test_a_cell_that_left_starts_again_from_its_initial_state(runner: Any) -> No
         r.drain()
 
 
-def test_a_type_whose_relays_all_left_can_be_removed(runner: Any) -> None:
-    from flezha.dispatch import dispatch_now
-
-    core = FakeCore()
-    r = runner().register_factory(demo).start(core=core)
-    try:
-        deps = r._executor._deps  # type: ignore[attr-defined]
-        dispatch_now(work_activation(1, "abc"), core, deps)
-        dispatch_now(work_activation(2, "abc", tasklet=1), core, deps)
-
-        dispatch_now(leave(3, whole_relay=True), core, deps)
-
-        assert core.completed[-1] == {"token": 3, "outcome": "state_applied"}
-        r.unregister_factory(demo)
-        assert declared(r) == []
-    finally:
-        r.stop()
-        r.drain()
-
-
 def test_removing_a_type_with_no_instances_succeeds(runner: Any) -> None:
     core = FakeCore()
     r = runner().register_factory(demo).register_factory(other_op).start(core=core)
     try:
         r.unregister_factory(other_op)
         assert declared(r) == ["demo"]
+        assert core.undeclared == ["other"]
     finally:
         r.stop()
         r.drain()
@@ -345,7 +306,7 @@ def test_a_boot_with_no_terminal_asks_the_core_to_watch_for_end_of_file(
     monkeypatch.setattr(sys, "stdin", io.StringIO())
     core = FakeCore()
     runner().register_factory(demo).start(core=core)
-    assert core.stdin_watch_grace_ms is not None
+    assert core.stdin_watched
 
 
 def test_a_start_takes_the_factory_first_and_answers_the_id_and_the_outcome(

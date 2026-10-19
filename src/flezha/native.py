@@ -74,6 +74,7 @@ class Core:
     #: method that quietly does not exist.
     ENTRY_POINTS = (
         "declare_class",
+        "undeclare_class",
         "check_class",
         "start",
         "local_start",
@@ -147,6 +148,10 @@ class Core:
         """Declare one host class from its JSON declaration."""
         self._call("declare_class", decl_json)
 
+    def undeclare_class(self, factory_id: str) -> None:
+        """Undeclare a class; after start, refused while it has live instances."""
+        self._call("undeclare_class", factory_id)
+
     def check_class(self, decl_json: bytes) -> bytes:
         """Judge one declaration without registering it; answers the derived one."""
         answer: bytes = self._call("check_class", decl_json)
@@ -188,11 +193,11 @@ class Core:
         poller and stop the runner loop."""
         self._call("shutdown")
 
-    def watch_stdin_eof(self, grace_ms: int) -> None:
+    def watch_stdin_eof(self) -> None:
         """Ask the core to watch standard input and end this process on end of
         file, on a thread of its own — so no reader of descriptor 0 lives here
         and none holds a lock the interpreter's finalisation waits on."""
-        self._call("watch_stdin_eof", grace_ms)
+        self._call("watch_stdin_eof")
 
     # -- the poll loop -----------------------------------------------------
 

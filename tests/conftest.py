@@ -113,7 +113,8 @@ class FakeCore:
         self.started: str | None = None
         self.complete_gate: threading.Event | None = None
         self.dispatch_threads: set[int] = set()
-        self.stdin_watch_grace_ms: int | None = None
+        self.stdin_watched = False
+        self.undeclared: list[str] = []
         self.spawns: list[dict[str, Any]] = []
         #: What a spawn resolves to beside its id: an outcome, or the error a
         #: refused read raises. ``None`` spawns under the requested or a
@@ -128,6 +129,9 @@ class FakeCore:
 
     def declare_class(self, json_bytes: bytes) -> None:
         self.declared.append(json_bytes)
+
+    def undeclare_class(self, factory_id: str) -> None:
+        self.undeclared.append(factory_id)
 
     def check_class(self, json_bytes: bytes) -> bytes:
         # The one entry point the fake does not fake: a check registers nothing
@@ -194,8 +198,8 @@ class FakeCore:
         self.shut_down = True
         self._shutting.set()
 
-    def watch_stdin_eof(self, grace_ms: int) -> None:
-        self.stdin_watch_grace_ms = grace_ms
+    def watch_stdin_eof(self) -> None:
+        self.stdin_watched = True
 
     def relays(self) -> list[str]:
         return list(self.bound)

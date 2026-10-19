@@ -40,9 +40,6 @@ __all__ = ["Runner", "create_runner", "ACTIVATION_SCHEMA_VERSION"]
 
 _log = logger("runner")
 
-# What a healthy runner has to drain in after standard input closes.
-_STDIN_EOF_GRACE_MS = 5_000
-
 #: Only one runner may be *started* per process: a runner is a transport
 #: connection and a connection lives in one process. Any number of unstarted
 #: runners may exist.
@@ -97,7 +94,7 @@ class Runner:
 
         The kind is read from what is handed in, never named by the call.
         Legal both before and after :meth:`start`; a post-start declaration
-        reaches the core immediately and the controller at the next bind.
+        reaches the core and the controller at once.
         """
         return self._define(_relay_of(relay))
 
@@ -119,30 +116,16 @@ class Runner:
     def unregister_factory(self, relay: Relay) -> Runner:
         """Undeclare a type — the inverse of :meth:`register_factory`, taking what it took.
 
-        Refuses one with live instances, and one never declared.
+        Refuses one never declared and, after start, the core refuses one with
+        live instances on this runner.
         """
         factory_id = _relay_of(relay).factory_id
         if not any(o.factory_id == factory_id for o in self._relays):
             raise FlezhaError("runtime.class_not_registered", {"factory": factory_id})
         if self._started:
-            registered = self._registry.get(factory_id)
-            live = 0 if registered is None else registered.live_instances()
-            if live:
-                raise FlezhaError(
-                    "runtime.relay_type_in_use",
-                    {"factory_id": factory_id, "live_instances": live},
-                )
-            if registered is not None:
-                self._registry.remove(factory_id)
-            # The core keeps its own declaration until the context ends: the
-            # ABI has no entry point that retracts one, so this runner stops
-            # serving the type and the controller learns of the removal at the
-            # next bind, whose init frame is serialized from the core's set.
-            _log.debug(
-                "the removal of `%s` has no core surface; this runner stops serving it and "
-                "the declaration lapses when the context ends",
-                factory_id,
-            )
+            assert self._core is not None
+            self._core.undeclare_class(factory_id)
+            self._registry.remove(factory_id)
         self._relays = [o for o in self._relays if o.factory_id != factory_id]
         return self
 
@@ -345,13 +328,6 @@ class Runner:
             raise FlezhaError("topology.duplicate_factory_id", {"factory_id": relay.factory_id})
         self._relays.append(relay)
         if self._started:
-            # Declaring on a live core appends to the set its connect frame is
-            # serialized from, which is the resync of record. An FFI host ships
-            # no `UpdateFactories` frame of its own: the ABI has no entry point
-            # for one, so the controller learns the new type at the next bind.
-            # The in-process Rust host, which owns the runner channel directly,
-            # is the only one that can notify a live controller — OWED to
-            # `sdk-abi-factory-resync`, and Java carries the same gap.
             self._declare(relay)
         return self
 
@@ -377,7 +353,7 @@ class Runner:
             # watch is the core's, on a thread that holds nothing the
             # interpreter's finalisation waits on.
             assert self._core is not None
-            self._core.watch_stdin_eof(_STDIN_EOF_GRACE_MS)
+            self._core.watch_stdin_eof()
 
 
 def create_runner(namespace: str) -> Runner:

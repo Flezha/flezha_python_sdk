@@ -117,11 +117,6 @@ class RegisteredClass:
             else:
                 self._cells.pop(cell.address, None)
 
-    def live_instances(self) -> int:
-        """How many relays of this class have a materialised cell here."""
-        with self._lock:
-            return len({relay for relay, _node, _key in self._cells})
-
     def cell(self, node: TaskNode, relay: str, key: str | None) -> Cell:
         """The handle every activation kind operates through."""
         return Cell(self, node, relay, key)
