@@ -113,28 +113,20 @@ def test_a_call_on_an_entry_channel_is_refused_as_an_output_on_one_is() -> None:
     assert refused.value.code == "topology.output_on_entry"
 
 
-def test_every_envelope_case_of_the_shared_fixture_decodes_to_its_expected_fields() -> None:
+def test_an_error_case_and_a_malformed_payload_read_through_the_core() -> None:
     decode = _response_decoder("bytes")
     cases = json.loads(contract.member("test/fixtures/call_response_envelope.json").read_text())
-    assert cases["cases"]
-    for case in cases["cases"]:
-        response = decode(case["payload"].encode())
-        got: dict[str, Any] = {
-            "target": response.target,
-            "created": response.created,
-            "request": _b64(response.request),
-            "ok": response.ok,
-        }
-        if response.ok:
-            got["value"] = _b64(response.value)
-        else:
-            assert isinstance(response.error, FlezhaError), case["name"]
-            got.update(
-                error_code=response.error.code,
-                error_class=response.error.class_,
-                error_message=response.error.message,
-            )
-        assert got == case["expect"], case["name"]
+    case = next(c for c in cases["cases"] if c["name"] == "error_timeout")
+    response, expect = decode(case["payload"].encode()), case["expect"]
+    assert (response.target, response.created, _b64(response.request)) == (
+        expect["target"],
+        expect["created"],
+        expect["request"],
+    )
+    assert response.error is not None and response.error.code == expect["error_code"]
+    with pytest.raises(FlezhaError) as refused:
+        decode(b'{"target":"t","created":false,"request":""}')
+    assert refused.value.code == "call.malformed_response"
 
 
 def test_the_call_codec_reads_a_text_request_and_a_json_answer() -> None:

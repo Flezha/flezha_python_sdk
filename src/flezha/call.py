@@ -2,13 +2,11 @@
 
 A ``call(...)`` end sends each value its chain yields to another relay; the
 outcome arrives later as a :class:`Response` on the caller's Response channel,
-whose payload is the JSON envelope :func:`response_decoder` reads.
+whose payload is the JSON envelope the core reads for :func:`response_decoder`.
 """
 
 from __future__ import annotations
 
-import base64
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
@@ -68,17 +66,22 @@ def call_link(
 
 
 def response_decoder(decode: Callable[[Any], Any]) -> Callable[[Any], Response[Any, Any]]:
-    """The Response channel's decoder: the envelope, then its request and its
-    answer each through ``decode``, the call's codec as ``input`` reads it."""
+    """The Response channel's decoder: the core reads the envelope, then its
+    request and its answer each go through ``decode``, the call's codec as
+    ``input`` reads it. A payload that is no envelope raises
+    ``call.malformed_response``."""
+    from .native import load_extension
+
+    module = load_extension()
 
     def decode_response(body: Any) -> Response[Any, Any]:
-        envelope = json.loads(bytes(body))
-        request = decode(base64.b64decode(envelope["request"], validate=True))
-        target, created = str(envelope["target"]), envelope.get("created") is True
-        if "error" in envelope:
-            error = FlezhaError.from_document(json.dumps({"error": envelope["error"]}))
-            return Response(request, target, created, error=error)
-        value = decode(base64.b64decode(envelope["value"], validate=True))
-        return Response(request, target, created, value=value)
+        try:
+            target, created, request, value, error = module.response_decode(bytes(body))
+        except module.NativeError as refused:
+            raise FlezhaError.from_document(str(refused)) from refused
+        sent = decode(request)
+        if error is not None:
+            return Response(sent, target, created, error=FlezhaError.from_document(error))
+        return Response(sent, target, created, value=decode(value))
 
     return decode_response
