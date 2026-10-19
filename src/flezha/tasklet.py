@@ -302,7 +302,6 @@ class Tasklet(Generic[I, O]):
             _refuse_context_parameter(self)
         else:
             _refuse_context_hooks(self)
-        self._validate_schema()
         if not self.stateful:
             return
         # A state that cannot be built or encoded cannot be restored, and the
@@ -332,22 +331,6 @@ class Tasklet(Generic[I, O]):
                 "expected": "a positive whole number of seconds",
             },
         )
-
-    def _validate_schema(self) -> None:
-        """The readable floor against the running version and its migration."""
-        floor = self.min_readable_schema_version
-        if floor is None:
-            return
-        running = self.schema_version or 1
-        if floor > running:
-            raise FlezhaError(
-                "topology.schema_floor_above_version",
-                {"tasklet": self.name, "floor": floor, "version": running},
-            )
-        if floor < running and self.migrate_state is None and self.migrate_change is None:
-            raise FlezhaError(
-                "topology.schema_floor_without_migration", {"tasklet": self.name, "floor": floor}
-            )
 
 
 def _invalid(tasklet: str, reason: str) -> FlezhaError:

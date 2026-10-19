@@ -7,6 +7,7 @@ lock.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from typing import Any
@@ -49,6 +50,8 @@ def _until(predicate: Any, timeout: float = 5.0) -> bool:
 def test_the_base_pool_comes_from_the_shared_knob(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FLEZHA_WORKER_POOL_SIZE", "5")
     assert executor_module.base_size() == 5
+    monkeypatch.setenv("FLEZHA_WORKER_POOL_SIZE", "0")
+    assert executor_module.base_size() == (os.cpu_count() or 1), "the core answers unset"
     monkeypatch.delenv("FLEZHA_WORKER_POOL_SIZE")
     assert executor_module.base_size() >= 1
 

@@ -120,50 +120,26 @@ def _channel_json(spec: ClassSpec, channel: ChannelSpec) -> dict[str, Any]:
     )
 
 
-def _keyed_consumers(spec: ClassSpec) -> set[int]:
-    """The nodes some chain reaches through a `key` link: the cell mode is the
-    wiring's, so one tasklet can be keyed in one relay and single in another."""
-    keyed: set[int] = set()
-    for channel in spec.channels:
-        for chain in channel.chains:
-            key = False
-            for link in chain:
-                if link["link"] == "key":
-                    key = True
-                elif key and link["link"] in ("into", "merge"):
-                    keyed.add(link["tasklet"])
-    return keyed
-
-
-def _cell_mode(node: TaskNode, keyed: set[int]) -> str:
-    if node.task.cell_keys is not None:
-        return "static"
-    return "dynamic" if node.index in keyed else "single"
-
-
-def _tasklet_json(spec: ClassSpec, node: TaskNode, keyed: set[int]) -> dict[str, Any]:
+def _tasklet_json(spec: ClassSpec, node: TaskNode) -> dict[str, Any]:
     task = node.task
     ttl = task.idle_ttl_seconds
     return _compact(
         {
             "name": node.name,
-            "cell_mode": _cell_mode(node, keyed),
             "cell_keys": task.cell_keys or [],
             "idle_ttl_ms": None if ttl is None else ttl * 1000,
             "max_cells": task.max_cells,
             "cells_for_overridden": task.cells_for is not None,
             "compensate_overridden": task.compensate is not None,
             "clock": task.clock,
-            # `is None`, not a falsy test: a declared 0 is what the core
-            # refuses as `MailboxCapacityZero`, and rewriting it to the default
-            # would hide the very declaration the author made.
-            "mailbox_capacity": 1024 if task.mailbox_capacity is None else task.mailbox_capacity,
+            "mailbox_capacity": task.mailbox_capacity,
             # A tasklet that folds no change has the empty Change type, so a
             # logical clock over it would never advance; a class that journals
             # nothing has it for every tasklet.
             "change_is_nochange": not spec.keeps_work or task.apply_change is None,
             "schema_version": task.schema_version or 1,
             "min_readable_schema_version": task.min_readable_schema_version,
+            "migrates": task.migrate_state is not None or task.migrate_change is not None,
         }
     )
 
@@ -176,7 +152,6 @@ def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
     own test reads: a key the core learns that Python cannot spell fails that
     test.
     """
-    keyed = _keyed_consumers(spec)
     return _compact(
         {
             "factory_id": spec.factory_id,
@@ -189,6 +164,6 @@ def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
             "change_format_id": FORMAT_ID_MSGPACK,
             "compact_after_bytes": spec.compact_after_bytes,
             "channels": [_channel_json(spec, channel) for channel in spec.channels],
-            "tasklets": [_tasklet_json(spec, node, keyed) for node in spec.tasklets],
+            "tasklets": [_tasklet_json(spec, node) for node in spec.tasklets],
         }
     )

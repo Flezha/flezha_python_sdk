@@ -388,7 +388,7 @@ def test_seconds_reach_the_record_in_milliseconds() -> None:
     def keyed(c: flezha.Channels) -> None:
         c.input("in").key_by(str).into(ttl).output()
 
-    assert (_record(keyed)["cell_mode"], _record(keyed)["idle_ttl_ms"]) == ("dynamic", 60_000)
+    assert _record(keyed)["idle_ttl_ms"] == 60_000
     assert "idle_ttl_ms" not in _record(solo(flezha.tasklet(Upcase, name="none")))
 
 

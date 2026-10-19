@@ -590,7 +590,6 @@ def test_the_router_is_one_route_latest_node_and_a_named_router_is_another() -> 
         "routed_document",
         "flags",
     ]
-    assert graph.to_host_class_decl(routers.spec)["tasklets"][0]["cell_mode"] == "single"
 
 
 def test_two_unnamed_routers_are_one_node_so_a_shared_traffic_edge_is_refused() -> None:

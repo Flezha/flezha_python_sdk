@@ -134,7 +134,7 @@ def static_key(c: flezha.Channels) -> None:
 
 @flezha.relay(
     "every_steps_key",
-    run={"steps": {"each": "chained", "on_failure": "keep_progress"}},
+    run={"steps": {"each": "per_input", "on_failure": "keep_progress"}},
     durable="remote",
     max_duration_ms=600_000,
 )
@@ -150,6 +150,7 @@ def _emitted() -> dict[str, set[str]]:
         "tasklet": set(),
     }
     for relay in (every_key, static_key, every_steps_key):
+        declare(relay)  # a key is pinned only on a record the core accepts
         decl = graph.to_host_class_decl(relay.spec)
         emitted["class"] |= set(decl)
         for channel in decl.get("channels", []):
@@ -325,45 +326,7 @@ def test_the_structured_steps_topology_is_the_reference() -> None:
     assert _lines("commit_block_chain", commit_block_chain) == _golden("commit_block_chain")
 
 
-# --- the cell mode is the wiring's -------------------------------------------
-
-
-class Plain:
-    def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
-        ctx.emit(value)
-
-
-plain = flezha.tasklet(Plain, name="plain")
-
-
-def _modes(relay: flezha.Relay) -> dict[str, str]:
-    return {
-        tasklet["name"]: tasklet["cell_mode"]
-        for tasklet in graph.to_host_class_decl(relay.spec)["tasklets"]
-    }
-
-
-def test_key_by_alone_makes_the_consumer_dynamic_and_one_tasklet_can_be_both() -> None:
-    @flezha.relay("keyed_plain")
-    def keyed_plain(c: flezha.Channels) -> None:
-        c.input("in", codec="text").key_by(lambda value: value[:1]).into(plain).output()
-
-    @flezha.relay("single_plain")
-    def single_plain(c: flezha.Channels) -> None:
-        c.input("in", codec="text").into(plain).output()
-
-    assert _modes(keyed_plain) == {"plain": "dynamic"}
-    assert _modes(single_plain) == {"plain": "single"}
-    declare(keyed_plain)
-
-
-def test_a_keyed_merge_makes_the_merged_tasklet_dynamic() -> None:
-    @flezha.relay("keyed_merge")
-    def keyed_merge(c: flezha.Channels) -> None:
-        c.merge().from_(c.input("a"), str).from_(c.input("b"), str).key_by(str).into(plain)
-
-    assert _modes(keyed_merge) == {"plain": "dynamic"}
-    declare(keyed_merge)
+# --- what the core judges ----------------------------------------------------
 
 
 def test_a_static_key_set_fed_by_key_by_is_refused_by_the_core() -> None:
@@ -371,7 +334,6 @@ def test_a_static_key_set_fed_by_key_by_is_refused_by_the_core() -> None:
     def static_keyed(c: flezha.Channels) -> None:
         c.input("in").key_by(str).into(statics).output()
 
-    assert _modes(static_keyed) == {"statics": "static"}
     with pytest.raises(flezha.FlezhaError) as caught:
         declare(static_keyed)
     assert codes(caught.value) == ["topology.key_by_on_unkeyable_target"]
