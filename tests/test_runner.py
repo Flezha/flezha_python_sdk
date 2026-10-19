@@ -6,6 +6,8 @@ import base64
 import io
 import json
 import logging
+import os
+import subprocess
 import sys
 import threading
 from typing import Any
@@ -523,9 +525,42 @@ def test_the_double_answers_every_call_a_host_can_make_on_a_core() -> None:
         last_error(FakeCore(), "an argument the wrapper does not take")
 
 
-def test_a_quiet_library_installs_no_handler() -> None:
-    root = logging.getLogger(logger.ROOT_LOGGER_NAME)
-    assert all(isinstance(handler, logging.NullHandler) for handler in root.handlers)
+def test_importing_the_library_installs_no_handler() -> None:
+    script = "import logging, flezha\nprint(logging.getLogger('flezha').handlers)"
+    out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "[<NullHandler (NOTSET)>]"
+
+
+def _a_core_then_two_lines(setup: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """A fresh interpreter that sets up its logging, creates a core, and logs a
+    warning and an info line on the SDK's logger."""
+    script = (
+        "import logging\n" + setup + "\n"
+        "from flezha.native import Core\n"
+        "Core.create().free()\n"
+        "logging.getLogger('flezha.test').warning('a warning')\n"
+        "logging.getLogger('flezha.test').info('an info line')\n"
+    )
+    environ = {k: v for k, v in os.environ.items() if k != "FLEZHA_LOG_LEVEL"} | env
+    return subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, env=environ, check=True
+    )
+
+
+def test_a_runner_starts_at_warn_on_standard_error() -> None:
+    out = _a_core_then_two_lines("", {})
+    assert out.stderr.splitlines() == ["[flezha] a warning"]
+
+
+def test_flezha_log_level_sets_the_default_level() -> None:
+    out = _a_core_then_two_lines("", {"FLEZHA_LOG_LEVEL": "info"})
+    assert out.stderr.splitlines() == ["[flezha] a warning", "[flezha] an info line"]
+
+
+def test_the_applications_logging_wins() -> None:
+    setup = "import sys\nlogging.basicConfig(stream=sys.stdout, format='app %(message)s')"
+    out = _a_core_then_two_lines(setup, {})
+    assert (out.stdout.splitlines(), out.stderr) == (["app a warning"], "")
 
 
 def test_one_call_turns_diagnostics_on() -> None:

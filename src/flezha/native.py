@@ -15,6 +15,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from .errors import FlezhaError
+from .logger import install_default, log_notices
 
 if TYPE_CHECKING:
     from . import flz_core_ffi
@@ -112,6 +113,10 @@ class Core:
     def create(cls) -> Core:
         """Create the context, negotiating the activation schema version."""
         module = load_extension()
+        install_default()
+        # The first take starts holding the core's notices for this host's
+        # drains; anything an earlier context left is written now.
+        log_notices(module.take_notices())
         try:
             native = module.Core(ACTIVATION_SCHEMA_VERSION)
         except module.NativeError as error:
@@ -287,3 +292,7 @@ class Core:
     def monotonic_nanos(self) -> int:
         """The core's monotonic clock in nanoseconds."""
         return int(self._module.monotonic_nanos())
+
+    def take_notices(self) -> list[tuple[str, str, str]]:
+        """The core's notices held since the last take, as ``(level, target, text)``."""
+        return list(self._module.take_notices())

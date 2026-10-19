@@ -27,7 +27,7 @@ from typing import Any, Protocol
 from . import env
 from .dispatch import DispatchDeps, close_thread_loop, dispatch, dispatch_now
 from .errors import FlezhaError
-from .logger import logger
+from .logger import log_notices, logger
 
 __all__ = [
     "Executor",
@@ -295,6 +295,7 @@ class _Supervisor:
         at_ceiling_logged = False
         try:
             while not stopping():
+                log_notices(self._core.take_notices())
                 status = self._core.wait_starvation(STARVATION_WAIT_MS)
                 if status == STARVATION_SHUTTING_DOWN:
                     return
@@ -414,6 +415,7 @@ class _Host:
         undrained = self._pool.join(_deadline())
         self._stopping = True
         _report_undrained(undrained)
+        log_notices(self._core.take_notices())
         return undrained
 
 

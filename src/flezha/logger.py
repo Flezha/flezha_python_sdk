@@ -1,9 +1,11 @@
 """The SDK's diagnostics, through the standard library's ``logging``.
 
-A quiet library by default: the loggers exist, nothing is written, and no
-handler is installed — a library that configures the root logger takes a
-decision that belongs to the application. :func:`configure` is the one opt-in
-that turns diagnostics on, and it is what a test app or a small script calls.
+A library never configures the root logger: that decision belongs to the
+application. When a runner or a local run starts and neither the ``flezha``
+logger nor the root logger has a handler, :func:`install_default` gives the
+``flezha`` logger one writing to standard error at ``FLEZHA_LOG_LEVEL``
+(``warn`` when unset), the level every other SDK starts at. An application's
+own configuration wins; :func:`configure` is the explicit helper.
 
 The same posture the Rust SDK's ``diag`` defaults and the Elixir SDK's
 ``Logger`` use provide. No OpenTelemetry: no SDK ships spans, and adding them to
@@ -16,7 +18,7 @@ import logging
 import os
 import sys
 
-__all__ = ["log", "logger", "configure", "ROOT_LOGGER_NAME"]
+__all__ = ["log", "logger", "configure", "install_default", "log_notices", "ROOT_LOGGER_NAME"]
 
 #: Every logger this SDK writes to lives under this name, so an application
 #: silences or routes the whole SDK with one call.
@@ -61,3 +63,22 @@ def configure(level: str | int | None = None, *, stream: object | None = None) -
     _root.addHandler(handler)
     _root.setLevel(level)
     return _root
+
+
+def install_default() -> None:
+    """Install :func:`configure`'s handler when the application configured none."""
+    configured = [h for h in _root.handlers if not isinstance(h, logging.NullHandler)]
+    if not configured and not logging.getLogger().handlers:
+        configure()
+
+
+_core = logger("core")
+_LEVELS = {"info": logging.INFO, "warn": logging.WARNING, "error": logging.ERROR}
+
+
+def log_notices(taken: list[tuple[str, str, str]]) -> None:
+    """Write the core's notices, as ``take_notices`` answers them, to the
+    ``flezha.core`` logger; the local-mode banner (``always``) at ``ERROR``,
+    which no level hides."""
+    for level, _target, text in taken:
+        _core.log(_LEVELS.get(level, logging.ERROR), "%s", text)

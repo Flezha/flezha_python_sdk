@@ -9,6 +9,7 @@ recorded expectation instead of by inspection.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
@@ -62,6 +63,58 @@ def word_count(c: Channels) -> None:
     c.input("lines", codec="text").into(Split).key_by(lambda word: word).into(Tally).keyed().output(
         "totals"
     )
+
+
+#: How many times `Flaky` ran, across its runs.
+FLAKY_ATTEMPTS: list[str] = []
+
+
+@tasklet(name="flaky")
+class Flaky:
+    """Fails its first attempt, so the core retries it and says so."""
+
+    def run(self, value: str, ctx: Ctx[None, Any]) -> None:
+        FLAKY_ATTEMPTS.append(value)
+        if len(FLAKY_ATTEMPTS) == 1:
+            raise RuntimeError("the first attempt fails")
+        ctx.emit(value)
+
+
+@relay("local_flaky_python")
+def flaky(c: Channels) -> None:
+    c.input("in", codec="text").into(Flaky).output("out")
+
+
+def core_notices(caplog: pytest.LogCaptureFixture) -> list[tuple[int, str]]:
+    return [(r.levelno, r.getMessage()) for r in caplog.records if r.name == "flezha.core"]
+
+
+def test_the_banner_reaches_the_flezha_logger_at_any_level(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.ERROR, logger="flezha")
+    with LocalRelay.start(word_count):
+        pass
+    banner = "LOCAL MODE: state is held in memory and NOTHING is durable"
+    assert [(level, text[: len(banner)]) for level, text in core_notices(caplog)] == [
+        (logging.ERROR, banner)
+    ]
+
+
+def test_a_retry_notice_reaches_the_flezha_logger(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.WARNING, logger="flezha")
+    FLAKY_ATTEMPTS.clear()
+    with LocalRelay.start(flaky) as run:
+        run.feed("in", "x")
+        run.run_until_idle(10_000)
+    retries = [
+        (level, text) for level, text in core_notices(caplog) if text.startswith("tasklet flaky")
+    ]
+    assert len(retries) == 1
+    level, text = retries[0]
+    assert level == logging.WARNING
+    assert text.startswith("tasklet flaky attempt 1/3 failed (retrying in ")
+    assert text.endswith("RuntimeError: the first attempt fails")
 
 
 def scenario() -> tuple[list[str], Counter[str]]:

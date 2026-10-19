@@ -159,6 +159,9 @@ class FakeCore:
             with self._lock:
                 self.pollers_inside -= 1
 
+    def take_notices(self) -> list[tuple[str, str, str]]:
+        return []
+
     def wait_starvation(self, timeout_ms: int) -> int:
         """The core's condition, not an unconditional yes.
 
