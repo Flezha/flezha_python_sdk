@@ -5,7 +5,8 @@ application. When a runner or a local run starts and neither the ``flezha``
 logger nor the root logger has a handler, :func:`install_default` gives the
 ``flezha`` logger one writing to standard error at ``FLEZHA_LOG_LEVEL``
 (``warn`` when unset), the level every other SDK starts at. An application's
-own configuration wins; :func:`configure` is the explicit helper.
+own configuration wins, made before or after; :func:`configure` is the
+explicit helper.
 
 The same posture the Rust SDK's ``diag`` defaults and the Elixir SDK's
 ``Logger`` use provide. No OpenTelemetry: no SDK ships spans, and adding them to
@@ -66,10 +67,12 @@ def configure(level: str | int | None = None, *, stream: object | None = None) -
 
 
 def install_default() -> None:
-    """Install :func:`configure`'s handler when the application configured none."""
+    """Install :func:`configure`'s handler when the application configured none.
+    It steps aside once the application configures the root logger later, which
+    then receives the SDK's lines by propagation."""
     configured = [h for h in _root.handlers if not isinstance(h, logging.NullHandler)]
     if not configured and not logging.getLogger().handlers:
-        configure()
+        configure().handlers[-1].addFilter(lambda _record: not logging.getLogger().handlers)
 
 
 _core = logger("core")

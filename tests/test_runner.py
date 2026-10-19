@@ -248,6 +248,21 @@ def test_the_startup_line_names_the_tier_the_executor_and_the_sizing(
         r.drain()
 
 
+def test_a_failed_start_writes_what_the_core_said_while_connecting(
+    runner: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Unreachable(FakeCore):
+        def start(self, namespace: str) -> None:
+            raise RuntimeError("the start wait ended")
+
+        def take_notices(self) -> list[tuple[str, str, str]]:
+            return [("warn", "flz_core::control_unit", "Connection attempt 1 failed: no socket")]
+
+    with caplog.at_level(logging.WARNING, logger="flezha.core"), pytest.raises(RuntimeError):
+        runner().register_factory(demo).start(core=Unreachable())
+    assert "Connection attempt 1 failed: no socket" in caplog.text
+
+
 def test_the_executor_is_an_axis_of_the_run(monkeypatch: pytest.MonkeyPatch, runner: Any) -> None:
     monkeypatch.setenv("FLEZHA_PYTHON_EXECUTOR", "asyncio")
     core = FakeCore()
@@ -492,13 +507,15 @@ def test_importing_the_library_installs_no_handler() -> None:
     assert out.stdout.strip() == "[<NullHandler (NOTSET)>]"
 
 
-def _a_core_then_two_lines(setup: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    """A fresh interpreter that sets up its logging, creates a core, and logs a
-    warning and an info line on the SDK's logger."""
+def _a_core_then_two_lines(
+    setup: str, env: dict[str, str], after: str = ""
+) -> subprocess.CompletedProcess[str]:
+    """A fresh interpreter that sets up its logging, creates a core, runs
+    ``after``, and logs a warning and an info line on the SDK's logger."""
     script = (
         "import logging\n" + setup + "\n"
         "from flezha.native import Core\n"
-        "Core.create().free()\n"
+        "Core.create().free()\n" + after + "\n"
         "logging.getLogger('flezha.test').warning('a warning')\n"
         "logging.getLogger('flezha.test').info('an info line')\n"
     )
@@ -521,6 +538,12 @@ def test_flezha_log_level_sets_the_default_level() -> None:
 def test_the_applications_logging_wins() -> None:
     setup = "import sys\nlogging.basicConfig(stream=sys.stdout, format='app %(message)s')"
     out = _a_core_then_two_lines(setup, {})
+    assert (out.stdout.splitlines(), out.stderr) == (["app a warning"], "")
+
+
+def test_the_applications_logging_wins_when_configured_after_the_core() -> None:
+    setup = "import sys\nlogging.basicConfig(stream=sys.stdout, format='app %(message)s')"
+    out = _a_core_then_two_lines("", {}, after=setup)
     assert (out.stdout.splitlines(), out.stderr) == (["app a warning"], "")
 
 

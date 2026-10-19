@@ -32,7 +32,7 @@ from .dispatch import DispatchDeps, Registry
 from .errors import FlezhaError
 from .executor import Executor
 from .executor import build as build_executor
-from .logger import logger
+from .logger import log_notices, logger
 from .native import ACTIVATION_SCHEMA_VERSION, Core, build_tier
 from .relay import Relay
 
@@ -224,6 +224,10 @@ class Runner:
             self._executor.start()
             self._started = True
         except BaseException:
+            # The core holds what it said while connecting until a take; no
+            # supervisor is left to take it.
+            if self._core is not None:
+                log_notices(self._core.take_notices())
             self._release_slot()
             raise
 
