@@ -24,10 +24,10 @@ import time
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from . import env
 from .dispatch import DispatchDeps, close_thread_loop, dispatch, dispatch_now
 from .errors import FlezhaError
 from .logger import log_notices, logger
+from .native import load_extension
 
 __all__ = [
     "Executor",
@@ -110,7 +110,7 @@ def base_size() -> int:
     host's model, and a second vocabulary for the same decision is what makes a
     fleet hard to reason about.
     """
-    return env.positive("FLEZHA_WORKER_POOL_SIZE", os.cpu_count() or 1)
+    return _positive("FLEZHA_WORKER_POOL_SIZE", os.cpu_count() or 1)
 
 
 def ceiling_size(base: int) -> int:
@@ -118,7 +118,13 @@ def ceiling_size(base: int) -> int:
 
     A ceiling under the floor would retire the pool the runner was told to keep.
     """
-    return max(env.positive("FLEZHA_WORKER_POOL_MAX", base * 10), base)
+    return max(_positive("FLEZHA_WORKER_POOL_MAX", base * 10), base)
+
+
+def _positive(name: str, fallback: int) -> int:
+    """A count from the environment by the core's knob rule; ``fallback`` for anything else."""
+    parsed = load_extension().knob("positive", os.environ.get(name, ""))
+    return fallback if parsed is None else parsed
 
 
 def _deadline() -> float:

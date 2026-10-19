@@ -27,7 +27,7 @@ ROOT_LOGGER_NAME = "flezha"
 _root = logging.getLogger(ROOT_LOGGER_NAME)
 # A library must not write to `stderr` on its own initiative when the
 # application has configured nothing. `NullHandler` is how the standard library
-# says so, and it is removed by nothing but `configure`.
+# says so; `configure` adds its handler beside it.
 _root.addHandler(logging.NullHandler())
 
 
