@@ -46,20 +46,29 @@ def _until(predicate: Any, timeout: float = 5.0) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _pool_opened(default_base: int) -> list[int]:
+    """The policy one context's pool opens with; a context holds one pool."""
+    core = native.Core.create()
+    try:
+        policy = core.pool_open(default_base)
+        with pytest.raises(FlezhaError) as refused:
+            core.pool_open(default_base)
+        assert refused.value.code == "runtime.runner_already_running"
+        return policy[:2]
+    finally:
+        core.free()
+
+
 def test_the_pool_is_sized_by_the_core_over_this_hosts_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    core = native.Core.create()
-    try:
-        monkeypatch.setenv("FLEZHA_WORKER_POOL_SIZE", "5")
-        assert core.pool_open(3)[:2] == [5, 50]
-        monkeypatch.setenv("FLEZHA_WORKER_POOL_SIZE", "0")
-        assert core.pool_open(3)[:2] == [3, 30], "the core answers unset"
-        monkeypatch.setenv("FLEZHA_WORKER_POOL_MAX", "2")
-        # A ceiling under the floor would retire the pool the user asked for.
-        assert core.pool_open(4)[:2] == [4, 4]
-    finally:
-        core.free()
+    monkeypatch.setenv("FLEZHA_WORKER_POOL_SIZE", "5")
+    assert _pool_opened(3) == [5, 50]
+    monkeypatch.setenv("FLEZHA_WORKER_POOL_SIZE", "0")
+    assert _pool_opened(3) == [3, 30], "the core answers unset"
+    monkeypatch.setenv("FLEZHA_WORKER_POOL_MAX", "2")
+    # A ceiling under the floor would retire the pool the user asked for.
+    assert _pool_opened(4) == [4, 4]
 
 
 def test_a_workload_that_never_starves_runs_on_the_base_pool() -> None:
