@@ -242,15 +242,26 @@ def relay(
             raise FlezhaError("topology.missing_factory_id", {"relay": name})
         if not _declares_channels(declaration):
             return _short_form(factory_id, declaration, class_settings, settings, **entry)
-        written = [key for key, value in entry.items() if value is not None] + list(settings)
-        if written:
-            raise FlezhaError(
-                "topology.short_form_field_on_full_form",
-                {"factory_id": factory_id, "fields": [f"`{key}`" for key in written]},
-            )
-        return Relay(factory_id, declaration, class_settings)
+        return _full_form(factory_id, declaration, class_settings, entry, settings)
 
     return decorate
+
+
+def _full_form(
+    factory_id: str,
+    declaration: Any,
+    class_settings: dict[str, Any],
+    entry: dict[str, Any],
+    settings: TaskletSettings,
+) -> Relay:
+    """A relay that declares its own channels, which takes no short-form field."""
+    written = [key for key, value in entry.items() if value is not None] + list(settings)
+    if written:
+        raise FlezhaError(
+            "topology.short_form_field_on_full_form",
+            {"factory_id": factory_id, "fields": [f"`{key}`" for key in written]},
+        )
+    return Relay(factory_id, declaration, class_settings)
 
 
 def _short_form(
