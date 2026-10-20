@@ -25,7 +25,7 @@ class Echo:
 
 
 @flezha.relay("echo")
-def echo_relay(c: flezha.Channels) -> None:
+def echo_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(Echo).output("out")
 
 

@@ -104,7 +104,7 @@ def _checkpoint_class(factory_id: str, ack: Any) -> dict[str, Any]:
     from flezha import graph
 
     @flezha.relay(factory_id, run={"flow": {"exactly": {"effectively_once": {"ack": ack}}}})
-    def relay(c: flezha.Channels) -> None:
+    def relay(c: flezha.ChannelBuilder) -> None:
         c.input("input").into(echo, f"{factory_id}_tasklet").keyed().output("sink")
 
     assert submit(relay)["ack_granularity"] == "checkpoint"
@@ -214,7 +214,7 @@ def test_a_spawn_with_no_control_plane_answers_unavailable_until_its_invocation_
             unread.append(ctx.spawn_steps("worker", value))
 
     @flezha.relay("spawn_without_control_plane")
-    def relay(c: flezha.Channels) -> None:
+    def relay(c: flezha.ChannelBuilder) -> None:
         c.input("in", codec="text").into(Spawner).output("out")
 
     with flezha.LocalRelay.start(relay) as run:

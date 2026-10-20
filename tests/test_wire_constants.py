@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import contract
-from flezha import graph, native
+from flezha import graph, native, testing
 
 FIXTURE = contract.member("test/fixtures/wire_constants.txt")
 
@@ -20,3 +20,7 @@ def test_the_language_byte_codec_and_schema_are_the_fixtures():
     assert graph.SDK_LANG_PYTHON == int(row("sdk_lang", "python"))
     assert graph.FORMAT_ID_MSGPACK == int(row("format_id", "msgpack"))
     assert native.ACTIVATION_SCHEMA_VERSION == int(row("schema_version", "activation"))
+
+
+def test_the_harness_effect_name_bound_is_the_cores():
+    assert testing._MAX_EFFECT_NAME == int(row("effect", "name_max_bytes"))

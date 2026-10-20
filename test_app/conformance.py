@@ -125,13 +125,13 @@ class Interpreter:
         self._mailbox = self._mailbox_capacities()
         self._schemas = self._entry_schemas()
 
-    def declare(self, builder: flezha.Channels) -> None:
+    def declare(self, builder: flezha.ChannelBuilder) -> None:
         for step in self.steps:
             self._run_step(builder, step)
 
     # -- the steps ---------------------------------------------------------
 
-    def _run_step(self, builder: flezha.Channels, step: str) -> None:
+    def _run_step(self, builder: flezha.ChannelBuilder, step: str) -> None:
         verb, arg = split_call(step)
         if verb == "entry":
             self._handles[arg] = builder.input(arg, schema=self._schemas.get(arg))
@@ -142,7 +142,7 @@ class Interpreter:
         else:
             self._dotted(builder, step)
 
-    def _dotted(self, builder: flezha.Channels, step: str) -> None:
+    def _dotted(self, builder: flezha.ChannelBuilder, step: str) -> None:
         """``<handle>.<link>…`` — a chain, a channel knob or a class flag."""
         head, _, rest = step.partition(".")
         if head == "class":
@@ -200,7 +200,7 @@ class Interpreter:
             response.map(render).into(self._tasklet(role))
         return response
 
-    def _merge(self, builder: flezha.Channels, arg: str) -> None:
+    def _merge(self, builder: flezha.ChannelBuilder, arg: str) -> None:
         """``merge(<task>, <x>, <x>…)`` — every listed source under the identity mapping."""
         role, *sources = (part.strip() for part in arg.split(","))
         merge = builder.merge()
@@ -305,7 +305,7 @@ def relay_for(row: dict[str, str]) -> flezha.Relay:
         return CITED[row["topology"]]
     interpreter = Interpreter(row["steps"])
 
-    def channels(c: flezha.Channels) -> None:
+    def channels(c: flezha.ChannelBuilder) -> None:
         interpreter.declare(c)
 
     channels.__name__ = row["topology"]
@@ -364,7 +364,7 @@ def shorthand_steps(row: dict[str, str]) -> list[dict[str, Any]]:
 class PlainWithTopology(Plain):
     """A tasklet body and a topology body on one declaration."""
 
-    def channels(self, c: flezha.Channels) -> None:
+    def channels(self, c: flezha.ChannelBuilder) -> None:
         c.input("input")
 
 

@@ -122,14 +122,14 @@ statics = flezha.tasklet(Statics, cell_keys=["a", "b"], name="statics")
     durable={"local": {"sleep_after": 2_000}},
     max_duration_ms=600_000,
 )
-def every_key(c: flezha.Channels) -> None:
+def every_key(c: flezha.ChannelBuilder) -> None:
     c.input("in", description="every key", schema={"type": "object"}).key_by(
         lambda value: str(value["k"])
     ).into(keyed).retry_max(5).retry_backoff_ms(100).keyed().output()
 
 
 @flezha.relay("static_key")
-def static_key(c: flezha.Channels) -> None:
+def static_key(c: flezha.ChannelBuilder) -> None:
     c.input("in").into(statics).output()
 
 
@@ -139,7 +139,7 @@ def static_key(c: flezha.Channels) -> None:
     durable="remote",
     max_duration_ms=600_000,
 )
-def every_steps_key(c: flezha.Channels) -> None:
+def every_steps_key(c: flezha.ChannelBuilder) -> None:
     c.input("in").into(echo).output()
 
 
@@ -218,7 +218,7 @@ def test_a_merge_serialises_each_source_as_a_chain_the_merge_link_closes() -> No
 
 def test_flat_map_records_the_link_map_records() -> None:
     def record(transform: str) -> list[list[Link]]:
-        c = flezha.Channels("fan")
+        c = flezha.ChannelBuilder("fan")
         edge = c.input("in")
         getattr(edge, transform)(lambda line: line.split(",")).into(echo)
         return c.channels[0].chains
@@ -294,7 +294,7 @@ hybrid_consumer = flezha.tasklet(HybridConsumer, name="hybrid_consumer_tasklet")
 
 
 @flezha.relay("hybrid_channel")
-def hybrid_channel(c: flezha.Channels) -> None:
+def hybrid_channel(c: flezha.ChannelBuilder) -> None:
     c.input("input").into(hybrid_producer).output("hybrid_indicator", encode=_bytes).into(
         hybrid_consumer
     )
@@ -315,7 +315,7 @@ block_b = flezha.tasklet(BlockB, name="block_b")
 
 
 @flezha.relay("commit_block_chain", run="steps")
-def commit_block_chain(c: flezha.Channels) -> None:
+def commit_block_chain(c: flezha.ChannelBuilder) -> None:
     c.input("in").into(tier_commit_a).keyed().output("mid", encode=_bytes).into(block_b)
 
 
@@ -332,7 +332,7 @@ def test_the_structured_steps_topology_is_the_reference() -> None:
 
 def test_a_static_key_set_fed_by_key_by_is_refused_by_the_core() -> None:
     @flezha.relay("static_keyed")
-    def static_keyed(c: flezha.Channels) -> None:
+    def static_keyed(c: flezha.ChannelBuilder) -> None:
         c.input("in").key_by(str).into(statics).output()
 
     with pytest.raises(flezha.FlezhaError) as caught:

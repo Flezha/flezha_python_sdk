@@ -7,7 +7,7 @@ raises the answer as :class:`~flezha.errors.FlezhaError`. Nothing here restates 
 holds — a refusal added there reaches Python with no edit to this file.
 
 What a type checker *can* see — a wrong value type on a wired edge — is caught
-earlier still, by the generic :class:`~flezha.builder.Edge`, and what one
+earlier still, by the generic :class:`~flezha.builder.Stream`, and what one
 tasklet's own declaration can be refused for is caught earlier still by
 :class:`~flezha.tasklet.Tasklet` when the decorator builds it.
 """

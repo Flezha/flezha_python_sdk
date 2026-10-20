@@ -13,7 +13,7 @@ from conftest import Bumped, Counter, compensating, count_up, echo
 from flezha.builder import apply_transforms
 from flezha.cell_state import fold_restore
 from flezha.identity import stable_id
-from flezha.testing import ReplayMismatch, TaskletTestHarness, replay_equals
+from flezha.testing import ReplayMismatch, TaskletTestHarness
 
 
 def test_a_handler_is_testable_with_no_runtime_and_no_controller() -> None:
@@ -61,7 +61,9 @@ def test_construction_from_a_restore_payload() -> None:
 
 
 def test_the_replay_gate_passes_on_a_pure_fold() -> None:
-    assert replay_equals(count_up, ["a", "bb", "ccc"])
+    harness: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
+    harness.apply_inputs(["a", "bb", "ccc"])
+    assert harness.replay_equals()
 
 
 def test_the_replay_gate_reports_both_states_on_a_mismatch() -> None:
@@ -304,7 +306,7 @@ def test_the_harness_reports_a_string_and_a_dict_exactly_as_emitted() -> None:
 
 
 def test_the_router_delivers_each_document_once_on_each_keys_own_traffic() -> None:
-    c = flezha.Channels("routed")
+    c = flezha.ChannelBuilder("routed")
     config, trades = c.input("config"), c.input("trades")
     c.route_latest(config, trades, lambda trade: trade["symbol"])
     (router,) = c.tasklets

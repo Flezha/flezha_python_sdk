@@ -31,5 +31,5 @@ class Render:
 
 
 @flezha.relay("billing")
-def billing(c: flezha.Channels) -> None:
+def billing(c: flezha.ChannelBuilder) -> None:
     c.input("orders").into(Bill).named("invoices").into(Render).output()

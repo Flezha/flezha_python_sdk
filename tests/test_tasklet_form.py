@@ -89,7 +89,7 @@ def test_a_renamed_class_keeps_its_name_and_its_state() -> None:
     after = flezha.tasklet(WordTally, name="tally")
 
     @flezha.relay("tally_op")
-    def renamed(c: flezha.Channels) -> None:
+    def renamed(c: flezha.ChannelBuilder) -> None:
         c.input("words").into(after)
 
     assert (before.name, after.name, _record(renamed)["name"]) == ("tally", "tally", "tally")
@@ -385,7 +385,7 @@ def test_seconds_reach_the_record_in_milliseconds() -> None:
     ttl = flezha.tasklet(Upcase, name="ttl", idle_ttl_seconds=60)
 
     @flezha.relay("ttl_op")
-    def keyed(c: flezha.Channels) -> None:
+    def keyed(c: flezha.ChannelBuilder) -> None:
         c.input("in").key_by(str).into(ttl).output()
 
     assert _record(keyed)["idle_ttl_ms"] == 60_000

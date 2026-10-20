@@ -21,7 +21,7 @@ class Message(TypedDict):  # the session is named after the user
     run={"steps": {"each": "per_input", "on_failure": "keep_progress"}},
     durable={"local": {"sleep_after": 10_000}},  # an idle session sleeps after 10 s
 )
-def agent(c: flezha.Channels) -> None:
+def agent(c: flezha.ChannelBuilder) -> None:
     (
         c.input("turn", codec="text")  # entry 1: `flz relay call`
         .into(Reply)

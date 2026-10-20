@@ -143,7 +143,7 @@ def test_a_filtered_input_is_consumed_and_reaches_no_handler(fake_core: FakeCore
             ctx.emit(value)
 
     @flezha.relay("filtered")
-    def filtered(c: flezha.Channels) -> None:
+    def filtered(c: flezha.ChannelBuilder) -> None:
         c.input("in").filter(lambda value: len(value) > 2).into(OnlyLong).output()
 
     deps = deps_for(filtered, fake_core)
@@ -163,7 +163,7 @@ def test_a_key_request_answers_one_entry_per_payload(fake_core: FakeCore) -> Non
             ctx.emit(value)
 
     @flezha.relay("routed_op")
-    def routed_op(c: flezha.Channels) -> None:
+    def routed_op(c: flezha.ChannelBuilder) -> None:
         c.input("in").key_by(lambda value: value["k"]).into(Routed).output()
 
     deps = deps_for(routed_op, fake_core)
@@ -180,7 +180,7 @@ def test_a_key_request_answers_the_keyed_consumer_behind_an_unkeyed_one(
     before it filters out."""
 
     @flezha.relay("split_keyed")
-    def split_keyed(c: flezha.Channels) -> None:
+    def split_keyed(c: flezha.ChannelBuilder) -> None:
         entry = c.input("in", codec="text")
         entry.filter(lambda value: value == "drop").into(echo).output("dropped")
         entry.filter(lambda value: value != "drop").key_by(fixture_support.prefix).into(
@@ -204,7 +204,7 @@ def test_a_per_payload_refusal_does_not_fail_the_whole_crossing(fake_core: FakeC
         return value["k"]
 
     @flezha.relay("picky_keys")
-    def picky_keys(c: flezha.Channels) -> None:
+    def picky_keys(c: flezha.ChannelBuilder) -> None:
         c.input("in").key_by(key_of).into(Routed).output()
 
     deps = deps_for(picky_keys, fake_core)
@@ -292,7 +292,7 @@ def test_a_keyed_channel_with_no_key_is_refused_naming_it(fake_core: FakeCore) -
             ctx.emit(value)
 
     @flezha.relay("keyed_sink")
-    def keyed_sink(c: flezha.Channels) -> None:
+    def keyed_sink(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(Keyless).keyed().output("out")
 
     deps = deps_for(keyed_sink, fake_core)
@@ -316,12 +316,12 @@ class Finisher:
 
 
 @flezha.relay("finishing_steps", run="steps")
-def _finishing_steps(c: flezha.Channels) -> None:
+def _finishing_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in").into(Finisher).output()
 
 
 @flezha.relay("finishing_flow")
-def _finishing_flow(c: flezha.Channels) -> None:
+def _finishing_flow(c: flezha.ChannelBuilder) -> None:
     c.input("in").into(Finisher).output()
 
 
@@ -375,12 +375,12 @@ class TimerSetter:
 
 
 @flezha.relay("timer_steps", run="steps")
-def _timer_steps(c: flezha.Channels) -> None:
+def _timer_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in").into(TimerSetter)
 
 
 @flezha.relay("timer_flow")
-def _timer_flow(c: flezha.Channels) -> None:
+def _timer_flow(c: flezha.ChannelBuilder) -> None:
     c.input("in").into(TimerSetter)
 
 
@@ -483,7 +483,7 @@ class StepsC:
         _DELIVERED.append(value)
 
 
-def _steps_graph(c: flezha.Channels) -> None:
+def _steps_graph(c: flezha.ChannelBuilder) -> None:
     edge = c.input("in").into(StepsProducer).named("handoff")
     edge.map(lambda value: value + 1).into(StepsB)
     edge.into(StepsC)
@@ -491,12 +491,12 @@ def _steps_graph(c: flezha.Channels) -> None:
 
 
 @flezha.relay("steps_emit", run="steps")
-def _steps_emit(c: flezha.Channels) -> None:
+def _steps_emit(c: flezha.ChannelBuilder) -> None:
     _steps_graph(c)
 
 
 @flezha.relay("steps_emit_stream")
-def _steps_emit_stream(c: flezha.Channels) -> None:
+def _steps_emit_stream(c: flezha.ChannelBuilder) -> None:
     _steps_graph(c)
 
 
@@ -534,7 +534,7 @@ def test_a_structured_steps_releases_one_untransformed_edge_output(
 
 
 @flezha.relay("steps_carry", run={"steps": {"each": "chained"}})
-def _steps_carry(c: flezha.Channels) -> None:
+def _steps_carry(c: flezha.ChannelBuilder) -> None:
     c.input("in").into(StepsProducer).named("carry")
 
 
@@ -549,7 +549,7 @@ def test_a_steps_terminal_nothing_consumes_hands_its_value_to_the_core_as_the_ca
 
 
 @flezha.relay("steps_call_end", run={"steps": {"each": "per_input"}})
-def _steps_call_end(c: flezha.Channels) -> None:
+def _steps_call_end(c: flezha.ChannelBuilder) -> None:
     asked = c.input("in").into(StepsProducer).named("ask")
     asked.call("pricing", deadline_ms=1_000).map(lambda response: response.value).into(StepsC)
 
@@ -676,7 +676,7 @@ def test_an_entry_edge_transform_that_raises_makes_the_message_unreadable(
         return value["k"]
 
     @flezha.relay("strict_entry")
-    def strict_entry(c: flezha.Channels) -> None:
+    def strict_entry(c: flezha.ChannelBuilder) -> None:
         c.input("in").map(strict).into(Record).output()
 
     deps = deps_for(strict_entry, fake_core)
@@ -751,7 +751,7 @@ def test_a_merged_entry_source_is_keyed_on_its_mapped_value(fake_core: FakeCore)
 
 
 @flezha.relay("merged_edge")
-def _merged_edge(c: flezha.Channels) -> None:
+def _merged_edge(c: flezha.ChannelBuilder) -> None:
     ticks = c.input("ticks", codec="text")
     quotes = c.input("quotes", codec="text").into(echo)
     c.merge().from_(ticks, fixtures.tagged("ticks")).from_(
@@ -798,7 +798,7 @@ def test_a_fan_then_key_by_answers_every_value_with_its_key_at_the_crossing(
 
 
 @flezha.relay("decoded_once")
-def _decoded_once(c: flezha.Channels) -> None:
+def _decoded_once(c: flezha.ChannelBuilder) -> None:
     c.input("trades", decode=_counted_decode).flat_map(lambda trade: trade.split(",")).key_by(
         fixture_support.prefix
     ).into(fixtures.transform_label).keyed().output("transformed")
@@ -833,7 +833,7 @@ def test_a_keyed_entry_payload_is_decoded_and_transformed_once(fake_core: FakeCo
 
 
 @flezha.relay("fanned_static")
-def _fanned_static(c: flezha.Channels) -> None:
+def _fanned_static(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").flat_map(lambda line: line.split(",")).into(
         fixtures.static_entry
     ).output()
@@ -853,7 +853,7 @@ def test_a_fan_into_a_static_consumer_answers_each_value_with_the_cells_its_rout
 
 
 @flezha.relay("fanned_edge")
-def _fanned_edge(c: flezha.Channels) -> None:
+def _fanned_edge(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(echo).flat_map(
         lambda line: [part for part in line.split(",") if part]
     ).key_by(fixture_support.prefix).into(fixtures.transform_label)

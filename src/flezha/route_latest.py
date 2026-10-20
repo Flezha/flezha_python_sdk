@@ -1,4 +1,4 @@
-"""The latest-document router :meth:`Channels.route_latest` expands to.
+"""The latest-document router :meth:`ChannelBuilder.route_latest` expands to.
 
 A dynamically keyed tasklet cannot receive a broadcast, and fanning a
 relay-wide document out over a remembered key set emits keys this member

@@ -16,7 +16,7 @@ class Handle:
 
 
 @flezha.relay("from_module")
-def from_module(c: flezha.Channels) -> None:
+def from_module(c: flezha.ChannelBuilder) -> None:
     c.input("in").into(Handle).output()
 
 

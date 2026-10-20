@@ -40,6 +40,6 @@ class Dispatch:
 
 
 @flezha.relay("mismatched")
-def mismatched(c: flezha.Channels) -> None:
+def mismatched(c: flezha.ChannelBuilder) -> None:
     # `Bill` produces Invoice; `Dispatch` accepts Shipment.
     c.input("orders").into(Bill).named("invoices").into(Dispatch).output()

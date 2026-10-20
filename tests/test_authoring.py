@@ -78,7 +78,7 @@ def test_declaring_performs_no_io(monkeypatch: pytest.MonkeyPatch) -> None:
             ctx.emit(value)
 
     @flezha.relay("late")
-    def late(c: flezha.Channels) -> None:
+    def late(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(Later).output()
 
     declare(late)
@@ -103,7 +103,7 @@ def test_two_unnamed_mentions_of_one_tasklet_are_one_node() -> None:
             ctx.emit(value)
 
     @flezha.relay("diamond")
-    def diamond(c: flezha.Channels) -> None:
+    def diamond(c: flezha.ChannelBuilder) -> None:
         entry = c.input("in")
         entry.into(Split).named("a").into(Join, "join_a").output()
         entry.into(Split).named("b").into(Join, "join_b").output()
@@ -150,7 +150,7 @@ def test_a_node_identity_collision_is_refused() -> None:
             ctx.emit(value)
 
     @flezha.relay("collision")
-    def collision(c: flezha.Channels) -> None:
+    def collision(c: flezha.ChannelBuilder) -> None:
         entry = c.input("in")
         entry.into(First).output()
         entry.into(Second).output()
@@ -173,7 +173,7 @@ def test_an_ack_at_checkpoint_reaches_the_declaration_as_the_tree() -> None:
     ack: Ack = {"checkpoint": {"every": 4, "outputs": "at_checkpoint", "max_delay_ms": 250}}
 
     @flezha.relay("compose", run={"flow": {"exactly": {"effectively_once": {"ack": ack}}}})
-    def compose(c: flezha.Channels) -> None:
+    def compose(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(One).keyed().output()
 
     assert declare(compose)["ack_granularity"] == "checkpoint"
@@ -184,7 +184,7 @@ def test_an_ack_at_checkpoint_reaches_the_declaration_as_the_tree() -> None:
 # The verdict itself: one exception carrying every name the core answered with.
 def test_a_refusal_reaches_the_author_under_the_cores_own_names() -> None:
     @flezha.relay("edge_already_wired")
-    def already_wired(c: flezha.Channels) -> None:
+    def already_wired(c: flezha.ChannelBuilder) -> None:
         edge = c.input("in")
         edge.into(echo)
         edge.map(lambda value: f"{value}!").into(echo)
@@ -201,7 +201,7 @@ def test_a_refusal_reaches_the_author_under_the_cores_own_names() -> None:
 # is that this builder writes the fact it reads.
 def test_a_tasklet_that_folds_no_change_declares_it() -> None:
     @flezha.relay("nochange")
-    def nochange(c: flezha.Channels) -> None:
+    def nochange(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo).output()
 
     declare(nochange)
@@ -256,7 +256,7 @@ def test_an_unrepresentable_state_field_is_refused_naming_it() -> None:
 
 def test_a_steps_class_that_declares_no_tasklet_is_refused() -> None:
     @flezha.relay("empty", run="steps")
-    def empty(c: flezha.Channels) -> None:
+    def empty(c: flezha.ChannelBuilder) -> None:
         return None
 
     with pytest.raises(FlezhaError) as caught:
@@ -289,7 +289,7 @@ def test_a_valid_graph_passes() -> None:
 
 def test_a_held_edge_wired_twice_is_one_channel_with_two_consumers() -> None:
     @flezha.relay("fan_out")
-    def fan_out(c: flezha.Channels) -> None:
+    def fan_out(c: flezha.ChannelBuilder) -> None:
         edge = c.input("in").into(echo)
         edge.into(count_up, "b")
         edge.into(count_up, "c")
@@ -304,13 +304,13 @@ def test_branch_and_two_into_statements_derive_the_identical_topology() -> None:
     # The record differs by one link — the sugar's declared arity — and the
     # topology the core derives from the two does not.
     @flezha.relay("separate")
-    def separate(c: flezha.Channels) -> None:
+    def separate(c: flezha.ChannelBuilder) -> None:
         edge = c.input("in").into(echo)
         edge.into(count_up, "b")
         edge.into(count_up, "c")
 
     @flezha.relay("branched")
-    def branched(c: flezha.Channels) -> None:
+    def branched(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo).branch(
             lambda arm: arm.into(count_up, "b"), lambda arm: arm.into(count_up, "c")
         )
@@ -320,7 +320,7 @@ def test_branch_and_two_into_statements_derive_the_identical_topology() -> None:
 
 def test_output_returns_the_edge_so_a_consumer_wires_behind_it() -> None:
     @flezha.relay("hybrid")
-    def hybrid(c: flezha.Channels) -> None:
+    def hybrid(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo).output("hybrid_indicator").into(count_up)
 
     # An output alongside a consumer stays inter-tasklet: the value reaches both,
@@ -333,11 +333,11 @@ def test_output_returns_the_edge_so_a_consumer_wires_behind_it() -> None:
 
 def test_the_output_names_the_channel_and_the_no_argument_form_does_not() -> None:
     @flezha.relay("output_named")
-    def named(c: flezha.Channels) -> None:
+    def named(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo).output("items_output")
 
     @flezha.relay("sink_derived")
-    def derived(c: flezha.Channels) -> None:
+    def derived(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo).output()
 
     assert [row[0] for row in _derived(named)] == ["in", "items_output"]
@@ -346,7 +346,7 @@ def test_the_output_names_the_channel_and_the_no_argument_form_does_not() -> Non
 
 def test_a_channel_named_twice_is_refused_naming_both() -> None:
     @flezha.relay("named_twice")
-    def named_twice(c: flezha.Channels) -> None:
+    def named_twice(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo).named("a").output("b")
 
     with pytest.raises(FlezhaError) as caught:
@@ -357,11 +357,11 @@ def test_a_channel_named_twice_is_refused_naming_both() -> None:
 
 def test_a_channel_option_with_nothing_wired_after_it_still_reaches_the_channel() -> None:
     @flezha.relay("trailing_named")
-    def renamed(c: flezha.Channels) -> None:
+    def renamed(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo).named("renamed")
 
     @flezha.relay("trailing_keyed")
-    def keyed(c: flezha.Channels) -> None:
+    def keyed(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo).keyed()
 
     assert [row[0] for row in _derived(renamed)] == ["in", "renamed"]
@@ -372,7 +372,7 @@ def test_a_channel_option_with_nothing_wired_after_it_still_reaches_the_channel(
 
 def test_two_channels_naming_one_output_is_refused() -> None:
     @flezha.relay("one_sink_two_channels")
-    def one_sink(c: flezha.Channels) -> None:
+    def one_sink(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo).output("shared").into(count_up).output("shared")
 
     with pytest.raises(FlezhaError) as caught:
@@ -382,7 +382,7 @@ def test_two_channels_naming_one_output_is_refused() -> None:
 
 def test_an_output_beside_a_call_on_one_channel_is_refused() -> None:
     @flezha.relay("ends_twice")
-    def ends_twice(c: flezha.Channels) -> None:
+    def ends_twice(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo).output("out").call("pricing", deadline_ms=500).map(
             lambda r: r.request
         ).into(echo)
@@ -395,7 +395,7 @@ def test_an_output_beside_a_call_on_one_channel_is_refused() -> None:
 
 def test_keyed_reaches_the_channel_of_an_edge_that_also_declares_an_output() -> None:
     @flezha.relay("keyed_hybrid")
-    def keyed_hybrid(c: flezha.Channels) -> None:
+    def keyed_hybrid(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo).keyed().output("mid").into(count_up)
 
     declare(keyed_hybrid)
@@ -404,7 +404,7 @@ def test_keyed_reaches_the_channel_of_an_edge_that_also_declares_an_output() -> 
 
 def test_a_transform_before_one_into_reaches_that_consumer_only() -> None:
     @flezha.relay("per_edge_transform")
-    def per_edge_transform(c: flezha.Channels) -> None:
+    def per_edge_transform(c: flezha.ChannelBuilder) -> None:
         edge = c.input("in").into(echo)
         edge.map(lambda value: f"{value}!").into(count_up, "b")
         edge.into(count_up, "c")
@@ -422,7 +422,7 @@ def test_a_transform_before_one_into_reaches_that_consumer_only() -> None:
 
 def test_a_bare_re_declared_edge_is_a_no_op_not_a_second_edge() -> None:
     @flezha.relay("edge_redeclared_bare")
-    def bare(c: flezha.Channels) -> None:
+    def bare(c: flezha.ChannelBuilder) -> None:
         edge = c.input("in")
         edge.into(echo)
         edge.into(echo)
@@ -453,7 +453,7 @@ def test_a_misplaced_setting_is_refused_naming_it_and_its_parent(
     settings: dict[str, Any], field: str, parent: str
 ) -> None:
     @flezha.relay("misplaced", **settings)
-    def misplaced(c: flezha.Channels) -> None:
+    def misplaced(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo)
 
     with pytest.raises(FlezhaError) as refused:
@@ -464,7 +464,7 @@ def test_a_misplaced_setting_is_refused_naming_it_and_its_parent(
 
 def test_a_flow_class_may_keep_its_work_remote() -> None:
     @flezha.relay("remote_flow", durable="remote")
-    def stream(c: flezha.Channels) -> None:
+    def stream(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo).output("out")
 
     declare(stream)
@@ -481,7 +481,7 @@ def test_a_flow_class_may_keep_its_work_remote() -> None:
 )
 def test_the_durability_reaches_the_declaration_as_written(durable: Any, written: Any) -> None:
     @flezha.relay("kept", run="steps", durable=durable)
-    def kept(c: flezha.Channels) -> None:
+    def kept(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo)
 
     declare(kept)
@@ -498,7 +498,7 @@ def test_the_durability_reaches_the_declaration_as_written(durable: Any, written
 )
 def test_a_value_outside_its_choice_is_refused_at_registration(run: Any, value: str) -> None:
     @flezha.relay("moded", run=run)
-    def moded(c: flezha.Channels) -> None:
+    def moded(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(echo)
 
     with pytest.raises(FlezhaError) as refused:
@@ -532,7 +532,7 @@ def _merge_refusal(sources: int) -> FlezhaError:
     """The verdict on a merge naming one entry edge ``sources`` times."""
 
     @flezha.relay("merge_refused")
-    def refused(c: flezha.Channels) -> None:
+    def refused(c: flezha.ChannelBuilder) -> None:
         merge, entry = c.merge(), c.input("in")
         for _ in range(sources):
             merge.from_(entry, fixtures.tagged("in"))
@@ -557,7 +557,7 @@ def test_a_merge_naming_one_source_twice_is_refused_naming_the_channel() -> None
 
 def test_a_merge_source_already_wired_into_the_tasklet_is_refused() -> None:
     @flezha.relay("merge_rewired")
-    def rewired(c: flezha.Channels) -> None:
+    def rewired(c: flezha.ChannelBuilder) -> None:
         entry = c.input("in")
         entry.map(str.upper).into(echo)
         c.merge().from_(entry, str.lower).from_(c.input("other"), str.lower).into(echo)
@@ -575,7 +575,7 @@ class RoutedDocument:
 
 def test_the_router_is_one_route_latest_node_and_a_named_router_is_another() -> None:
     @flezha.relay("routers")
-    def routers(c: flezha.Channels) -> None:
+    def routers(c: flezha.ChannelBuilder) -> None:
         trades = c.input("trades")
         c.route_latest(c.input("config"), trades, lambda trade: trade["symbol"]).into(
             RoutedDocument
@@ -594,7 +594,7 @@ def test_the_router_is_one_route_latest_node_and_a_named_router_is_another() -> 
 
 def test_two_unnamed_routers_are_one_node_so_a_shared_traffic_edge_is_refused() -> None:
     @flezha.relay("unnamed_routers")
-    def routers(c: flezha.Channels) -> None:
+    def routers(c: flezha.ChannelBuilder) -> None:
         trades = c.input("trades")
         for documents in ("config", "feature_flags"):
             c.route_latest(c.input(documents), trades, lambda trade: trade["symbol"])
@@ -606,9 +606,14 @@ def test_two_unnamed_routers_are_one_node_so_a_shared_traffic_edge_is_refused() 
 
 
 def test_flat_map_fans_a_value_out_and_an_empty_fan_is_a_drop() -> None:
-    edge = flezha.Channels("fan").input("in").flat_map(lambda line: line.split(",")).map(str.upper)
+    edge = (
+        flezha.ChannelBuilder("fan")
+        .input("in")
+        .flat_map(lambda line: line.split(","))
+        .map(str.upper)
+    )
     assert apply_transforms(edge._transforms, "a,b,c") == ["A", "B", "C"]
-    empty = flezha.Channels("fan").input("in").flat_map(lambda line: [])
+    empty = flezha.ChannelBuilder("fan").input("in").flat_map(lambda line: [])
     assert apply_transforms(empty._transforms, "a") == []
     # A map answering a list is one value, not a fan.
     assert apply_transforms([lambda line: line.split(",")], "a,b") == [["a", "b"]]
@@ -628,7 +633,7 @@ _CODEC_CASES = contract.member("test/fixtures/channel_codecs.txt")
 def _codec_slots(
     input_options: dict[str, Any] | None = None, sink_options: dict[str, Any] | None = None
 ) -> tuple[Callable[[Any], Any], Callable[[Any], bytes]]:
-    channels = flezha.Channels("codecs")
+    channels = flezha.ChannelBuilder("codecs")
     channels.input("in", **(input_options or {})).into(echo).output("out", **(sink_options or {}))
     entry, out = channels.channels
     assert entry.decode is not None and out.sink_encode is not None
@@ -745,7 +750,7 @@ def test_a_flow_short_form_is_its_hand_written_twin() -> None:
             ctx.emit(value.upper())
 
     @flezha.relay("upcase")
-    def twin(c: flezha.Channels) -> None:
+    def twin(c: flezha.ChannelBuilder) -> None:
         c.input("input", codec="text").into(UpcaseTasklet).output("out")
 
     assert "run" not in graph.to_host_class_decl(upcase.spec)
@@ -770,7 +775,7 @@ def test_a_steps_short_form_is_its_hand_written_twin(run: Any) -> None:
             ctx.emit(order)
 
     @flezha.relay("place", run=run, durable=False)
-    def twin(c: flezha.Channels) -> None:
+    def twin(c: flezha.ChannelBuilder) -> None:
         c.input("order", codec="text").into(PlaceTasklet).output("placed")
 
     record = graph.to_host_class_decl(place.spec)
@@ -791,7 +796,7 @@ def test_a_channels_body_annotated_or_not_is_still_the_full_form() -> None:
         c.input("input").into(echo).output("out")
 
     @flezha.relay(factory_id="static_cell")
-    def static_cell(c: flezha.Channels) -> None:
+    def static_cell(c: flezha.ChannelBuilder) -> None:
         bare(c)
 
     for full in (static_cell, flezha.relay(factory_id="bare")(bare)):
@@ -821,7 +826,7 @@ def test_the_generated_tasklet_composes_in_another_topology() -> None:
     assert generated("abc") == "ABC"
 
     @flezha.relay("wider")
-    def wider(c: flezha.Channels) -> None:
+    def wider(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(generated).into(echo).output("out")
 
     declare(wider)
@@ -833,7 +838,7 @@ def test_a_tasklet_body_beside_a_topology_body_is_refused() -> None:
         def run(self, value: str) -> str:
             return value
 
-        def channels(self, c: flezha.Channels) -> None:
+        def channels(self, c: flezha.ChannelBuilder) -> None:
             return None
 
     with pytest.raises(FlezhaError) as caught:
@@ -883,7 +888,7 @@ def test_an_absent_id_is_refused_rather_than_derived() -> None:
     with pytest.raises(FlezhaError) as full_form:
 
         @flezha.relay(run="steps")
-        def full(c: flezha.Channels) -> None:
+        def full(c: flezha.ChannelBuilder) -> None:
             c.input("in").into(echo).output("out")
 
     for caught, name in ((short, "upcase"), (full_form, "full")):
@@ -925,7 +930,7 @@ def test_a_short_form_carries_its_tasklets_own_settings() -> None:
     keyed = flezha.tasklet(name="keyed", cell_keys=["a", "b"], mailbox_capacity=8)(Keyed)
 
     @flezha.relay("keyed")
-    def twin(c: flezha.Channels) -> None:
+    def twin(c: flezha.ChannelBuilder) -> None:
         c.input("input").into(keyed).output("out")
 
     assert short.tasklet is not None
@@ -940,7 +945,7 @@ def test_a_short_form_keyword_on_a_channels_body_is_refused(keyword: dict[str, A
     with pytest.raises(FlezhaError) as caught:
 
         @flezha.relay(factory_id="full", **keyword)
-        def full(c: flezha.Channels) -> None:
+        def full(c: flezha.ChannelBuilder) -> None:
             c.input("input").into(echo).output("out")
 
     assert (caught.value.code, caught.value.details) == (

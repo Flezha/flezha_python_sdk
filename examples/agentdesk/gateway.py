@@ -16,7 +16,7 @@ DEADLINE_MS = 60_000
 
 # each request and answer on disk before it runs
 @flezha.relay("gateway", run={"flow": {"exactly": "effectively_once"}})
-def gateway(c: flezha.Channels) -> None:
+def gateway(c: flezha.ChannelBuilder) -> None:
     user = itemgetter("user")
     # every request arrives on "http"; kept as a handle to split it
     http = c.input("http").map(Request.of)

@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 import contract
-from flezha import Channels, Ctx, FlezhaError, LocalRelay, relay, state, tasklet
+from flezha import ChannelBuilder, Ctx, FlezhaError, LocalRelay, relay, state, tasklet
 
 FIXTURE = contract.member("test/fixtures/local_mode_word_count.txt")
 
@@ -59,7 +59,7 @@ class Tally:
 
 
 @relay("local_word_count_python")
-def word_count(c: Channels) -> None:
+def word_count(c: ChannelBuilder) -> None:
     c.input("lines", codec="text").into(Split).key_by(lambda word: word).into(Tally).keyed().output(
         "totals"
     )
@@ -81,7 +81,7 @@ class Flaky:
 
 
 @relay("local_flaky_python")
-def flaky(c: Channels) -> None:
+def flaky(c: ChannelBuilder) -> None:
     c.input("in", codec="text").into(Flaky).output("out")
 
 
@@ -169,7 +169,7 @@ class Defaults:
 
 
 @relay("local_default_codecs_python")
-def default_codecs(c: Channels) -> None:
+def default_codecs(c: ChannelBuilder) -> None:
     c.input("in").into(Defaults).output("out")
 
 

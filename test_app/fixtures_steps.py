@@ -10,7 +10,7 @@ tasklets carries MessagePack, and the core derives that channel's journal
 codec from the channel's kind, so no fixture declares one.
 
 A tasklet node owns exactly one output channel, not one per outgoing edge, so
-the whole topology vocabulary is edge reuse: a fan-out is one held ``Edge``
+the whole topology vocabulary is edge reuse: a fan-out is one held ``Stream``
 wired twice, and a fan-in is two arms naming one tasklet with no node name.
 """
 
@@ -179,7 +179,7 @@ echo = stateless_step("echo", _echo)
 
 
 @flezha.relay("echo_steps", run="steps", durable=FIXTURE_DURABLE)
-def echo_steps(c: flezha.Channels) -> None:
+def echo_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(echo).output("out")
 
 
@@ -201,7 +201,7 @@ once_placed = stateless_step("once_placed", _once_placed)
 
 
 @flezha.relay("typed_once_steps", run="steps", durable=FIXTURE_DURABLE)
-def typed_once_steps(c: flezha.Channels) -> None:
+def typed_once_steps(c: flezha.ChannelBuilder) -> None:
     c.input("order", codec="json").into(once_placed).output("placed")
 
 
@@ -223,7 +223,7 @@ async def _block(value: str, ctx: flezha.Ctx[None, Any]) -> None:
 block_b = stateless_step("block_b", _block)
 
 
-def commit_block_chain(c: flezha.Channels) -> None:
+def commit_block_chain(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(commit_a).named("mid").into(block_b)
 
 
@@ -259,7 +259,7 @@ effect_block = stateless_step("effect_block", _effect_block)
 
 
 @flezha.relay("effect_block_steps", run="steps", durable=FIXTURE_DURABLE)
-def effect_block_steps(c: flezha.Channels) -> None:
+def effect_block_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(effect_block)
 
 
@@ -273,7 +273,7 @@ effect_once = stateless_step("effect_once", _effect_once)
 
 
 @flezha.relay("effect_flow")
-def effect_flow(c: flezha.Channels) -> None:
+def effect_flow(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(effect_once)
 
 
@@ -286,7 +286,7 @@ def effect_flow(c: flezha.Channels) -> None:
 
 
 @flezha.relay("optout_commit_block", run="steps", durable=False)
-def optout_commit_block(c: flezha.Channels) -> None:
+def optout_commit_block(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(commit_a).output(
         "mid", encode=lambda value: f"a-ran:{value}".encode()
     ).into(block_b)
@@ -306,7 +306,7 @@ tier_commit_a = durable_step(
 
 
 @flezha.relay("tier_commit_block_steps", run="steps", durable=FIXTURE_DURABLE)
-def tier_commit_block_steps(c: flezha.Channels) -> None:
+def tier_commit_block_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(tier_commit_a).keyed().output("mid").into(block_b)
 
 
@@ -328,7 +328,7 @@ saga_c = failing_step("saga_c")
 
 
 @flezha.relay("saga_block_steps", run="steps", durable=FIXTURE_DURABLE)
-def saga_block_steps(c: flezha.Channels) -> None:
+def saga_block_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(saga_a).named("s1").into(saga_b).named("s2").into(saga_c)
 
 
@@ -351,7 +351,7 @@ keyed_commit = durable_step("keyed_commit", compensate=lambda outputs, ctx: None
 keyed_fail = failing_step("keyed_fail")
 
 
-def keyed_commits(c: flezha.Channels) -> Any:
+def keyed_commits(c: flezha.ChannelBuilder) -> Any:
     return (
         c.input("in", codec="text")
         .into(key_split)
@@ -363,12 +363,12 @@ def keyed_commits(c: flezha.Channels) -> Any:
 
 
 @flezha.relay("keyed_block_steps", run="steps", durable=FIXTURE_DURABLE)
-def keyed_block_steps(c: flezha.Channels) -> None:
+def keyed_block_steps(c: flezha.ChannelBuilder) -> None:
     keyed_commits(c).into(block_b)
 
 
 @flezha.relay("keyed_saga_steps", run="steps", durable=FIXTURE_DURABLE)
-def keyed_saga_steps(c: flezha.Channels) -> None:
+def keyed_saga_steps(c: flezha.ChannelBuilder) -> None:
     keyed_commits(c).into(keyed_fail)
 
 
@@ -386,7 +386,7 @@ outbox_a = durable_step(
 
 
 @flezha.relay("outbox_block_steps", run="steps", durable=FIXTURE_DURABLE)
-def outbox_block_steps(c: flezha.Channels) -> None:
+def outbox_block_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(outbox_a).keyed().output(
         "mid", encode=lambda value: f"a-out:{value}".encode()
     ).into(block_b)
@@ -413,7 +413,7 @@ undo_outbox_c = failing_step("undo_outbox_c")
 
 
 @flezha.relay("undo_outbox_steps", run="steps", durable=FIXTURE_DURABLE)
-def undo_outbox_steps(c: flezha.Channels) -> None:
+def undo_outbox_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(undo_outbox_a).output(
         "mid", encode=lambda value: f"out:{value}".encode()
     ).into(undo_outbox_c)
@@ -437,7 +437,7 @@ failed_stage = stateless_step("failed_stage", _fail_on_b)
 
 
 @flezha.relay("failed_stage_steps", run="steps", durable=FIXTURE_DURABLE)
-def failed_stage_steps(c: flezha.Channels) -> None:
+def failed_stage_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(key_split).into(failed_stage).output(
         "mid", encode=lambda value: f"lost:{value}".encode()
     )
@@ -487,7 +487,7 @@ branch_d = stateless_step("branch_d", _branch_leaf)
 
 
 @flezha.relay("branch_steps", run="steps", durable=FIXTURE_DURABLE)
-def branch_steps(c: flezha.Channels) -> None:
+def branch_steps(c: flezha.ChannelBuilder) -> None:
     # One channel, two consumers: THE fan-out. Both branches read exactly what
     # BranchA released on it (held edge, wired twice).
     mid = (
@@ -536,7 +536,7 @@ diam_join = stateless_step("diam_join", _join)
 
 
 @flezha.relay("diamond_steps", run="steps", durable=FIXTURE_DURABLE)
-def diamond_steps(c: flezha.Channels) -> None:
+def diamond_steps(c: flezha.ChannelBuilder) -> None:
     # Held edge wired twice = the fan-out; two arms naming diam_join with no
     # node name = the fan-in, since two unnamed mentions are one node.
     fan = (
@@ -585,7 +585,7 @@ retry_flaky = stateless_step("retry_flaky", _flaky)
 
 
 @flezha.relay("retry_steps", run="steps", durable=FIXTURE_DURABLE)
-def retry_steps(c: flezha.Channels) -> None:
+def retry_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(retry_a).output(
         "mid", encode=lambda value: f"res:{value}".encode()
     ).into(retry_flaky).output("out")
@@ -678,7 +678,7 @@ LOOP_KNOBS: dict[str, Any] = {
 }
 
 
-def chat_chain(c: flezha.Channels) -> None:
+def chat_chain(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(chat_turn).named("mid").into(chat_reply).output("out")
 
 
@@ -686,7 +686,7 @@ chat_loop_steps = flezha.relay("chat_loop_steps", **LOOP_KNOBS)(chat_chain)
 
 
 @flezha.relay("stateless_loop_steps", **LOOP_KNOBS)
-def stateless_loop_steps(c: flezha.Channels) -> None:
+def stateless_loop_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(chat_reply).output("out")
 
 
@@ -711,14 +711,14 @@ keyed_loop_count = flezha.tasklet(KeyedLoopCount, name="keyed_loop_count")
 
 
 @flezha.relay("keyed_loop_steps", **LOOP_KNOBS)
-def keyed_loop_steps(c: flezha.Channels) -> None:
+def keyed_loop_steps(c: flezha.ChannelBuilder) -> None:
     c.input("trades", codec="text").key_by(prefix).into(keyed_loop_count).output(
         "keyed_loop_steps_out"
     )
 
 
 @flezha.relay("chat_rewind_steps", **LOOP_KNOBS)
-def chat_rewind_steps(c: flezha.Channels) -> None:
+def chat_rewind_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(chat_turn).named("mid").into(chat_reply_undoable).output("out")
 
 
@@ -773,7 +773,7 @@ class Answer:
 answer = flezha.tasklet(Answer, name="answer")
 
 
-def failing_turn_chain(c: flezha.Channels) -> None:
+def failing_turn_chain(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(note).named("noted").into(answer).output("answer")
 
 
@@ -804,7 +804,7 @@ blocking_reply = stateless_step("blocking_reply", _blocking_reply)
 
 
 @flezha.relay("reply_block_loop_steps", **LOOP_KNOBS)
-def reply_block_loop_steps(c: flezha.Channels) -> None:
+def reply_block_loop_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(chat_turn).named("mid").into(blocking_reply).output("out")
 
 
@@ -822,7 +822,7 @@ BENCH_STEPS = [durable_step(f"bench_s{at}") for at in range(16)]
 
 def bench_chain(factory_id: str, steps: int, persistent: bool) -> flezha.Relay:
     @flezha.relay(factory_id, run="steps", durable="local" if persistent else False)
-    def declare(c: flezha.Channels) -> None:
+    def declare(c: flezha.ChannelBuilder) -> None:
         edge = c.input("in", codec="text").into(BENCH_STEPS[0])
         for at in range(1, steps):
             edge = edge.named(f"edge_BenchS{at}").into(BENCH_STEPS[at])
@@ -877,7 +877,7 @@ bench_turn = flezha.tasklet(BenchTurn, name="bench_turn")
     durable=FIXTURE_DURABLE,
     max_duration_ms=24 * 3_600_000,
 )
-def bench_loop_steps(c: flezha.Channels) -> None:
+def bench_loop_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(bench_turn).named("mid").into(chat_reply).output("out")
 
 
@@ -935,7 +935,7 @@ timer_tock = stateless_step("tock", _tock)
 
 
 @flezha.relay("timer_loop_steps", **LOOP_KNOBS)
-def timer_loop_steps(c: flezha.Channels) -> None:
+def timer_loop_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(timer_tick).named("ticked").into(timer_tock).output("out")
 
 
@@ -970,7 +970,7 @@ event_tick = flezha.tasklet(EventTick, name="event_tick")
 
 
 @flezha.relay("event_timer_steps", **LOOP_KNOBS)
-def event_timer_steps(c: flezha.Channels) -> None:
+def event_timer_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(event_tick).output("out")
 
 
@@ -995,7 +995,7 @@ static_cell_step = flezha.tasklet(
 
 
 @flezha.relay("static_cell_steps", **LOOP_KNOBS)
-def static_cell_steps(c: flezha.Channels) -> None:
+def static_cell_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(static_cell_step).output("out")
 
 
@@ -1005,7 +1005,7 @@ call_turn = stateless_step("call_turn", lambda value, ctx: ctx.emit(value))
 
 
 @flezha.relay("call_turn", **LOOP_KNOBS)
-def call_turn_steps(c: flezha.Channels) -> None:
+def call_turn_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(call_turn).output()
 
 

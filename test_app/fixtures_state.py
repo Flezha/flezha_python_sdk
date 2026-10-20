@@ -48,7 +48,7 @@ tier_store = flezha.tasklet(TierStore, name="tier_store_tasklet")
 
 
 @flezha.relay("bench_keyed_nopersist", durable=False)
-def bench_keyed_nopersist_relay(c: flezha.Channels) -> None:
+def bench_keyed_nopersist_relay(c: flezha.ChannelBuilder) -> None:
     """Per-cell persistence off: the heap-only posture the bench isolates
     against the durable one."""
     c.input("input", codec="text").on_full("drop_nothing").into(tier_store).keyed().output("sink")
@@ -76,7 +76,7 @@ store_input = flezha.tasklet(StoreInput, name="store_input_tasklet")
 
 
 @flezha.relay("store_input")
-def store_input_relay(c: flezha.Channels) -> None:
+def store_input_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(store_input).output("sink")
 
 
@@ -101,12 +101,12 @@ counter = flezha.tasklet(Counter, name="counter_tasklet")
 
 
 @flezha.relay("stateful_counter")
-def stateful_counter_relay(c: flezha.Channels) -> None:
+def stateful_counter_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(CounterEntry).named("ticks").into(counter)
 
 
 @flezha.relay("persistence_off_counter", durable=False)
-def persistence_off_relay(c: flezha.Channels) -> None:
+def persistence_off_relay(c: flezha.ChannelBuilder) -> None:
     """The same topology with per-Cell persistence off.
 
     Its own node names, as the reference declares them: a node identity is per
@@ -143,7 +143,7 @@ sleeping_counter = flezha.tasklet(SleepingCounter, name="sleeping_counter_taskle
 
 
 @flezha.relay("sleeping_counter", durable=FIXTURE_DURABLE)
-def sleeping_counter_relay(c: flezha.Channels) -> None:
+def sleeping_counter_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").key_by(prefix).into(sleeping_counter).output("totals")
 
 
@@ -183,7 +183,7 @@ tick = flezha.tasklet(Tick, name="tick_tasklet")
 
 
 @flezha.relay("coalescing_counter")
-def coalescing_counter_relay(c: flezha.Channels) -> None:
+def coalescing_counter_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(TickEntry).named("ticks").into(tick)
 
 
@@ -209,12 +209,12 @@ resume_probe = flezha.tasklet(ResumeProbe, name="resume_probe_tasklet")
 
 
 @flezha.relay("resume_probe")
-def resume_probe_relay(c: flezha.Channels) -> None:
+def resume_probe_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(resume_probe).output("total")
 
 
 @flezha.relay("bench_keyed")
-def bench_keyed_relay(c: flezha.Channels) -> None:
+def bench_keyed_relay(c: flezha.ChannelBuilder) -> None:
     """`bench_keyed_nopersist`'s durable twin: the same keyed upsert with
     per-Cell persistence on, so the bench can isolate that cost."""
     c.input("input", codec="text").on_full("drop_nothing").into(
@@ -285,12 +285,12 @@ evolving_cart_v2 = flezha.tasklet(
 
 
 @flezha.relay("schema_evolution_v1")
-def schema_evolution_v1_relay(c: flezha.Channels) -> None:
+def schema_evolution_v1_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(evolving_cart_v1).output("total")
 
 
 @flezha.relay("schema_evolution_v2")
-def schema_evolution_v2_relay(c: flezha.Channels) -> None:
+def schema_evolution_v2_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(evolving_cart_v2).output("total")
 
 
@@ -298,7 +298,7 @@ def schema_evolution_v2_relay(c: flezha.Channels) -> None:
 
 
 @flezha.relay("tier_store", run={"flow": {"exactly": "effectively_once"}})
-def tier_store_relay(c: flezha.Channels) -> None:
+def tier_store_relay(c: flezha.ChannelBuilder) -> None:
     """The effectively-once reference: a keyed upsert under the tier.
 
     A 300 ms backoff base keeps the min-watermark freeze observable in the DLQ
@@ -312,7 +312,7 @@ def tier_store_relay(c: flezha.Channels) -> None:
 
 
 @flezha.relay("remote_tier_store", run={"flow": {"exactly": "effectively_once"}}, durable="remote")
-def remote_tier_store_relay(c: flezha.Channels) -> None:
+def remote_tier_store_relay(c: flezha.ChannelBuilder) -> None:
     """``tier_store`` kept ``durable: remote``: an input is acknowledged only once
     the durability backend holds the records it produced."""
     tier_store_relay.declaration(c)
@@ -355,7 +355,7 @@ tier_tally = flezha.tasklet(TierTally, name="tier_tally")
 
 
 @flezha.relay("tier_chain", run={"flow": {"exactly": "effectively_once"}})
-def tier_chain_relay(c: flezha.Channels) -> None:
+def tier_chain_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").on_full("drop_nothing").into(tier_pass).key_by(prefix).retry_max(
         1_000
     ).into(tier_tally).keyed().output("sink")
@@ -377,7 +377,7 @@ checkpoint_store = flezha.tasklet(CheckpointStore, name="checkpoint_store_taskle
 @flezha.relay(
     "checkpoint_store", run={"flow": {"exactly": {"effectively_once": {"ack": "checkpoint"}}}}
 )
-def checkpoint_store_relay(c: flezha.Channels) -> None:
+def checkpoint_store_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(checkpoint_store).keyed().output("sink")
 
 
@@ -393,7 +393,7 @@ def checkpoint_store_relay(c: flezha.Channels) -> None:
         }
     },
 )
-def checkpoint_batched_relay(c: flezha.Channels) -> None:
+def checkpoint_batched_relay(c: flezha.ChannelBuilder) -> None:
     """The same tasklet declared ``outputs: at_checkpoint``.
 
     The interval's outputs are held with its changes and ship inside its
@@ -426,7 +426,7 @@ def _bench_checkpoint() -> dict[str, Any]:
 
 
 @flezha.relay("bench_checkpoint", run=_bench_checkpoint())
-def bench_checkpoint_relay(c: flezha.Channels) -> None:
+def bench_checkpoint_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").on_full("drop_nothing").into(bench_checkpoint).keyed().output(
         "sink"
     )
@@ -466,7 +466,7 @@ session_timeout = flezha.tasklet(SessionTimeout, name="session_timeout_tasklet")
 
 
 @flezha.relay("session_timeout")
-def session_timeout_relay(c: flezha.Channels) -> None:
+def session_timeout_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(session_timeout).output("kafka")
 
 
@@ -497,7 +497,7 @@ timer_cap = flezha.tasklet(TimerCap, name="timer_cap_tasklet", max_timers_per_ce
 
 
 @flezha.relay("timer_cap")
-def timer_cap_relay(c: flezha.Channels) -> None:
+def timer_cap_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(timer_cap).output("kafka")
 
 
@@ -531,5 +531,5 @@ timer_churn = flezha.tasklet(TimerChurn, name="timer_churn_tasklet")
 
 
 @flezha.relay("timer_churn")
-def timer_churn_relay(c: flezha.Channels) -> None:
+def timer_churn_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(timer_churn).output("echo")

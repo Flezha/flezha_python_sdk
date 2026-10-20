@@ -30,7 +30,7 @@ import flezha
 # one instance per order; each step runs once
 # a failed step undoes the finished ones
 @flezha.relay("order_executor", run={"steps": {"each": "once", "on_failure": "undo_all"}})
-def order_executor(c: flezha.Channels) -> None:
+def order_executor(c: flezha.ChannelBuilder) -> None:
     """Two steps in order, then a fan-out: confirming the fill and booking the
     order are two independent consequences of the placement, and neither waits
     for the other. Each arm of `branch` receives the same edge, so the

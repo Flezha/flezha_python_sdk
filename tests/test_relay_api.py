@@ -127,7 +127,7 @@ audit = flezha.tasklet(Audit, name="api_audit")
 
 
 @flezha.relay("api_facts")
-def api_facts(c: flezha.Channels) -> None:
+def api_facts(c: flezha.ChannelBuilder) -> None:
     c.input("place", description="Places an order").into(place).output("placed")
     c.input("declared", schema={"type": "object", "required": ["pair"]}).into(place)
     c.input("audit", codec="text").into(audit)
@@ -154,7 +154,7 @@ def test_each_channel_announces_its_format_schema_and_description() -> None:
 
 def test_a_declared_schema_that_is_not_an_object_with_a_type_is_refused() -> None:
     @flezha.relay("api_broken_schema")
-    def broken(c: flezha.Channels) -> None:
+    def broken(c: flezha.ChannelBuilder) -> None:
         c.input("place", schema={"properties": {}}).into(place)
 
     with pytest.raises(FlezhaError) as caught:

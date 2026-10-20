@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
 from . import codec as _codec
-from .builder import Channels, ClassSpec
+from .builder import ChannelBuilder, ClassSpec
 from .cell_state import fold_restore
 from .dispatch import DispatchDeps, RegisteredClass, invoke, run_now
 from .errors import FlezhaError
@@ -29,7 +29,6 @@ __all__ = [
     "ReplayMismatch",
     "EffectReplayMismatch",
     "Outcome",
-    "replay_equals",
 ]
 
 #: The longest effect name, in bytes, as the core refuses it.
@@ -88,6 +87,110 @@ class Outcome:
     timers: list[dict[str, Any]] = field(default_factory=list)
 
 
+class _FakeCore:
+    """The core bridge a ``Ctx`` asks, answered as the core would for one
+    tasklet with no controller behind it."""
+
+    def __init__(self, tasklet: str) -> None:
+        self._tasklet = tasklet
+        # Answers by handle, until the invocation that made them ends, as the
+        # core releases them.
+        self.spawns: dict[int, str] = {}
+        self._spawn_count = 0
+        # Each live input's effect results, in order, and how many replays ran.
+        self._kept: list[dict[tuple[str, int], bytes]] = []
+        self._replays = 0
+        self._effects = _Effects()
+
+    def begin_input(self, replay: bool) -> None:
+        """Serve the next input: a live one keeps its results, the n-th replay
+        reads what the n-th live input kept."""
+        if replay:
+            index = self._replays
+            self._replays += 1
+            kept = self._kept[index] if index < len(self._kept) else {}
+            self._effects = _Effects(kept=kept, replaying=True)
+        else:
+            self._effects = _Effects()
+            self._kept.append(self._effects.kept)
+
+    def finish_input(self) -> None:
+        """A replay must ask for every result its live input kept."""
+        effects = self._effects
+        unasked = [key for key in effects.kept if key not in effects.asked]
+        if effects.replaying and unasked:
+            raise EffectReplayMismatch(self._tasklet, unasked[0][0], "was never asked for")
+
+    def spawn_request(
+        self,
+        token: int,
+        factory_id: str,
+        id: str,
+        payload: bytes,
+        if_running: str,
+        replay: bool,
+        offset: int | None,
+    ) -> int:
+        """A harness has no controller, so a spawn resolves at once to what one
+        would answer for a free id: ``spawned`` under the given id, or under a
+        deterministic one shaped like a generated id. A replay answers
+        ``skipped_on_replay`` with the given id, or an empty one."""
+        del token, payload, if_running, offset
+        self._spawn_count += 1
+        if replay:
+            answer = {"id": id, "outcome": "skipped_on_replay"}
+        else:
+            suffix = base64.b32encode(self._spawn_count.to_bytes(10, "big")).decode().lower()
+            answer = {"id": id or f"{factory_id}-{suffix}", "outcome": "spawned"}
+        self.spawns[self._spawn_count] = json.dumps(answer)
+        return self._spawn_count
+
+    def spawn_result(self, handle: int, timeout_ms: int) -> str | None:
+        del timeout_ms
+        answer = self.spawns.get(handle)
+        if answer is None:
+            raise FlezhaError("runtime.spawn_handle_released", {"handle": handle})
+        return answer
+
+    def part(self, token: int, item: int, payload: bytes) -> None:
+        """A harness has no controller, so no listener: the part, already
+        encoded by the context, is dropped."""
+        del token, item, payload
+
+    def effect_begin(self, token: int, item: int, name: str) -> tuple[str, bytes | None]:
+        """The core's answer to a begun ``ctx.effect``, over this input's
+        results: the kept one, or run the function (on a live input only)."""
+        del token, item
+        if not name or len(name.encode()) > _MAX_EFFECT_NAME:
+            raise FlezhaError("effect.bad_name", {"name": repr(name)})
+        effects = self._effects
+        if effects.running is not None:
+            raise FlezhaError("effect.nested", {"name": name})
+        ordinal = effects.ordinals.get(name, 0)
+        effects.ordinals[name] = ordinal + 1
+        key = (name, ordinal)
+        effects.asked.add(key)
+        if key in effects.kept:
+            return "kept", effects.kept[key]
+        if effects.replaying:
+            raise EffectReplayMismatch(self._tasklet, name, "ran its function")
+        effects.running = key
+        return "run", None
+
+    def effect_end(self, token: int, item: int, payload: bytes) -> bytes | None:
+        """Keep a live input's result, as the controller does."""
+        del token, item
+        effects = self._effects
+        assert effects.running is not None, "an end follows a begin that runs"
+        effects.kept[effects.running] = payload
+        effects.running = None
+        return None
+
+    def effect_release(self, token: int, item: int) -> None:
+        del token, item
+        self._effects.running = None
+
+
 class TaskletTestHarness(Generic[S]):
     """Drive one tasklet the way a runner does, with no controller running.
 
@@ -116,7 +219,7 @@ class TaskletTestHarness(Generic[S]):
         # go — a tasklet under test emits to be observed, not to be routed.
         # Driving the builder means the harness proves it too. The output is
         # MessagePack so `outputs` reports exactly the value a handler emitted.
-        channels = Channels("<harness>")
+        channels = ChannelBuilder("<harness>")
         channels.input("in").into(task).output(codec="msgpack")
         self._spec = ClassSpec(
             factory_id="<harness>",
@@ -130,19 +233,12 @@ class TaskletTestHarness(Generic[S]):
         # No core runs here, so the harness names the cell's identity itself.
         self._cell = self._registered.cell(self._node, relay, cell_key)
         self._registered.keep_identity(self._cell, f"{relay}/{task.name}/{cell_key}".encode())
-        self._deps = DispatchDeps(registry=None, bridge=self)
+        self._core = _FakeCore(task.name)
+        self._deps = DispatchDeps(registry=None, bridge=self._core)
         self.log: list[bytes] = []
         # Pending timers by (kind, scheduled_at), as the core keeps them.
         self._timers: set[tuple[str, int]] = set()
         self._change_seq = 0
-        # Answers by handle, until the invocation that made them ends, as the
-        # core releases them.
-        self._spawns: dict[int, str] = {}
-        self._spawn_count = 0
-        # Each live input's effect results, in order, and how many replays ran.
-        self._kept_effects: list[dict[tuple[str, int], bytes]] = []
-        self._replays = 0
-        self._effects = _Effects()
         if initial_state is not None:
             self._cell.state = initial_state
 
@@ -154,18 +250,9 @@ class TaskletTestHarness(Generic[S]):
     def feed(self, value: Any, *, now: int = 0, replay: bool = False) -> Outcome:
         """Run the tasklet against one input; ``replay`` replays the next live
         input, in order."""
-        if replay:
-            index = self._replays
-            self._replays += 1
-            kept = self._kept_effects[index] if index < len(self._kept_effects) else {}
-            self._effects = _Effects(kept=kept, replaying=True)
-        else:
-            self._effects = _Effects()
-            self._kept_effects.append(self._effects.kept)
+        self._core.begin_input(replay)
         outcome = self._run(now, replay, lambda ctx: self._task(value, ctx), "run")
-        unasked = [key for key in self._effects.kept if key not in self._effects.asked]
-        if replay and unasked:
-            raise EffectReplayMismatch(self._task.name, unasked[0][0], "was never asked for")
+        self._core.finish_input()
         return outcome
 
     def apply_inputs(self, values: Iterable[Any], *, now: int = 0) -> list[Outcome]:
@@ -253,77 +340,6 @@ class TaskletTestHarness(Generic[S]):
             raise ReplayMismatch(self._task.name, live, replayed)
         return True
 
-    # -- the core bridge a `Ctx` asks ----------------------------------------
-
-    def spawn_request(
-        self,
-        token: int,
-        factory_id: str,
-        id: str,
-        payload: bytes,
-        if_running: str,
-        replay: bool,
-        offset: int | None,
-    ) -> int:
-        """A harness has no controller, so a spawn resolves at once to what one
-        would answer for a free id: ``spawned`` under the given id, or under a
-        deterministic one shaped like a generated id. A replay answers
-        ``skipped_on_replay`` with the given id, or an empty one."""
-        del token, payload, if_running, offset
-        self._spawn_count += 1
-        if replay:
-            answer = {"id": id, "outcome": "skipped_on_replay"}
-        else:
-            suffix = base64.b32encode(self._spawn_count.to_bytes(10, "big")).decode().lower()
-            answer = {"id": id or f"{factory_id}-{suffix}", "outcome": "spawned"}
-        self._spawns[self._spawn_count] = json.dumps(answer)
-        return self._spawn_count
-
-    def spawn_result(self, handle: int, timeout_ms: int) -> str | None:
-        del timeout_ms
-        answer = self._spawns.get(handle)
-        if answer is None:
-            raise FlezhaError("runtime.spawn_handle_released", {"handle": handle})
-        return answer
-
-    def part(self, token: int, item: int, payload: bytes) -> None:
-        """A harness has no controller, so no listener: the part, already
-        encoded by the context, is dropped."""
-        del token, item, payload
-
-    def effect_begin(self, token: int, item: int, name: str) -> tuple[str, bytes | None]:
-        """The core's answer to a begun ``ctx.effect``, over this input's
-        results: the kept one, or run the function (on a live input only)."""
-        del token, item
-        if not name or len(name.encode()) > _MAX_EFFECT_NAME:
-            raise FlezhaError("effect.bad_name", {"name": repr(name)})
-        effects = self._effects
-        if effects.running is not None:
-            raise FlezhaError("effect.nested", {"name": name})
-        ordinal = effects.ordinals.get(name, 0)
-        effects.ordinals[name] = ordinal + 1
-        key = (name, ordinal)
-        effects.asked.add(key)
-        if key in effects.kept:
-            return "kept", effects.kept[key]
-        if effects.replaying:
-            raise EffectReplayMismatch(self._task.name, name, "ran its function")
-        effects.running = key
-        return "run", None
-
-    def effect_end(self, token: int, item: int, payload: bytes) -> bytes | None:
-        """Keep a live input's result, as the controller does."""
-        del token, item
-        effects = self._effects
-        assert effects.running is not None, "an end follows a begin that runs"
-        effects.kept[effects.running] = payload
-        effects.running = None
-        return None
-
-    def effect_release(self, token: int, item: int) -> None:
-        del token, item
-        self._effects.running = None
-
     # -- internals -----------------------------------------------------------
 
     def _run(self, now: int, replay: bool, body: Any, hook: str) -> Outcome:
@@ -336,7 +352,7 @@ class TaskletTestHarness(Generic[S]):
         try:
             ctx, returned = run_now(invoke(self._cell, activation, self._deps, now, replay, body))
         finally:
-            self._spawns.clear()
+            self._core.spawns.clear()
         ctx._settle_return(returned, hook)
         self.log.extend(ctx.changes)
         self._change_seq += len(ctx.changes)
@@ -348,12 +364,3 @@ class TaskletTestHarness(Generic[S]):
             changes=[self._task.decode_change(body) for body in ctx.changes],
             timers=list(ctx.timers),
         )
-
-
-def replay_equals(
-    task: Tasklet[Any, Any], inputs: Iterable[Any], *, cell_key: str | None = None
-) -> bool:
-    """Drive ``task`` over ``inputs`` and assert the replay agrees."""
-    harness: TaskletTestHarness[Any] = TaskletTestHarness(task, cell_key=cell_key)
-    harness.apply_inputs(inputs)
-    return harness.replay_equals()

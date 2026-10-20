@@ -38,7 +38,7 @@ kept = flezha.tasklet(Kept, name="kept")
 
 
 @flezha.relay("kept_relay")
-def kept_relay(c: flezha.Channels) -> None:
+def kept_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input").into(kept).output("out")
 
 

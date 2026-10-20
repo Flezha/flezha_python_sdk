@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from flezha import Channels, Ctx, FlezhaError, LocalRelay, relay, tasklet
+from flezha import ChannelBuilder, Ctx, FlezhaError, LocalRelay, relay, tasklet
 from flezha.testing import EffectReplayMismatch, TaskletTestHarness
 
 #: How often each outside call ran, by name.
@@ -154,7 +154,7 @@ def test_a_failing_function_keeps_nothing_and_its_error_propagates() -> None:
 
 
 @relay("effect_local_python")
-def effect_local(c: Channels) -> None:
+def effect_local(c: ChannelBuilder) -> None:
     c.input("in", codec="text").into(Asks).output("out", codec="json")
 
 

@@ -6,10 +6,10 @@ builds one:
 .. code-block:: python
 
     @flezha.relay("echo")
-    def echo(c: flezha.Channels) -> None:
+    def echo(c: flezha.ChannelBuilder) -> None:
         c.input("input").into(echo_task).output("out")
 
-A channels body takes one parameter, annotated :class:`~flezha.builder.Channels`
+A channels body takes one parameter, annotated :class:`~flezha.builder.ChannelBuilder`
 or not at all. The class settings are keywords of the decorator: ``run`` (a
 flow, the default, or steps), ``durable``, ``max_duration_ms`` and
 ``description``.
@@ -32,7 +32,7 @@ from collections.abc import Callable
 from typing import Any, Literal, TypedDict, Unpack
 
 from . import codec as _codec
-from .builder import Channels, ClassSpec
+from .builder import ChannelBuilder, ClassSpec
 from .errors import FlezhaError
 from .tasklet import Tasklet, TaskletSettings, output_type, positional_parameters
 
@@ -170,7 +170,7 @@ class Relay:
     def _build_spec(self) -> ClassSpec:
         """The graph and the settings tree as written: the core judges the tree
         and refuses a misplaced setting by name."""
-        builder = Channels(self.factory_id)
+        builder = ChannelBuilder(self.factory_id)
         self.declaration(builder)
         return ClassSpec(
             factory_id=self.factory_id,
@@ -190,8 +190,10 @@ def _declares_channels(declaration: Any) -> bool:
     if isinstance(annotation, str):
         # Unresolvable where it was written (a function-local import under
         # postponed evaluation), so read by the name it spells.
-        return annotation.rpartition(".")[2] == Channels.__name__
-    return annotation is None or (isinstance(annotation, type) and issubclass(annotation, Channels))
+        return annotation.rpartition(".")[2] == ChannelBuilder.__name__
+    return annotation is None or (
+        isinstance(annotation, type) and issubclass(annotation, ChannelBuilder)
+    )
 
 
 def relay(
@@ -273,7 +275,7 @@ def _short_form(
     if output is not None and (returned is None or returned is type(None) or returned == "None"):
         raise FlezhaError("topology.output_without_type", {"factory_id": factory_id})
 
-    def channels(c: Channels) -> None:
+    def channels(c: ChannelBuilder) -> None:
         edge = c.input(input or "input", codec=codec).into(generated)
         if output is not None:
             edge.output(output)

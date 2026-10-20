@@ -28,7 +28,7 @@ class Other:
 
 
 @flezha.relay("other")
-def other_op(c: flezha.Channels) -> None:
+def other_op(c: flezha.ChannelBuilder) -> None:
     c.input("in").into(Other).output()
 
 
@@ -128,7 +128,7 @@ def test_only_one_runner_may_be_started_per_process(runner: Any) -> None:
 
 def test_a_declaration_that_fails_releases_the_slot(runner: Any) -> None:
     @flezha.relay("broken")
-    def broken(c: flezha.Channels) -> None:
+    def broken(c: flezha.ChannelBuilder) -> None:
         c.input("dangling")
 
     with pytest.raises(FlezhaError):

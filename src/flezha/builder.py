@@ -1,11 +1,11 @@
 """The channel-graph DSL, and the specs it produces.
 
 The graph is built by calling a relay's declaration function with a
-:class:`Channels`; every fluent call answers a new :class:`Edge`, so a shared
+:class:`ChannelBuilder`; every fluent call answers a new :class:`Stream`, so a shared
 prefix can be branched without the arms colliding.
 
 Edges are generic in the value that flows on them, which is what makes a wrong
-wiring a type error before it is a registration error: ``Edge[Invoice].into``
+wiring a type error before it is a registration error: ``Stream[Invoice].into``
 takes a ``Tasklet[Invoice, O]`` and nothing else, so a type checker rejects
 the mismatch in the editor and the registration-time refusal is the backstop
 for what a type checker cannot see.
@@ -26,9 +26,9 @@ from .tasklet import Tasklet
 
 __all__ = [
     "DROPPED",
-    "Channels",
+    "ChannelBuilder",
     "ConsumerEdge",
-    "Edge",
+    "Stream",
     "Merge",
     "ChannelSpec",
     "ClassSpec",
@@ -220,7 +220,7 @@ class ClassSpec:
         return _branch(self.durable) != "false"
 
 
-class Channels:
+class ChannelBuilder:
     """The fluent builder a relay's declaration function receives."""
 
     def __init__(self, factory_id: str) -> None:
@@ -239,7 +239,7 @@ class Channels:
         codec: ChannelCodec | None = None,
         description: str = "",
         schema: dict[str, Any] | None = None,
-    ) -> Edge[Any]:
+    ) -> Stream[Any]:
         """Declare a controller-fed entry channel.
 
         ``decode`` turns the wire bytes into the value a handler sees, ``codec``
@@ -258,7 +258,7 @@ class Channels:
         channel.description = description
         channel.schema = schema
         self.channels.append(channel)
-        return Edge(self, ("entry", channel), {})
+        return Stream(self, ("entry", channel), {})
 
     def merge(self) -> Merge:
         """Declare one tasklet fed by several source edges.
@@ -270,8 +270,8 @@ class Channels:
         return Merge(self)
 
     def route_latest(
-        self, documents: Edge[Any], traffic: Edge[T], key: Callable[[T], Any]
-    ) -> Edge[tuple[str, Any]]:
+        self, documents: Stream[Any], traffic: Stream[T], key: Callable[[T], Any]
+    ) -> Stream[tuple[str, Any]]:
         """Hand the latest document to each key on that key's own next traffic.
 
         Every key ``key`` reads off ``traffic`` receives each distinct document
@@ -283,14 +283,14 @@ class Channels:
         return self._route_latest(documents, traffic, key, None)
 
     def route_latest_named(
-        self, documents: Edge[Any], traffic: Edge[T], key: Callable[[T], Any], name: str
-    ) -> Edge[tuple[str, Any]]:
+        self, documents: Stream[Any], traffic: Stream[T], key: Callable[[T], Any], name: str
+    ) -> Stream[tuple[str, Any]]:
         """:meth:`route_latest` under its own node name."""
         return self._route_latest(documents, traffic, key, name)
 
     def _route_latest(
-        self, documents: Edge[Any], traffic: Edge[T], key: Callable[[T], Any], name: str | None
-    ) -> Edge[tuple[str, Any]]:
+        self, documents: Stream[Any], traffic: Stream[T], key: Callable[[T], Any], name: str | None
+    ) -> Stream[tuple[str, Any]]:
         # Unnamed passes no name, so the router is an unnamed mention of its
         # tasklet exactly as `into(task)` is.
         return (
@@ -367,12 +367,12 @@ class Merge:
 
     __slots__ = ("_builder", "_sources", "_keys")
 
-    def __init__(self, builder: Channels) -> None:
+    def __init__(self, builder: ChannelBuilder) -> None:
         self._builder = builder
-        self._sources: list[Edge[Any]] = []
+        self._sources: list[Stream[Any]] = []
         self._keys: list[Callable[[Any], Any]] = []
 
-    def from_(self, source: Edge[S], mapping: Callable[[S], Any]) -> Merge:
+    def from_(self, source: Stream[S], mapping: Callable[[S], Any]) -> Merge:
         """Add a source edge and the mapping that lifts its values into the merged input.
 
         The mapping composes after any transform already declared on ``source``.
@@ -385,7 +385,7 @@ class Merge:
         self._keys.append(key)
         return self
 
-    def into(self, task: Tasklet[Any, O], name: str | None = None) -> Edge[O]:
+    def into(self, task: Tasklet[Any, O], name: str | None = None) -> Stream[O]:
         """Close the merge on a tasklet, and answer that tasklet's output edge."""
         node = self._builder.node_for(task, name)
         group = self._builder.merge_groups
@@ -395,10 +395,10 @@ class Merge:
             for key in self._keys:
                 source = source.key_by(key)
             source._close(node, {"link": "merge", "tasklet": node.index, "group": group})
-        return Edge(self._builder, ("tasklet", node), {})
+        return Stream(self._builder, ("tasklet", node), {})
 
 
-class Edge(Generic[T]):
+class Stream(Generic[T]):
     """One edge under construction, carrying the type that flows on it.
 
     Immutable: every fluent call answers a new edge, so a shared prefix can be
@@ -409,7 +409,7 @@ class Edge(Generic[T]):
 
     def __init__(
         self,
-        builder: Channels,
+        builder: ChannelBuilder,
         source: tuple[str, Any],
         pending: dict[str, Any],
     ) -> None:
@@ -419,18 +419,18 @@ class Edge(Generic[T]):
 
     # -- edge options -----------------------------------------------------
 
-    def named(self, name: str) -> Edge[T]:
+    def named(self, name: str) -> Stream[T]:
         """Override the channel name this edge creates.
 
         The default is derived from the producing node's identity.
         """
         return self._with(channel_name=name)
 
-    def map(self, transform: Callable[[T], U]) -> Edge[U]:
+    def map(self, transform: Callable[[T], U]) -> Stream[U]:
         """Transform every value on this edge. Evaluated producer-side."""
         return self._relink({"link": "transform"}, transforms=[*self._transforms, transform])
 
-    def filter(self, predicate: Callable[[T], bool]) -> Edge[T]:
+    def filter(self, predicate: Callable[[T], bool]) -> Stream[T]:
         """Drop the values a predicate rejects, before this edge's key is computed.
 
         A dropped value is consumed and reaches no handler.
@@ -441,7 +441,7 @@ class Edge(Generic[T]):
 
         return self._relink({"link": "transform"}, transforms=[*self._transforms, keep])
 
-    def flat_map(self, transform: Callable[[T], Iterable[U]]) -> Edge[U]:
+    def flat_map(self, transform: Callable[[T], Iterable[U]]) -> Stream[U]:
         """Turn every value on this edge into the values an iterable yields.
 
         Each reaches the consumer on its own, and an empty iterable is a drop.
@@ -452,26 +452,26 @@ class Edge(Generic[T]):
 
         return self._relink({"link": "transform"}, transforms=[*self._transforms, fan])
 
-    def key_by(self, key: Callable[[T], Any]) -> Edge[T]:
+    def key_by(self, key: Callable[[T], Any]) -> Stream[T]:
         """Route by a computed key: the consumer becomes a dynamic keyed tasklet."""
         return self._relink({"link": "key"}, key_by=key)
 
-    def on_full(self, policy: str) -> Edge[T]:
+    def on_full(self, policy: str) -> Stream[T]:
         return self._with(overflow=policy)
 
-    def retry_max(self, attempts: int) -> Edge[T]:
+    def retry_max(self, attempts: int) -> Stream[T]:
         return self._with(retry_max=attempts)
 
-    def retry_backoff_ms(self, milliseconds: int) -> Edge[T]:
+    def retry_backoff_ms(self, milliseconds: int) -> Stream[T]:
         return self._with(retry_backoff_ms=milliseconds)
 
-    def keyed(self) -> Edge[T]:
+    def keyed(self) -> Stream[T]:
         """Stamp identity and ``flz.key`` onto emitted plugin frames."""
         return self._with(keyed=True)
 
     # -- wiring ------------------------------------------------------------
 
-    def branch(self, *arms: Callable[[Edge[T]], Any]) -> Edge[T]:
+    def branch(self, *arms: Callable[[Stream[T]], Any]) -> Stream[T]:
         """Fan out: each arm receives this same edge.
 
         ``branch`` builds exactly the topology the separate ``into`` statements
@@ -483,11 +483,11 @@ class Edge(Generic[T]):
             arm(self)
         return self
 
-    def into(self, task: Tasklet[T, O], name: str | None = None) -> Edge[O]:
+    def into(self, task: Tasklet[T, O], name: str | None = None) -> Stream[O]:
         """Wire this edge into a tasklet."""
         node = self._builder.node_for(task, name)
         self._close(node, {"link": "into", "tasklet": node.index})
-        return Edge(self._builder, ("tasklet", node), {})
+        return Stream(self._builder, ("tasklet", node), {})
 
     def output(
         self,
@@ -495,7 +495,7 @@ class Edge(Generic[T]):
         *,
         encode: Callable[[Any], bytes] | None = None,
         codec: ChannelCodec | None = None,
-    ) -> Edge[T]:
+    ) -> Stream[T]:
         """Terminate this edge's channel on the plugin layer, and answer the edge.
 
         The name written here IS the channel's name, everywhere one appears;
@@ -535,7 +535,7 @@ class Edge(Generic[T]):
         channel: str | None = None,
         answer_channel: str | None = None,
         codec: ChannelCodec | None = None,
-    ) -> Edge[Response[T, Any]]:
+    ) -> Stream[Response[T, Any]]:
         """End this edge's chain in a call to another relay, and answer the
         edge of its Response channel.
 
@@ -596,10 +596,10 @@ class Edge(Generic[T]):
             key_by=self._pending.get("key_by"),
         )
 
-    def _with(self, **pending: Any) -> Edge[Any]:
+    def _with(self, **pending: Any) -> Stream[Any]:
         # Applied now, as the reference applies it: an option no terminator
         # follows would otherwise be dropped.
-        edge = Edge(self._builder, self._from, {**self._pending, **pending})
+        edge = Stream(self._builder, self._from, {**self._pending, **pending})
         edge._channel()
         return edge
 
@@ -619,12 +619,12 @@ class Edge(Generic[T]):
         channel.chains.append([*links[:length], link])
         return {"chain": len(channel.chains) - 1, "chain_length": length + 1}
 
-    def _relink(self, link: Link, **pending: Any) -> Edge[Any]:
+    def _relink(self, link: Link, **pending: Any) -> Stream[Any]:
         """This edge with one more chain link — the one place a transform's or a
         key's result edge is built, so every link the author declared reaches
         the record whether or not an ``into(...)`` ever closes it."""
         chain = self._record(self._channel(), link)
-        return Edge(self._builder, self._from, {**self._pending, **pending, **chain})
+        return Stream(self._builder, self._from, {**self._pending, **pending, **chain})
 
     def _channel(self) -> ChannelSpec:
         """The channel this edge's values leave on, with the pending options applied.

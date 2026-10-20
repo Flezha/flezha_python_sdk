@@ -16,7 +16,7 @@ idiomatic errors.
             ctx.emit(value)
 
     @flezha.relay("echo")
-    def echo_relay(c: flezha.Channels) -> None:
+    def echo_relay(c: flezha.ChannelBuilder) -> None:
         c.input("input").into(Echo).output("out")
 
     flezha.create_runner("default").register_factory(echo_relay).run()
@@ -24,7 +24,7 @@ idiomatic errors.
 
 from __future__ import annotations
 
-from .builder import Channels, Edge, Merge
+from .builder import ChannelBuilder, Merge, Stream
 from .call import Response
 from .cell_state import state
 from .codec import ChannelCodec, TypeCodec, ValueCodec
@@ -45,8 +45,8 @@ __all__ = [
     "tasklet",
     "state",
     "relay",
-    "Channels",
-    "Edge",
+    "ChannelBuilder",
+    "Stream",
     "Merge",
     "Response",
     "Ctx",

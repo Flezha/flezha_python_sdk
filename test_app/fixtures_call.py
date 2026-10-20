@@ -73,7 +73,7 @@ def _quote(value: str, ctx: flezha.Ctx[None, Any]) -> None:
 
 
 @flezha.relay("call_pricing")
-def call_pricing_relay(c: flezha.Channels) -> None:
+def call_pricing_relay(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(stateless_step("pricing_quote", _quote)).output("quotes")
 
 
@@ -85,7 +85,7 @@ class OrderPriced:
 order_priced = flezha.tasklet(OrderPriced, name="order_priced")
 
 
-def call_orders_graph(c: flezha.Channels) -> None:
+def call_orders_graph(c: flezha.ChannelBuilder) -> None:
     (
         c.input("in", codec="text")
         .into(stateless_step("order_ask", lambda value, ctx: ctx.emit(value)))
@@ -114,7 +114,7 @@ async def _agent_turn(value: str, ctx: flezha.Ctx[None, Any]) -> None:
     "call_agent",
     **{**LOOP_KNOBS, "run": {"steps": {"each": "per_input", "on_failure": "keep_progress"}}},
 )
-def call_agent_steps(c: flezha.Channels) -> None:
+def call_agent_steps(c: flezha.ChannelBuilder) -> None:
     c.input("turn", codec="text").into(stateless_step("agent_turn", _agent_turn)).output()
 
 
@@ -124,7 +124,7 @@ gateway_resume = stateless_step(
 
 
 @flezha.relay("call_gateway", run={"flow": {"exactly": "effectively_once"}})
-def call_gateway_relay(c: flezha.Channels) -> None:
+def call_gateway_relay(c: flezha.ChannelBuilder) -> None:
     gateway_account = account("gateway_account")
     gateway = c.input("in", codec="text").into(gateway_account).named("gateway")
     (
@@ -151,7 +151,7 @@ def call_gateway_relay(c: flezha.Channels) -> None:
 
 
 @flezha.relay("call_tool_session", **LOOP_KNOBS)
-def call_tool_session_steps(c: flezha.Channels) -> None:
+def call_tool_session_steps(c: flezha.ChannelBuilder) -> None:
     tool_turn = account("tool_turn")
     tool = c.input("turn", codec="text").into(tool_turn).named("tool")
     tool.filter(is_request).call("pricing", **CALL).into(tool_turn)
@@ -181,7 +181,7 @@ class Audit:
 
 
 @flezha.relay("orders")
-def orders_relay(c: flezha.Channels) -> None:
+def orders_relay(c: flezha.ChannelBuilder) -> None:
     """The ``relay_api`` fixture: ``place`` reads a JSON order, is described,
     and answers through ``placed``; ``audit`` reads text and answers nothing."""
     place = flezha.tasklet(Place, name="orders_place")

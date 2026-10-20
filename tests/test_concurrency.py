@@ -92,7 +92,7 @@ def test_a_grown_seat_serves_and_retires_once_the_work_stops() -> None:
             ctx.emit(value)
 
     @flezha.relay("blocking")
-    def blocking(c: flezha.Channels) -> None:
+    def blocking(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(Blocks).output()
 
     core = FakeCore(
@@ -265,7 +265,7 @@ def test_an_async_handler_is_driven_under_either_executor(kind: str) -> None:
             ctx.emit(value.upper())
 
     @flezha.relay("async_op")
-    def async_op(c: flezha.Channels) -> None:
+    def async_op(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(Slow).output()
 
     core = FakeCore([work_activation(i, f"v{i}", factory="async_op") for i in range(4)])
@@ -295,7 +295,7 @@ def test_a_drain_has_a_time_limit_and_says_what_it_abandoned(
             ctx.emit(value)
 
     @flezha.relay("wedge")
-    def wedge(c: flezha.Channels) -> None:
+    def wedge(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(Wedged).output()
 
     core = FakeCore([work_activation(1, "x", factory="wedge")], base=1, drain_ms=300)

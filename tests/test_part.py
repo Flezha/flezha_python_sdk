@@ -44,12 +44,12 @@ class Parts:
 
 
 @flezha.relay("part_flow")
-def _flow(c: flezha.Channels) -> None:
+def _flow(c: flezha.ChannelBuilder) -> None:
     c.input("in").into(Parts).output("answer")
 
 
 @flezha.relay("part_steps", run={"steps": {"each": "per_input"}})
-def _steps(c: flezha.Channels) -> None:
+def _steps(c: flezha.ChannelBuilder) -> None:
     c.input("in").into(Parts).output("answer")
 
 
@@ -137,12 +137,12 @@ class PartDrain:
 
 
 @flezha.relay("part_to_tasklet")
-def _to_tasklet(c: flezha.Channels) -> None:
+def _to_tasklet(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(RefusedPart).into(PartDrain)
 
 
 @flezha.relay("part_local")
-def _local(c: flezha.Channels) -> None:
+def _local(c: flezha.ChannelBuilder) -> None:
     c.input("in").into(Parts).output("answer")
 
 

@@ -51,12 +51,12 @@ do_nothing = passthrough("do_nothing_tasklet")
 
 
 @flezha.relay("do_nothing")
-def do_nothing_relay(c: flezha.Channels) -> None:
+def do_nothing_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(do_nothing).output("echo")
 
 
 @flezha.relay("bench_echo")
-def bench_echo_relay(c: flezha.Channels) -> None:
+def bench_echo_relay(c: flezha.ChannelBuilder) -> None:
     """Echo with a declared DropNothing on its entry mailbox.
 
     ``do_nothing`` is the merge-blocking bench factory and must not change; this
@@ -75,7 +75,7 @@ def _complete_on_bye(value: str, ctx: flezha.Ctx[None, str]) -> None:
 
 
 @flezha.relay("complete_flow")
-def complete_flow_relay(c: flezha.Channels) -> None:
+def complete_flow_relay(c: flezha.ChannelBuilder) -> None:
     """A flow class that echoes each input and ends its instance on ``bye``."""
     tasklet = stateless_step("complete_flow_tasklet", _complete_on_bye)
     c.input("input", codec="text").into(tasklet).output("complete_flow_out")
@@ -88,7 +88,7 @@ def _count_down(value: str, ctx: flezha.Ctx[None, str]) -> None:
 
 
 @flezha.relay("chained_steps", run={"steps": {"each": "chained"}})
-def chained_steps_relay(c: flezha.Channels) -> None:
+def chained_steps_relay(c: flezha.ChannelBuilder) -> None:
     """A durable chained loop: each pass hands the next ``n - 1``; zero ends it."""
     countdown = stateless_step("chained_countdown", _count_down)
     c.input("in", codec="text").into(countdown).named("carry")
@@ -115,7 +115,7 @@ compare_filter = flezha.tasklet(CompareFilter, name="compare_filter_tasklet")
 
 
 @flezha.relay("compare_filter")
-def compare_filter_relay(c: flezha.Channels) -> None:
+def compare_filter_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(compare_filter).output("sink")
 
 
@@ -165,14 +165,14 @@ macro_static_downstream = passthrough("macro_static_downstream_tasklet")
 
 
 @flezha.relay("static_cell")
-def static_cell_relay(c: flezha.Channels) -> None:
+def static_cell_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(static_entry).named("hop").into(static_downstream).output(
         "kafka"
     )
 
 
 @flezha.relay("sugar_static_cell")
-def sugar_static_cell_relay(c: flezha.Channels) -> None:
+def sugar_static_cell_relay(c: flezha.ChannelBuilder) -> None:
     """The reference pipeline sugar leaves the hop unnamed and lets the sink
     name the producing channel."""
     c.input("input", codec="text").into(macro_static_entry).into(macro_static_downstream).output(
@@ -187,7 +187,7 @@ mixed_hand_downstream = passthrough("mixed_hand_downstream")
 
 
 @flezha.relay("mixed_relay")
-def mixed_relay(c: flezha.Channels) -> None:
+def mixed_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(mixed_macro_entry).named("hop").into(
         mixed_hand_downstream
     ).output("kafka")
@@ -299,7 +299,7 @@ def hybrid_encode(value: int) -> bytes:
 
 
 @flezha.relay("hybrid_channel")
-def hybrid_channel_relay(c: flezha.Channels) -> None:
+def hybrid_channel_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(HybridProducer).branch(
         # The consumer edge first, so a refused plugin serialization leaves the
         # in-process fan-out already recorded — the reference's isolation.
@@ -329,7 +329,7 @@ class MergeLabel:
 
 
 @flezha.relay("merged_input")
-def merged_input_relay(c: flezha.Channels) -> None:
+def merged_input_relay(c: flezha.ChannelBuilder) -> None:
     ticks = c.input("ticks", codec="text")
     quotes = c.input("quotes", codec="text")
     c.merge().from_(ticks, tagged("ticks")).from_(quotes, tagged("quotes")).key_by(
@@ -347,7 +347,7 @@ transform_label = passthrough("transform_label_tasklet")
 
 
 @flezha.relay("transform_chain")
-def transform_chain_relay(c: flezha.Channels) -> None:
+def transform_chain_relay(c: flezha.ChannelBuilder) -> None:
     c.input("trades", codec="text").filter(lambda trade: trade != "drop").flat_map(
         lambda trade: trade.split(",")
     ).map(str.upper).key_by(prefix).into(transform_label).keyed().output("transformed")
@@ -383,7 +383,7 @@ stress_d = flezha.tasklet(StressToP0, name="stress_d", cell_keys=STRESS_KEYS)
 
 
 @flezha.relay("cell_stress")
-def cell_stress_relay(c: flezha.Channels) -> None:
+def cell_stress_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(stress_a).named("a_to_b").into(stress_b).named(
         "b_to_c"
     ).into(stress_c).named("c_to_d").into(stress_d).output("echo")
@@ -423,7 +423,7 @@ candle = flezha.tasklet(Candle, name="candle_tasklet")
 
 
 @flezha.relay("candle", run={"flow": {"exactly": {"effectively_once": {"correction_ms": 600_000}}}})
-def candle_relay(c: flezha.Channels) -> None:
+def candle_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(candle).keyed().output("sink")
 
 
@@ -443,7 +443,7 @@ class PoisonProbe:
 
 
 @flezha.relay("poison_probe")
-def poison_probe_relay(c: flezha.Channels) -> None:
+def poison_probe_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").retry_backoff_ms(25).into(PoisonProbe).output("out")
 
 
@@ -478,7 +478,7 @@ class WedgeProbe:
 
 
 @flezha.relay("wedge_probe")
-def wedge_probe_relay(c: flezha.Channels) -> None:
+def wedge_probe_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").into(WedgeProbe).output("out")
 
 
@@ -502,7 +502,7 @@ def _bounded_mailbox(policy: str) -> flezha.Relay:
     tasklet = flezha.tasklet(BoundedMailbox, name=f"{policy}_test_tasklet", mailbox_capacity=4)
 
     @flezha.relay(f"bounded_mailbox_{policy}")
-    def relay(c: flezha.Channels) -> None:
+    def relay(c: flezha.ChannelBuilder) -> None:
         c.input(f"{policy}_input", codec="text").on_full(policy).into(tasklet).output(
             f"{policy}_echo"
         )
@@ -534,7 +534,7 @@ partition_pass = flezha.tasklet(PartitionPass, name="partition_pass_tasklet")
 
 
 @flezha.relay("partition_pass")
-def partition_pass_relay(c: flezha.Channels) -> None:
+def partition_pass_relay(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").key_by(prefix).into(partition_pass).keyed().output("input")
 
 
@@ -558,7 +558,7 @@ dynamic_cell = flezha.tasklet(
 
 
 @flezha.relay("dynamic_cell")
-def dynamic_cell_relay(c: flezha.Channels) -> None:
+def dynamic_cell_relay(c: flezha.ChannelBuilder) -> None:
     c.input("input", codec="text").on_full("drop_nothing").filter(
         # Filtered before keying: a dropped value answers no key, so the core
         # never mints a cell for it.
@@ -595,7 +595,7 @@ class SpawnRequester:
 
 
 @flezha.relay("spawn_requester")
-def spawn_requester_relay(c: flezha.Channels) -> None:
+def spawn_requester_relay(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(SpawnRequester).output("out")
 
 
@@ -615,7 +615,7 @@ class SpawnHoldRequester:
 
 
 @flezha.relay("spawn_hold_requester", run={"flow": {"exactly": "effectively_once"}})
-def spawn_hold_requester_relay(c: flezha.Channels) -> None:
+def spawn_hold_requester_relay(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").on_full("drop_nothing").into(SpawnHoldRequester).keyed().output(
         "out"
     )
@@ -636,7 +636,7 @@ class SpawnOnceRequester:
 
 
 @flezha.relay("spawn_once_requester")
-def spawn_once_requester_relay(c: flezha.Channels) -> None:
+def spawn_once_requester_relay(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(SpawnOnceRequester).output("out")
 
 
@@ -649,7 +649,7 @@ def spawn_once_requester_relay(c: flezha.Channels) -> None:
 
 
 @flezha.relay("call_echo")
-def call_echo_relay(c: flezha.Channels) -> None:
+def call_echo_relay(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(passthrough("call_echo")).output()
 
 
@@ -657,7 +657,7 @@ call_answer = stateless_step("call_answer", lambda value, ctx: ctx.emit(f"re:{va
 
 
 @flezha.relay("call_downstream")
-def call_downstream_relay(c: flezha.Channels) -> None:
+def call_downstream_relay(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").into(passthrough("call_parse")).into(call_answer).output()
 
 
@@ -667,7 +667,7 @@ call_refuse = stateless_step("call_refuse", lambda value, ctx: ctx.emit(f"refuse
 
 
 @flezha.relay("call_split")
-def call_split_relay(c: flezha.Channels) -> None:
+def call_split_relay(c: flezha.ChannelBuilder) -> None:
     admitted = c.input("in", codec="text").into(passthrough("call_admit"))
     admitted.filter(lambda value: not value.startswith("no")).into(call_accept).output()
     admitted.filter(lambda value: value.startswith("no")).into(call_refuse).output()
@@ -697,14 +697,14 @@ def _send_parts(value: str, ctx: flezha.Ctx[None, str]) -> None:
 
 
 @flezha.relay("part_echo")
-def part_echo_relay(c: flezha.Channels) -> None:
+def part_echo_relay(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").retry_backoff_ms(25).into(
         stateless_step("part_echo", _send_parts)
     ).output("answer")
 
 
 @flezha.relay("part_echo_steps", **LOOP_KNOBS)
-def part_echo_steps(c: flezha.Channels) -> None:
+def part_echo_steps(c: flezha.ChannelBuilder) -> None:
     c.input("in", codec="text").retry_backoff_ms(25).into(
         stateless_step("part_echo_turn", _send_parts)
     ).output("answer")

@@ -15,7 +15,7 @@ import flezha
 
 
 @flezha.relay("trade_watcher")
-def trade_watcher(c: flezha.Channels) -> None:
+def trade_watcher(c: flezha.ChannelBuilder) -> None:
     """Four transforms on the wiring, then two tasklets, and one place output
     leaves the desk.
 

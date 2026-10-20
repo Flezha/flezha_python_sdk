@@ -80,7 +80,7 @@ echo = flezha.tasklet(Echo, name="echo")
 
 
 @flezha.relay("demo")
-def demo(c: flezha.Channels) -> None:
+def demo(c: flezha.ChannelBuilder) -> None:
     c.input("input").into(echo).named("mid").into(count_up).output("out")
 
 
@@ -409,7 +409,7 @@ def solo(task: flezha.Tasklet[Any, Any], factory: str = "solo") -> flezha.Relay:
     """A one-tasklet relay wrapped around `task`, its output on an output."""
 
     @flezha.relay(factory)
-    def relay(c: flezha.Channels) -> None:
+    def relay(c: flezha.ChannelBuilder) -> None:
         c.input("in").into(task).output()
 
     return relay
