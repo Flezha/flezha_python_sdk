@@ -301,6 +301,7 @@ def work_activation(
                 "consumed_offset": token + index,
                 "replay": False,
                 "now": 0,
+                "form": "untransformed",
             }
             for index, payload in enumerate(payloads)
         ],

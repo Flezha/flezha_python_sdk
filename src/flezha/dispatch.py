@@ -472,13 +472,10 @@ async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any, Any]) -> Non
 
     channel = cell.registered.channel_at(item.get("channel") or 0)
     # This node's own edge off the channel: a transform chain declared before
-    # one `into` belongs to that consumer and to no other. It is evaluated here
-    # only for a payload that reached us untransformed — an entry payload,
-    # whose producer is the wire, or a steps stage's released value. A
-    # stream producer evaluated it as its activation completed, and evaluating
-    # it again would compose the chain with itself.
-    untransformed = channel is None or channel.kind == "entry" or cell.registered.spec.runs_in_steps
-    edge = _edge_into(channel, cell.node.index) if untransformed else None
+    # one `into` belongs to that consumer and to no other. It runs only on a
+    # payload the core marks untransformed: a stream producer already ran it,
+    # and running it again would compose the chain with itself.
+    edge = _edge_into(channel, cell.node.index) if item.get("form") == "untransformed" else None
     # The entrance (the entry channel's decoder and the entry edge's
     # transforms) is where a message the relay cannot read is told apart
     # from a handler that fails on one it can.

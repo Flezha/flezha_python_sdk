@@ -208,9 +208,8 @@ class ClassSpec:
 
         A steps stage releases ONE value per emit and the driver fans it out
         to every consumer itself, so each consumer edge — its transforms and
-        its key — belongs to the consumer. The producer and the consumer read
-        this one predicate, so they cannot disagree about which side applies
-        the edge.
+        its key — belongs to the consumer, which applies it on the input the
+        core marks untransformed.
         """
         return _branch(self.run) == "steps"
 

@@ -500,10 +500,16 @@ def _steps_emit_stream(c: flezha.Channels) -> None:
     _steps_graph(c)
 
 
-def _delivered(factory: str, tasklet: int, payload: bytes, deps: DispatchDeps) -> list[Any]:
+def _delivered(
+    factory: str, tasklet: int, deps: DispatchDeps, *items: tuple[bytes, str]
+) -> list[Any]:
+    """What the ``handoff`` consumer is handed for ``(payload, form)`` items."""
     _DELIVERED.clear()
-    (effect,) = answered(wire_work(50, factory, (1, payload), tasklet=tasklet), deps)["effects"]
-    assert effect["verdict"] == "ok"
+    activation = wire_work(50, factory, *[(1, payload) for payload, _ in items], tasklet=tasklet)
+    for item, (_, form) in zip(activation["items"], items, strict=True):
+        item["form"] = form
+    for effect in answered(activation, deps)["effects"]:
+        assert effect["verdict"] == "ok"
     return list(_DELIVERED)
 
 
@@ -590,7 +596,19 @@ def test_the_same_graph_on_a_flow_class_releases_one_output_per_consumer(
 def test_a_flow_inter_task_edge_applies_its_map_exactly_once(fake_core: FakeCore) -> None:
     deps = deps_for(_steps_emit_stream, fake_core)
     (effect,) = answered(work_activation(42, 10, factory="steps_emit_stream"), deps)["effects"]
-    assert _delivered("steps_emit_stream", 1, effect["outputs"][0]["payload"], deps) == [11]
+    released = effect["outputs"][0]["payload"]
+    assert _delivered("steps_emit_stream", 1, deps, (released, "transformed")) == [11]
+
+
+def test_the_input_form_comes_from_the_core(fake_core: FakeCore) -> None:
+    """The consumer applies its edge to what the core marks untransformed only,
+    whatever the relay's run: an entry payload and a steps release arrive so,
+    a stream producer's output arrives transformed."""
+    deps = deps_for(_steps_emit_stream, fake_core)
+    value = codec.encode(10)
+    assert _delivered(
+        "steps_emit_stream", 1, deps, (value, "untransformed"), (value, "transformed")
+    ) == [11, 10]
 
 
 def test_a_steps_consumer_applies_its_own_edge_exactly_once_at_delivery(
@@ -601,8 +619,8 @@ def test_a_steps_consumer_applies_its_own_edge_exactly_once_at_delivery(
     released = effect["outputs"][0]["payload"]
     # One released value reaches BOTH children — the driver's fan-out — and
     # each evaluates its own edge here.
-    assert _delivered("steps_emit", 1, released, deps) == [11]
-    assert _delivered("steps_emit", 2, released, deps) == [10]
+    assert _delivered("steps_emit", 1, deps, (released, "untransformed")) == [11]
+    assert _delivered("steps_emit", 2, deps, (released, "untransformed")) == [10]
 
 
 def test_plain_text_into_an_entry_naming_no_codec_never_reaches_the_handler(
@@ -736,6 +754,7 @@ def test_an_inter_tasklet_merge_source_is_mapped_and_keyed_as_it_is_released(
     activation = wire_work(
         73, "merged_edge", (0, b"AAPL:1"), (2, released["payload"]), tasklet=1, cell="AAPL"
     )
+    activation["items"][1]["form"] = "transformed"
     assert _plugin_payloads(answered(activation, deps)) == [b"ticks:AAPL:1", b"quotes:AAPL:2"]
 
 
