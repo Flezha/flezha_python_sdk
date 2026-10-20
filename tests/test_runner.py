@@ -49,8 +49,7 @@ def runner() -> Any:
     yield build
     for r in made:
         try:
-            r.stop()
-            r.drain()
+            r.close()
         except Exception:  # noqa: BLE001, S110
             # Teardown, after the assertions have run: a failure here must not
             # mask the one the test already made, and nothing it could raise is
@@ -76,8 +75,7 @@ def test_start_declares_then_connects(runner: Any) -> None:
         assert json.loads(core.declared[0])["factory_id"] == "demo"
         assert declared(r) == ["demo"]
     finally:
-        r.stop()
-        r.drain()
+        r.close()
 
 
 def test_run_is_start_plus_await_termination(runner: Any) -> None:
@@ -88,7 +86,7 @@ def test_run_is_start_plus_await_termination(runner: Any) -> None:
     def stop_soon() -> None:
         while core.started is None:
             threading.Event().wait(0.01)
-        r.stop()
+        r.close()
 
     threading.Thread(target=stop_soon, daemon=True).start()
     r.run(core=core)
@@ -102,8 +100,7 @@ def test_zero_declared_types_is_legal(runner: Any) -> None:
         assert core.declared == []
         assert core.started == "test"
     finally:
-        r.stop()
-        r.drain()
+        r.close()
 
 
 def test_a_second_start_on_the_same_runner_is_refused(runner: Any) -> None:
@@ -113,8 +110,7 @@ def test_a_second_start_on_the_same_runner_is_refused(runner: Any) -> None:
         with pytest.raises(FlezhaError, match="runtime.runner_already_running"):
             r.start(core=FakeCore())
     finally:
-        r.stop()
-        r.drain()
+        r.close()
 
 
 def test_only_one_runner_may_be_started_per_process(runner: Any) -> None:
@@ -124,12 +120,10 @@ def test_only_one_runner_may_be_started_per_process(runner: Any) -> None:
         with pytest.raises(FlezhaError, match="runtime.runner_already_running"):
             second.start(core=FakeCore())
     finally:
-        first.stop()
-        first.drain()
+        first.close()
     # The slot is released by the drain, so the next runner may take it.
     third = runner().start(core=FakeCore())
-    third.stop()
-    third.drain()
+    third.close()
 
 
 def test_a_declaration_that_fails_releases_the_slot(runner: Any) -> None:
@@ -140,8 +134,7 @@ def test_a_declaration_that_fails_releases_the_slot(runner: Any) -> None:
     with pytest.raises(FlezhaError):
         runner().register_factory(broken).start(core=FakeCore())
     later = runner().start(core=FakeCore())
-    later.stop()
-    later.drain()
+    later.close()
 
 
 def test_a_post_start_define_reaches_the_core(runner: Any) -> None:
@@ -152,8 +145,7 @@ def test_a_post_start_define_reaches_the_core(runner: Any) -> None:
         assert [json.loads(body)["factory_id"] for body in core.declared] == ["demo", "other"]
         assert declared(r) == ["demo", "other"]
     finally:
-        r.stop()
-        r.drain()
+        r.close()
 
 
 def test_removing_an_undeclared_type_is_refused_naming_it(runner: Any) -> None:
@@ -182,8 +174,7 @@ def test_a_cell_that_left_starts_again_from_its_initial_state(runner: Any) -> No
         assert core.completed[-1] == {"token": 2, "outcome": "state_applied"}
         assert json.loads(answered(read, deps)["json"])["count"] == 0
     finally:
-        r.stop()
-        r.drain()
+        r.close()
 
 
 def test_removing_a_type_with_no_instances_succeeds(runner: Any) -> None:
@@ -194,8 +185,7 @@ def test_removing_a_type_with_no_instances_succeeds(runner: Any) -> None:
         assert declared(r) == ["demo"]
         assert core.undeclared == ["other"]
     finally:
-        r.stop()
-        r.drain()
+        r.close()
 
 
 def test_a_duplicate_factory_id_is_refused(runner: Any) -> None:
@@ -214,8 +204,7 @@ def test_register_modules_imports_and_registers(runner: Any) -> None:
     try:
         assert declared(r) == ["from_module", "from_module_short_form"]
     finally:
-        r.stop()
-        r.drain()
+        r.close()
 
 
 def test_an_unimportable_module_raises_its_own_import_error(runner: Any) -> None:
@@ -244,8 +233,7 @@ def test_the_startup_line_names_the_tier_the_executor_and_the_sizing(
         assert "executor" in line
         assert "base" in line and "ceiling" in line
     finally:
-        r.stop()
-        r.drain()
+        r.close()
 
 
 def test_a_failed_start_writes_what_the_core_said_while_connecting(
@@ -270,8 +258,7 @@ def test_the_executor_is_an_axis_of_the_run(monkeypatch: pytest.MonkeyPatch, run
     try:
         assert r._executor.name == "asyncio"  # type: ignore[attr-defined]
     finally:
-        r.stop()
-        r.drain()
+        r.close()
 
 
 def test_an_unknown_executor_is_refused(monkeypatch: pytest.MonkeyPatch, runner: Any) -> None:
@@ -307,8 +294,7 @@ def test_a_controller_initiated_shutdown_ends_the_runners_own_wait(runner: Any) 
 def test_the_drain_frees_the_context(runner: Any) -> None:
     core = FakeCore()
     r = runner().register_factory(demo).start(core=core)
-    r.stop()
-    r.drain()
+    r.close()
     assert core.shut_down
     assert core.freed
 
@@ -398,7 +384,7 @@ def test_a_plugin_is_enabled_by_name_and_bound_and_unbound_by_relay(
         ),
         ("PluginManager.unbind", ["writer", {"relay_id": "my_echo"}]),
         ("PluginManager.disable", ["writer", {}]),
-        ("PluginManager.list", []),
+        ("PluginManager.enabled", []),
     ]
 
 
@@ -559,12 +545,12 @@ def test_one_call_turns_diagnostics_on() -> None:
         root.setLevel(logging.NOTSET)
 
 
-@flezha.relay(id="short_flow", output="out", codec="text")
+@flezha.relay(factory_id="short_flow", output="out", codec="text")
 def short_flow(value: str) -> str:
     return value
 
 
-@flezha.relay(id="short_steps", run="steps", output="placed", codec="text")
+@flezha.relay(factory_id="short_steps", run="steps", output="placed", codec="text")
 def short_steps(value: str) -> str:
     return value
 
@@ -585,12 +571,11 @@ def test_register_modules_collects_a_short_form(runner: Any) -> None:
     try:
         assert "from_module_short_form" in declared(r)
     finally:
-        r.stop()
-        r.drain()
+        r.close()
 
 
 def test_a_short_form_collides_with_one_of_the_other_kind(runner: Any) -> None:
-    @flezha.relay(id="short_flow", run="steps", output="placed")
+    @flezha.relay(factory_id="short_flow", run="steps", output="placed")
     def twin(value: str) -> str:
         return value
 

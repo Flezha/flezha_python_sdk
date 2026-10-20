@@ -116,12 +116,14 @@ class Control:
         return self.call("PluginManager.disable", name, {})
 
     def list_relays(self) -> Any:
-        """The relay ids running in this namespace."""
-        return self.call("Relay.list_relays")
+        """The relays in this namespace, one row each: its id, health, runner and
+        node, and a partition group's width and members."""
+        return self.call("Relay.list")
 
     def list_plugins(self) -> Any:
-        """The plugins enabled in this namespace: name, provider, single, bound relays."""
-        return self.call("PluginManager.list")
+        """The plugins enabled in this namespace, one row each: name, provider,
+        single, bound relays and where it runs."""
+        return self.call("PluginManager.enabled")
 
     def cell_state(self, relay_id: str, cell: str | None = None) -> Any:
         """A relay's live state, and the change sequence it was read at.

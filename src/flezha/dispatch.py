@@ -421,7 +421,7 @@ async def _run_work(cell: Cell, activation: dict[str, Any], deps: DispatchDeps) 
                 item.get("consumed_offset"),
                 index,
             )
-            effects.append(ctx.effect_record(item.get("consumed_offset")))
+            effects.append(ctx._effect_record(item.get("consumed_offset")))
         except Exception as error:  # noqa: BLE001 - the verdict is the report
             # The traceback is a host diagnostic, not a record: the verdict
             # below travels to the dead-letter entry and the controller's log.
@@ -460,7 +460,7 @@ async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any, Any]) -> Non
             "kind": item.get("timer_kind"),
             "scheduled_at": item.get("scheduled_at") or item.get("now") or 0,
         }
-        ctx.settle_return(await resolve(task.on_timer(timer, ctx)), "on_timer")
+        ctx._settle_return(await resolve(task.on_timer(timer, ctx)), "on_timer")
         return
 
     channel = cell.registered.channel_at(item.get("channel") or 0)
@@ -487,7 +487,7 @@ async def _run_item(cell: Cell, item: dict[str, Any], ctx: Ctx[Any, Any]) -> Non
     # reaches it once per value. Either way the item produces one effect, so
     # its offset advances once and nothing is retried.
     for value in values:
-        ctx.settle_return(await resolve(task(value, ctx)), "run")
+        ctx._settle_return(await resolve(task(value, ctx)), "run")
 
 
 def _restore_fold(cell: Cell, activation: dict[str, Any]) -> dict[str, Any]:
@@ -568,8 +568,8 @@ async def _compensate(cell: Cell, activation: dict[str, Any], deps: DispatchDeps
         False,
         lambda c: task.compensate(outputs, c),  # type: ignore[misc]
     )
-    ctx.settle_return(returned, "compensate")
-    return {"token": activation["token"], "outcome": "work", "effects": [ctx.effect_record(None)]}
+    ctx._settle_return(returned, "compensate")
+    return {"token": activation["token"], "outcome": "work", "effects": [ctx._effect_record(None)]}
 
 
 def _release_views(activation: dict[str, Any]) -> None:

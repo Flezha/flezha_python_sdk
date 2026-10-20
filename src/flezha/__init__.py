@@ -24,7 +24,7 @@ idiomatic errors.
 
 from __future__ import annotations
 
-from .builder import DROPPED, Channels, Edge, Merge
+from .builder import Channels, Edge, Merge
 from .call import Response
 from .cell_state import state
 from .codec import ChannelCodec, TypeCodec, ValueCodec
@@ -56,7 +56,6 @@ __all__ = [
     "Relay",
     "Run",
     "Durable",
-    "DROPPED",
     # runner
     "create_runner",
     "Runner",

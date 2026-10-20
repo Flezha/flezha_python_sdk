@@ -164,7 +164,14 @@ def to_host_class_decl(spec: ClassSpec) -> dict[str, Any]:
             "sdk_lang": SDK_LANG_PYTHON,
             "sdk_version": __version__,
             "change_format_id": FORMAT_ID_MSGPACK,
-            "compact_after_bytes": spec.compact_after_bytes,
+            "compact_after_bytes": min(
+                (
+                    node.task.compact_after_bytes
+                    for node in spec.tasklets
+                    if node.task.compact_after_bytes
+                ),
+                default=None,
+            ),
             "channels": [_channel_json(spec, channel) for channel in spec.channels],
             "tasklets": [_tasklet_json(spec, node) for node in spec.tasklets],
         }

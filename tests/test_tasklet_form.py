@@ -266,7 +266,7 @@ def test_a_tasklet_that_emits_nothing_emits_nothing(fake_core: FakeCore) -> None
 
 
 def test_a_function_short_form_emits_its_value_and_nothing_for_none(fake_core: FakeCore) -> None:
-    @flezha.relay(id="maybe", output="out", codec="text")
+    @flezha.relay(factory_id="maybe", output="out", codec="text")
     def maybe(value: str) -> str | None:
         return None if value == "skip" else value
 
@@ -279,7 +279,7 @@ def test_a_function_short_form_emits_its_value_and_nothing_for_none(fake_core: F
 
 
 def test_a_class_short_form_emits_through_its_context(fake_core: FakeCore) -> None:
-    @flezha.relay(id="store_input", output="sink", codec="text")
+    @flezha.relay(factory_id="store_input", output="sink", codec="text")
     class StoreInput:
         def run(self, value: str, ctx: flezha.Ctx[dict[str, list[str]], str]) -> None:
             ctx.change(value)
@@ -310,7 +310,7 @@ class BareContext:
 @pytest.mark.parametrize("body", [Drain, BareContext])
 def test_a_class_short_form_whose_context_names_no_output_refuses_an_output(body: type) -> None:
     with pytest.raises(FlezhaError) as caught:
-        flezha.relay(id="drain", output="out")(body)
+        flezha.relay(factory_id="drain", output="out")(body)
     assert caught.value.code == "topology.output_without_type"
 
 
@@ -375,7 +375,7 @@ def test_a_retired_setting_is_an_unknown_keyword(retired: dict[str, Any]) -> Non
     with pytest.raises(TypeError, match=next(iter(retired))):
         flezha.tasklet(Upcase, name="t", **retired)
     with pytest.raises(TypeError, match=next(iter(retired))):
-        flezha.relay(id="t", **retired)
+        flezha.relay(factory_id="t", **retired)
 
 
 # -- the idle TTL is whole seconds ------------------------------------------------

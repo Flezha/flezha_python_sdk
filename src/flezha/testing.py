@@ -337,7 +337,7 @@ class TaskletTestHarness(Generic[S]):
             ctx, returned = run_now(invoke(self._cell, activation, self._deps, now, replay, body))
         finally:
             self._spawns.clear()
-        ctx.settle_return(returned, hook)
+        ctx._settle_return(returned, hook)
         self.log.extend(ctx.changes)
         self._change_seq += len(ctx.changes)
         for timer in ctx.timers:

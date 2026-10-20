@@ -416,7 +416,7 @@ class Ctx(Generic[S, O_contra]):
 
     # -- what the dispatcher collects ---------------------------------------
 
-    def settle_return(self, returned: Any, hook: str) -> None:
+    def _settle_return(self, returned: Any, hook: str) -> None:
         """Settle what a hook returned: the runtime's call, never the author's.
 
         A short form's function returns its output: ``None`` emits nothing, and
@@ -437,7 +437,7 @@ class Ctx(Generic[S, O_contra]):
         if returned is not DROPPED and self._outgoing:
             self.emit(returned)
 
-    def effect_record(self, consumed_offset: int | None) -> dict[str, Any]:
+    def _effect_record(self, consumed_offset: int | None) -> dict[str, Any]:
         """The effect record for this item, as the core folds it."""
         return {
             "verdict": "ok",

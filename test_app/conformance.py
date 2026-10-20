@@ -388,7 +388,10 @@ def declare_shorthand(declaration: dict[str, Any], settings: dict[str, Any]) -> 
             return value
 
     return flezha.relay(
-        id=declaration["id"], output=declaration["sink"], input=declaration["input"], **settings
+        factory_id=declaration["id"],
+        output=declaration["sink"],
+        input=declaration["input"],
+        **settings,
     )(body)
 
 

@@ -735,7 +735,7 @@ def _decodes_text(relay: flezha.Relay) -> bool:
 
 
 def test_a_flow_short_form_is_its_hand_written_twin() -> None:
-    @flezha.relay(id="upcase", output="out", codec="text")
+    @flezha.relay(factory_id="upcase", output="out", codec="text")
     def upcase(value: str) -> str:
         return value.upper()
 
@@ -758,7 +758,9 @@ def test_a_flow_short_form_is_its_hand_written_twin() -> None:
     ["steps", {"steps": {"each": "per_input"}}],
 )
 def test_a_steps_short_form_is_its_hand_written_twin(run: Any) -> None:
-    @flezha.relay(id="place", run=run, durable=False, output="placed", input="order", codec="text")
+    @flezha.relay(
+        factory_id="place", run=run, durable=False, output="placed", input="order", codec="text"
+    )
     def place(order: str) -> str:
         return order
 
@@ -788,11 +790,11 @@ def test_a_channels_body_annotated_or_not_is_still_the_full_form() -> None:
     def bare(c) -> None:
         c.input("input").into(echo).output("out")
 
-    @flezha.relay(id="static_cell")
+    @flezha.relay(factory_id="static_cell")
     def static_cell(c: flezha.Channels) -> None:
         bare(c)
 
-    for full in (static_cell, flezha.relay(id="bare")(bare)):
+    for full in (static_cell, flezha.relay(factory_id="bare")(bare)):
         assert full.tasklet is None
         assert [node.name for node in full.spec.tasklets] == ["echo"]
 
@@ -800,7 +802,7 @@ def test_a_channels_body_annotated_or_not_is_still_the_full_form() -> None:
 def test_a_function_short_form_taking_a_context_is_refused() -> None:
     with pytest.raises(FlezhaError) as caught:
 
-        @flezha.relay(id="stamp", output="out")
+        @flezha.relay(factory_id="stamp", output="out")
         def stamp(value: str, ctx: flezha.Ctx[None, str]) -> str:
             return value
 
@@ -810,7 +812,7 @@ def test_a_function_short_form_taking_a_context_is_refused() -> None:
 
 
 def test_the_generated_tasklet_composes_in_another_topology() -> None:
-    @flezha.relay(id="upcase", output="out")
+    @flezha.relay(factory_id="upcase", output="out")
     def upcase(value: str) -> str:
         return value.upper()
 
@@ -835,7 +837,7 @@ def test_a_tasklet_body_beside_a_topology_body_is_refused() -> None:
             return None
 
     with pytest.raises(FlezhaError) as caught:
-        flezha.relay(id="both", output="out")(Both)
+        flezha.relay(factory_id="both", output="out")(Both)
 
     assert (caught.value.code, caught.value.details) == (
         "topology.short_form_with_topology",
@@ -863,7 +865,7 @@ def _returns_none_under_an_unresolvable_hint(value: Decimal) -> None:
 )
 def test_an_output_on_a_body_with_no_output_is_refused(body: Callable[[str], Any]) -> None:
     with pytest.raises(FlezhaError) as caught:
-        flezha.relay(id="drain", output="out")(body)
+        flezha.relay(factory_id="drain", output="out")(body)
 
     assert (caught.value.code, caught.value.details) == (
         "topology.output_without_type",
@@ -915,7 +917,7 @@ def test_a_short_form_carries_its_tasklets_own_settings() -> None:
             return ["a"]
 
     short = flezha.relay(
-        id="keyed",
+        factory_id="keyed",
         output="out",
         cell_keys=["a", "b"],
         mailbox_capacity=8,
@@ -937,7 +939,7 @@ def test_a_short_form_carries_its_tasklets_own_settings() -> None:
 def test_a_short_form_keyword_on_a_channels_body_is_refused(keyword: dict[str, Any]) -> None:
     with pytest.raises(FlezhaError) as caught:
 
-        @flezha.relay(id="full", **keyword)
+        @flezha.relay(factory_id="full", **keyword)
         def full(c: flezha.Channels) -> None:
             c.input("input").into(echo).output("out")
 
@@ -954,7 +956,7 @@ def test_a_short_form_keyword_on_a_channels_body_is_refused(keyword: dict[str, A
 def test_a_keyword_neither_form_takes_is_a_type_error(keyword: str) -> None:
     written: dict[str, Any] = {keyword: 5}
     with pytest.raises(TypeError, match=keyword):
-        flezha.relay(id="upcase", run="steps", **written)
+        flezha.relay(factory_id="upcase", run="steps", **written)
 
 
 def test_a_short_form_takes_the_class_settings_the_full_form_takes() -> None:
@@ -967,7 +969,7 @@ def test_a_short_form_takes_the_class_settings_the_full_form_takes() -> None:
     def place(order: str) -> str:
         return order
 
-    short = flezha.relay(id="place", output="placed", **settings)(place)
+    short = flezha.relay(factory_id="place", output="placed", **settings)(place)
     decl = graph.to_host_class_decl(short.spec)
     assert {key: decl[key] for key in settings} == settings
     declare(short)

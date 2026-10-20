@@ -19,7 +19,7 @@ from flezha.testing import ReplayMismatch, TaskletTestHarness, replay_equals
 def test_a_handler_is_testable_with_no_runtime_and_no_controller() -> None:
     """A tasklet class through the harness, a short form's function directly."""
 
-    @flezha.relay(id="shout", output="out")
+    @flezha.relay(factory_id="shout", output="out")
     def shout(value: str) -> str:
         return value.upper()
 

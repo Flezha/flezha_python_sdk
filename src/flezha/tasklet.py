@@ -72,8 +72,9 @@ class TaskletSettings(TypedDict, total=False):
     max_timers_per_cell: int | None
     schema_version: int | None
     min_readable_schema_version: int | None
-    state: type | None
-    change: type | None
+    compact_after_bytes: int | None
+    state_type: type | None
+    change_type: type | None
 
 
 class _ClassHandler(Protocol[I_contra, O_co]):
@@ -124,6 +125,7 @@ class Tasklet(Generic[I, O]):
         "max_timers_per_cell",
         "schema_version",
         "min_readable_schema_version",
+        "compact_after_bytes",
         "state_type",
         "change_type",
         "state_codec",
@@ -156,8 +158,9 @@ class Tasklet(Generic[I, O]):
         max_timers_per_cell: int | None = None,
         schema_version: int | None = None,
         min_readable_schema_version: int | None = None,
-        state: type | None = None,
-        change: type | None = None,
+        compact_after_bytes: int | None = None,
+        state_type: type | None = None,
+        change_type: type | None = None,
     ) -> None:
         self._target = target
         #: A short form's function, whose return value is its output. Every
@@ -179,7 +182,7 @@ class Tasklet(Generic[I, O]):
         self.max_timers_per_cell = max_timers_per_cell
         self.schema_version = schema_version
         self.min_readable_schema_version = min_readable_schema_version
-
+        self.compact_after_bytes = compact_after_bytes
         hook = _hooks_of(instance)
         self.init_state: Callable[[str | None], Any] | None = hook("init_state")
         self.apply_change: Callable[[Any, Any], Any] | None = hook("apply_change")
@@ -190,7 +193,7 @@ class Tasklet(Generic[I, O]):
         self.migrate_state: Callable[[int, Any], Any] | None = hook("migrate_state")
         self.migrate_change: Callable[[int, Any], Any] | None = hook("migrate_change")
         self.clock = self._clock(logical_clock)
-        self._declare_types(state, change)
+        self._declare_types(state_type, change_type)
         self._validate()
 
     def _declare_types(self, state: type | None, change: type | None) -> None:
@@ -388,7 +391,7 @@ def _refuse_context_hooks(task: Tasklet[Any, Any]) -> None:
     A value leaves a tasklet only through ``ctx.emit``, so a hook that cannot
     reach a context, or says it returns a value, is refused before anything
     runs. A value returned anyway is refused at run time by
-    :meth:`flezha.ctx.Ctx.settle_return`.
+    :meth:`flezha.ctx.Ctx._settle_return`.
     """
     if hasattr(task._target, "initial_state"):
         raise FlezhaError(
@@ -419,7 +422,7 @@ def _refuse_context_hooks(task: Tasklet[Any, Any]) -> None:
 
 
 def _state_annotation(task: Tasklet[Any, Any], state: type | None) -> Any:
-    """The state a tasklet declares: `state=`, else the state argument of
+    """The state a tasklet declares: `state_type=`, else the state argument of
     run's context hint, else what `init_state` returns."""
     if state is not None:
         return state
@@ -587,7 +590,7 @@ def tasklet(target: Any = None, /, **declarations: Any) -> Any:
             {
                 "tasklet": declarations.get("name") or getattr(target, "__name__", "<tasklet>"),
                 "fields": [f"`{key}`" for key in written],
-                "instead": "`@flezha.relay(id=...)`",
+                "instead": "`@flezha.relay(factory_id=...)`",
             },
         )
 
@@ -597,7 +600,7 @@ def tasklet(target: Any = None, /, **declarations: Any) -> Any:
                 getattr(inner, "__name__", str(inner)),
                 "is a function; a tasklet is a class whose `run(self, value, ctx)` takes the "
                 "value and the context. A whole one-tasklet relay written as a function "
-                "is `@flezha.relay(id=...)`",
+                "is `@flezha.relay(factory_id=...)`",
             )
         return Tasklet(inner, **declarations)
 

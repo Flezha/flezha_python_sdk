@@ -36,6 +36,7 @@ from fixtures_state import (
     tier_chain_relay,
     tier_store_relay,
     timer_cap_relay,
+    timer_churn_relay,
 )
 from fixtures_steps import (
     LOOP_KNOBS,
@@ -198,12 +199,12 @@ def mixed_relay(c: flezha.Channels) -> None:
 # channels body. No hand-written relay or tasklet stands beside them.
 
 
-@flezha.relay(id="sugar_do_nothing", output="sugar_do_nothing_echo", codec="text")
+@flezha.relay(factory_id="sugar_do_nothing", output="sugar_do_nothing_echo", codec="text")
 def sugar_do_nothing(value: str) -> str:
     return value
 
 
-@flezha.relay(id="sugar_store_input", output="sugar_store_sink", codec="text")
+@flezha.relay(factory_id="sugar_store_input", output="sugar_store_sink", codec="text")
 class SugarStoreInput:
     def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], str]) -> None:
         ctx.change({"push": value})
@@ -217,7 +218,7 @@ class SugarStoreInput:
 
 
 @flezha.relay(
-    id="sugar_named_input",
+    factory_id="sugar_named_input",
     output="sugar_named_input_sink",
     input="prices",
     codec="text",
@@ -227,7 +228,7 @@ def sugar_named_input(value: str) -> str:
 
 
 @flezha.relay(
-    id="sugar_steps",
+    factory_id="sugar_steps",
     run="steps",
     durable=FIXTURE_DURABLE,
     output="sugar_steps_placed",
@@ -239,7 +240,7 @@ def sugar_steps(order: str) -> str:
 
 
 @flezha.relay(
-    id="sugar_steps_per_input",
+    factory_id="sugar_steps_per_input",
     run={"steps": {"each": "per_input"}},
     durable=FIXTURE_DURABLE,
     output="sugar_steps_per_input_out",
@@ -249,7 +250,7 @@ def sugar_steps_per_input(value: str) -> str:
     return value
 
 
-@flezha.relay(id="sugar_state_only", input="ticks", codec="text")
+@flezha.relay(factory_id="sugar_state_only", input="ticks", codec="text")
 class SugarStateOnly(SeenLog):
     """No output: what it was sent is proven by its state alone."""
 
@@ -750,6 +751,7 @@ ALL: list[flezha.Relay] = [
     wedge_probe_relay,
     session_timeout_relay,
     timer_cap_relay,
+    timer_churn_relay,
     *BOUNDED_MAILBOX,
     partition_pass_relay,
     dynamic_cell_relay,

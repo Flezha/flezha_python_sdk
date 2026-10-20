@@ -20,7 +20,7 @@ emitted, or a tasklet class, which emits through its context:
 
 .. code-block:: python
 
-    @flezha.relay(id="echo", output="out", codec="text")
+    @flezha.relay(factory_id="echo", output="out", codec="text")
     def echo(value: str) -> str:
         return value
 """
@@ -176,7 +176,6 @@ class Relay:
             factory_id=self.factory_id,
             tasklets=builder.tasklets,
             channels=builder.channels,
-            compact_after_bytes=builder.compact_after_bytes_value,
             **self._settings,
         )
 
@@ -196,7 +195,7 @@ def _declares_channels(declaration: Any) -> bool:
 
 
 def relay(
-    id: str | None = None,
+    factory_id: str | None = None,
     *,
     run: Run | None = None,
     durable: Durable | None = None,
@@ -209,7 +208,7 @@ def relay(
 ) -> Callable[[Any], Relay]:
     """Declare a relay: fed by the controller through entry channels.
 
-    ``id`` is the factory id. ``run`` is ``"flow"`` (the default) or
+    ``factory_id`` names the factory. ``run`` is ``"flow"`` (the default) or
     ``"steps"``, bare or with its members, e.g.
     ``{"steps": {"each": "per_input"}}``; ``durable`` is ``False``, ``"local"``
     (the default) or ``"remote"``, e.g. ``{"local": {"sleep_after": 2_000}}``.
@@ -231,29 +230,23 @@ def relay(
         "max_duration_ms": max_duration_ms,
         "description": description,
     }
+    entry: dict[str, Any] = {"output": output, "input": input, "codec": codec}
 
     def decorate(declaration: Any) -> Relay:
         name = getattr(declaration, "__name__", "<declaration>")
-        if id is None:
+        if factory_id is None:
             # A factory id is an address a user types, so it is written
             # rather than derived from the declaration's name.
             raise FlezhaError("topology.missing_factory_id", {"relay": name})
         if not _declares_channels(declaration):
-            return _short_form(
-                id, declaration, class_settings, settings, output=output, input=input, codec=codec
-            )
-        written = [
-            key
-            for key, value in {"output": output, "input": input, "codec": codec}.items()
-            if value is not None
-        ]
-        written += list(settings)
+            return _short_form(factory_id, declaration, class_settings, settings, **entry)
+        written = [key for key, value in entry.items() if value is not None] + list(settings)
         if written:
             raise FlezhaError(
                 "topology.short_form_field_on_full_form",
-                {"factory_id": id, "fields": [f"`{key}`" for key in written]},
+                {"factory_id": factory_id, "fields": [f"`{key}`" for key in written]},
             )
-        return Relay(id, declaration, class_settings)
+        return Relay(factory_id, declaration, class_settings)
 
     return decorate
 

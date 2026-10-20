@@ -71,6 +71,7 @@ class Runner:
         self._executor_options: dict[str, Any] = {}
         self._started = False
         self._stopped = threading.Event()
+        self._closing = threading.Lock()
         self._teardown: list[Any] = []
         self._holds_slot = False
 
@@ -253,14 +254,16 @@ class Runner:
             self._executor_kind,
             self._core,
             deps,
-            on_core_shutdown=self.stop,
+            # A controller-initiated close only wakes the waiter: the executor
+            # cannot join its own threads.
+            on_core_shutdown=self._stopped.set,
             **self._executor_options,
         )
 
     def await_termination(self) -> Runner:
-        """Block until the runner is stopped, then drain."""
+        """Block until the runner shuts down, then close it."""
         self._stopped.wait()
-        self.drain()
+        self.close()
         return self
 
     def run(self, *, core: Core | None = None) -> Runner:
@@ -271,17 +274,19 @@ class Runner:
         """
         return self.start(core=core).await_termination()
 
-    def stop(self) -> None:
-        """Stop fetching and drain what is in flight.
+    def close(self) -> None:
+        """Stop fetching, drain what is in flight, release the core and wake
+        every thread in :meth:`await_termination`.
 
-        Reached from a signal handler, the standard-input watcher and the
-        executor's report of a controller-initiated close, so it is idempotent
-        — which `Event.set` already is.
+        Idempotent, and a no-op on a runner that never started. The lock holds
+        a second caller, such as the waiter this close wakes, until the first
+        has released the core.
         """
+        with self._closing:
+            self._release_core()
         self._stopped.set()
 
-    def drain(self) -> None:
-        """Stop fetching, drain what is in flight, and release the core."""
+    def _release_core(self) -> None:
         if self._core is None:
             return
         _log.info("draining")
@@ -306,7 +311,7 @@ class Runner:
         """Start, unless the caller already did.
 
         A runner started explicitly — which is how a host injects a core, or
-        sequences its own boot — still drains on the way out of a ``with``.
+        sequences its own boot — still closes on the way out of a ``with``.
         """
         return self if self._started else self.start()
 
@@ -316,8 +321,7 @@ class Runner:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        self.stop()
-        self.drain()
+        self.close()
 
     # -- internals ---------------------------------------------------------
 

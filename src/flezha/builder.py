@@ -201,7 +201,6 @@ class ClassSpec:
     """The tree's ``run`` as the host declaration writes it; the core judges it."""
     durable: Any = None
     """The tree's ``durable``, likewise; ``None`` is the core's default."""
-    compact_after_bytes: int | None = None
 
     @property
     def runs_in_steps(self) -> bool:
@@ -228,14 +227,7 @@ class Channels:
         self.factory_id = factory_id
         self.tasklets: list[TaskNode] = []
         self.channels: list[ChannelSpec] = []
-        self.compact_after_bytes_value: int | None = None
         self.merge_groups = 0
-
-    # -- class-level declarations ----------------------------------------
-
-    def compact_after_bytes(self, size: int) -> Channels:
-        self.compact_after_bytes_value = size
-        return self
 
     # -- the graph --------------------------------------------------------
 

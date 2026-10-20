@@ -42,7 +42,7 @@ class Seen:
     seen: int
 
 
-@tasklet(name="tally", state=Count, change=Seen, idle_ttl_seconds=300)
+@tasklet(name="tally", state_type=Count, change_type=Seen, idle_ttl_seconds=300)
 class Tally:
     """One Cell per word, minted on first sight of it."""
 
