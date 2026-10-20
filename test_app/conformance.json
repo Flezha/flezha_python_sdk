@@ -150,7 +150,8 @@
     ],
     "cell_timers": [
       "session_timeout",
-      "timer_cap"
+      "timer_cap",
+      "timer_churn"
     ],
     "state_persistence": [
       "store_input",

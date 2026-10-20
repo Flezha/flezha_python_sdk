@@ -499,3 +499,37 @@ timer_cap = flezha.tasklet(TimerCap, name="timer_cap_tasklet", max_timers_per_ce
 @flezha.relay("timer_cap")
 def timer_cap_relay(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(timer_cap).output("kafka")
+
+
+# -- timer_churn -------------------------------------------------------------
+#
+# The bench factory of `mix bench --shape timer`: each input arms a 1 ms
+# processing-time timer and cancels the one the previous input armed; the
+# firing emits `fired:<at>`.
+
+
+class TimerChurn:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], bytes]) -> None:
+        at = ctx.timer_after(1)
+        last = ctx.state["last"]
+        if last != 0 and last != at:
+            ctx.cancel_timer("processing_time", last)
+        ctx.change({"armed": at})
+        ctx.emit(value.encode())
+
+    def on_timer(self, timer: dict[str, Any], ctx: flezha.Ctx[dict[str, Any], bytes]) -> None:
+        ctx.emit(f"fired:{int(timer['scheduled_at'])}".encode())
+
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
+        return {"last": 0}
+
+    def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
+        state["last"] = change["armed"]
+
+
+timer_churn = flezha.tasklet(TimerChurn, name="timer_churn_tasklet")
+
+
+@flezha.relay("timer_churn")
+def timer_churn_relay(c: flezha.Channels) -> None:
+    c.input("input", codec="text").into(timer_churn).output("echo")
