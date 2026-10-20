@@ -16,7 +16,6 @@ walks through it.
 
 from __future__ import annotations
 
-import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -74,9 +73,7 @@ class LocalRelay:
             # Not `start`, which is the one call that dials a controller.
             core.local_start(spec.factory_id, f"{spec.factory_id}-local")
             deps = DispatchDeps(registry=registry, bridge=core)
-            executor = build_executor(
-                os.environ.get("FLEZHA_PYTHON_EXECUTOR", "thread"), core, deps
-            )
+            executor = build_executor(None, core, deps)
             executor.start()
         except BaseException:
             core.free()

@@ -19,7 +19,6 @@ from __future__ import annotations
 import base64
 import importlib
 import json
-import os
 import sys
 import threading
 from types import TracebackType
@@ -68,7 +67,7 @@ class Runner:
         self._registry = Registry()
         self._core: Core | None = None
         self._executor: Executor | None = None
-        self._executor_kind = os.environ.get("FLEZHA_PYTHON_EXECUTOR", "thread")
+        self._executor_kind: str | None = None
         self._executor_options: dict[str, Any] = {}
         self._started = False
         self._stopped = threading.Event()

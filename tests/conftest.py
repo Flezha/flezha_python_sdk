@@ -1,8 +1,9 @@
 """Shared fixtures: a fake core, and the declarations the tests drive.
 
 The fake core answers the ABI's own vocabulary — ``poll`` gives an activation, a
-timeout or ``"shutting_down"``, ``wait_starvation`` gives the three-way status —
-so a test of the executor tests the executor rather than a mock of it.
+timeout or ``"shutting_down"``, ``pool_supervise`` the governor's decisions a test
+scripts — so a test of the executor tests the executor rather than a mock of it.
+The pool's policy is the core's governor's, tested in the core.
 """
 
 from __future__ import annotations
@@ -87,21 +88,28 @@ class FakeCore:
     """A core that answers the ABI's vocabulary, with no native library.
 
     Every executor test drives this: what it proves is that the host reads
-    ``poll`` and ``wait_starvation`` the way the ABI defines them.
+    ``poll`` and the pool entries the way the ABI defines them.
     """
 
     def __init__(
         self,
         activations: list[Any] | None = None,
         *,
-        starve_after: float | None = None,
+        base: int = 2,
+        retire_ms: int = 30_000,
+        drain_ms: int = 5_000,
     ) -> None:
         self._activations: queue.Queue[Any] = queue.Queue()
         for activation in activations or []:
             self._activations.put(activation)
         self._lock = threading.Lock()
-        self._starve_after = starve_after
-        self._shutting = threading.Event()
+        #: What ``pool_open`` answers; the poll timeout is the core's.
+        self.policy = [base, base * 10, 250, retire_ms, drain_ms]
+        #: The governor's decisions ``pool_supervise`` answers in turn; with none
+        #: left it answers idle, or stop once shut down.
+        self.decisions: queue.Queue[int] = queue.Queue()
+        self.seats_left = 0
+        self.notices: list[tuple[str, str, str]] = []
         self.completed: list[dict[str, Any]] = []
         self.abandoned: list[int] = []
         self.polls = 0
@@ -164,24 +172,22 @@ class FakeCore:
                 self.pollers_inside -= 1
 
     def take_notices(self) -> list[tuple[str, str, str]]:
-        return []
+        with self._lock:
+            taken, self.notices = self.notices, []
+        return taken
 
-    def wait_starvation(self, timeout_ms: int) -> int:
-        """The core's condition, not an unconditional yes.
+    def pool_open(self, default_base: int) -> list[int]:
+        return list(self.policy)
 
-        Starvation is *work queued with no thread inside poll*. A fake that
-        answered `observed` forever would make the supervisor grow, retire and
-        grow again in perpetuity — which is a defect of the fake, and would make
-        a retirement assertion true only inside a window.
-        """
-        if self.shut_down:
-            return 2
-        waited = timeout_ms / 1000 if self._starve_after is None else self._starve_after
-        if self._shutting.wait(timeout=waited):
-            return 2
-        if self._starve_after is None:
-            return 0
-        return 1 if not self._activations.empty() else 0
+    def pool_supervise(self) -> int:
+        try:
+            return self.decisions.get(timeout=0.02)
+        except queue.Empty:
+            return 2 if self.shut_down else 0
+
+    def pool_left(self) -> None:
+        with self._lock:
+            self.seats_left += 1
 
     def complete(self, result: dict[str, Any]) -> None:
         self.dispatch_threads.add(threading.get_ident())
@@ -196,7 +202,6 @@ class FakeCore:
 
     def shutdown(self) -> None:
         self.shut_down = True
-        self._shutting.set()
 
     def watch_stdin_eof(self) -> None:
         self.stdin_watched = True

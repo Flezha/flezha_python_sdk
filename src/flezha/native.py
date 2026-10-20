@@ -84,7 +84,9 @@ class Core:
         "local_run_until_idle",
         "local_stop",
         "poll",
-        "wait_starvation",
+        "pool_open",
+        "pool_supervise",
+        "pool_left",
         "complete",
         "abandon",
         "shutdown",
@@ -205,9 +207,19 @@ class Core:
         """One activation, ``None`` on timeout, or ``"shutting_down"``."""
         return self._call("poll", timeout_ms)
 
-    def wait_starvation(self, timeout_ms: int) -> int:
-        """The ABI's three-way starvation status: 1 observed, 0 timeout, 2 closing."""
-        return self._call("wait_starvation", timeout_ms)
+    def pool_open(self, default_base: int) -> list[int]:
+        """The core's pool over this host's default base: ``[base, ceiling,
+        poll_timeout_ms, retire_ms, drain_ms]``."""
+        return self._call("pool_open", default_base)
+
+    def pool_supervise(self) -> int:
+        """The governor's next decision, at most a second away: 0 idle, 1 spawn a
+        base worker, 2 stop, 3 spawn a grown one."""
+        return self._call("pool_supervise")
+
+    def pool_left(self) -> None:
+        """Give back one worker's seat."""
+        self._call("pool_left")
 
     def complete(self, result: dict[str, Any]) -> None:
         """Answer one activation."""

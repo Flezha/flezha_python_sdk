@@ -7,7 +7,6 @@ lock.
 
 from __future__ import annotations
 
-import os
 import threading
 import time
 from typing import Any
@@ -43,43 +42,38 @@ def _until(predicate: Any, timeout: float = 5.0) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Sizing
+# The pool: the core's governor decides, this host spawns
 # ---------------------------------------------------------------------------
 
 
-def test_the_base_pool_comes_from_the_shared_knob(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FLEZHA_WORKER_POOL_SIZE", "5")
-    assert executor_module.base_size() == 5
-    monkeypatch.setenv("FLEZHA_WORKER_POOL_SIZE", "0")
-    assert executor_module.base_size() == (os.cpu_count() or 1), "the core answers unset"
-    monkeypatch.delenv("FLEZHA_WORKER_POOL_SIZE")
-    assert executor_module.base_size() >= 1
-
-
-def test_the_ceiling_defaults_to_ten_times_the_base_and_never_below_it(
+def test_the_pool_is_sized_by_the_core_over_this_hosts_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    assert executor_module.ceiling_size(4) == 40
-    monkeypatch.setenv("FLEZHA_WORKER_POOL_MAX", "2")
-    # A ceiling under the floor would retire the pool the user asked for.
-    assert executor_module.ceiling_size(4) == 4
-    monkeypatch.setenv("FLEZHA_WORKER_POOL_MAX", "64")
-    assert executor_module.ceiling_size(4) == 64
+    core = native.Core.create()
+    try:
+        monkeypatch.setenv("FLEZHA_WORKER_POOL_SIZE", "5")
+        assert core.pool_open(3)[:2] == [5, 50]
+        monkeypatch.setenv("FLEZHA_WORKER_POOL_SIZE", "0")
+        assert core.pool_open(3)[:2] == [3, 30], "the core answers unset"
+        monkeypatch.setenv("FLEZHA_WORKER_POOL_MAX", "2")
+        # A ceiling under the floor would retire the pool the user asked for.
+        assert core.pool_open(4)[:2] == [4, 4]
+    finally:
+        core.free()
 
 
 def test_a_workload_that_never_starves_runs_on_the_base_pool() -> None:
-    core = FakeCore([work_activation(i, "x", factory="solo") for i in range(20)])
-    pool = ThreadExecutor(core, _deps(core), base=3).start()
+    core = FakeCore([work_activation(i, "x", factory="solo") for i in range(20)], base=3)
+    pool = ThreadExecutor(core, _deps(core)).start()
     try:
         assert _until(lambda: len(core.completed) == 20)
-        # The supervisor never observes starvation, so nothing is grown.
-        assert pool.size <= 4  # three workers plus the supervisor
+        # The governor asked for nothing more, so nothing is grown.
+        assert pool.size == 4  # three workers plus the supervisor
     finally:
         pool.stop()
 
 
-def test_blocked_handlers_buy_threads_and_the_grown_ones_retire() -> None:
-    """The supervisor is what turns a starving core into more servicing."""
+def test_a_grown_seat_serves_and_retires_once_the_work_stops() -> None:
     release = threading.Event()
 
     @flezha.tasklet(name="blocks")
@@ -93,62 +87,67 @@ def test_blocked_handlers_buy_threads_and_the_grown_ones_retire() -> None:
         c.input("in").into(Blocks).output()
 
     core = FakeCore(
-        [work_activation(i, "x", factory="blocking") for i in range(8)],
-        starve_after=0.02,
+        [work_activation(i, "x", factory="blocking") for i in range(8)], base=1, retire_ms=500
     )
-    deps = deps_for(blocking, core)
-
-    pool = ThreadExecutor(core, deps, base=1, ceiling=4).start()
+    pool = ThreadExecutor(core, deps_for(blocking, core)).start()
     try:
-        assert _until(lambda: pool.size >= 4), f"pool stayed at {pool.size}"
+        for _ in range(3):
+            core.decisions.put(executor_module.POOL_SPAWN_GROWN)
+        assert _until(lambda: pool.size == 5), f"pool stayed at {pool.size}"
         release.set()
         assert _until(lambda: len(core.completed) == 8, timeout=10)
-        # Above-base workers retire once the work stops. Retirement needs
-        # IDLE_RETIREMENT_STREAK idle polls — two seconds at the poll timeout —
-        # so the budget is that plus room for a loaded machine, not a guess.
-        assert _until(lambda: pool.size <= 3, timeout=20), f"pool stayed at {pool.size}"
+        # Two timed-out polls of the core's 250 ms are the 500 ms retire time.
+        assert _until(lambda: pool.size == 2), f"pool stayed at {pool.size}"
+        assert core.seats_left == 3, "every retired worker gives its seat back"
     finally:
         release.set()
         pool.stop()
 
 
-def test_the_supervisor_stops_growing_at_the_ceiling() -> None:
-    release = threading.Event()
+def test_a_worker_that_dies_gives_its_seat_back_and_a_base_seat_replaces_it() -> None:
+    class DiesOnce(FakeCore):
+        died = False
 
-    @flezha.tasklet(name="blocks")
-    class Blocks:
-        def run(self, value: str, ctx: flezha.Ctx[None, str]) -> None:
-            release.wait(timeout=5)
-            ctx.emit(value)
+        def poll(self, timeout_ms: int) -> Any:
+            if not DiesOnce.died:
+                DiesOnce.died = True
+                raise RuntimeError("the worker's poll broke")
+            return super().poll(timeout_ms)
 
-    @flezha.relay("capped")
-    def capped(c: flezha.Channels) -> None:
-        c.input("in").into(Blocks).output()
-
-    core = FakeCore(
-        [work_activation(i, "x", factory="capped") for i in range(20)],
-        starve_after=0.01,
-    )
-    deps = deps_for(capped, core)
-
-    pool = ThreadExecutor(core, deps, base=1, ceiling=3).start()
+    core = DiesOnce(base=1, retire_ms=200)
+    pool = ThreadExecutor(core, _deps(core)).start()
     try:
-        # The positive signal first: base plus the grown workers plus the
-        # supervisor. Only after that is "and no further" an observation.
-        assert _until(lambda: pool.size >= 4), f"pool stayed at {pool.size}"
-        assert not _until(lambda: pool.size > 4, timeout=0.1), f"pool grew to {pool.size}"
+        assert _until(lambda: core.seats_left == 1 and pool.size == 1)
+        core.decisions.put(executor_module.POOL_SPAWN_BASE)
+        assert _until(lambda: pool.size == 2), f"pool stayed at {pool.size}"
+        core.offer(work_activation(1, "x", factory="solo"))
+        assert _until(lambda: len(core.completed) == 1), "the replacement does not serve"
+        # A base worker outlives the retire time a grown one leaves after.
+        assert not _until(lambda: pool.size < 2, timeout=0.5)
     finally:
-        release.set()
         pool.stop()
 
 
-def test_a_block_policy_wedge_recovers_on_a_base_pool_of_one() -> None:
+def test_an_idle_runner_writes_the_cores_notices_on_each_supervisor_answer(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    core = FakeCore(base=1)
+    pool = ThreadExecutor(core, _deps(core)).start()
+    try:
+        with caplog.at_level("WARNING", logger="flezha.core"):
+            core.notices.append(("warn", "flz_core::control_unit", "Connection attempt 2 failed"))
+            assert _until(lambda: "Connection attempt 2 failed" in caplog.text, timeout=2)
+    finally:
+        pool.stop()
+
+
+def test_a_grown_seat_rescues_a_block_policy_wedge_on_a_base_pool_of_one() -> None:
     """The case the supervisor exists for.
 
     A completion parks behind a full consumer mailbox; the only worker is
     inside it and is therefore not entering ``poll``, which is what the core
-    reports as starvation. The worker the supervisor starts is what drains the
-    consumer and releases the producer.
+    reports as starvation. The worker the governor's grown seat starts is what
+    drains the consumer and releases the producer.
     """
     drained = threading.Event()
     core = FakeCore(
@@ -156,7 +155,7 @@ def test_a_block_policy_wedge_recovers_on_a_base_pool_of_one() -> None:
             work_activation(1, "producer", factory="solo"),
             work_activation(2, "consumer", factory="solo"),
         ],
-        starve_after=0.02,
+        base=1,
     )
     # The first completion parks until a second worker gets far enough to
     # complete the second activation — which is exactly the wedge.
@@ -171,9 +170,10 @@ def test_a_block_policy_wedge_recovers_on_a_base_pool_of_one() -> None:
     watcher = threading.Thread(target=release_when_a_second_thread_arrives, daemon=True)
     watcher.start()
 
-    pool = ThreadExecutor(core, _deps(core), base=1, ceiling=4).start()
+    pool = ThreadExecutor(core, _deps(core)).start()
     try:
-        assert _until(lambda: drained.is_set(), timeout=10), "the supervisor never bought a thread"
+        core.decisions.put(executor_module.POOL_SPAWN_GROWN)
+        assert _until(lambda: drained.is_set(), timeout=10), "the grown seat bought no thread"
         assert _until(lambda: len(core.completed) == 2, timeout=10)
     finally:
         gate.set()
@@ -201,7 +201,7 @@ def test_the_supervisor_cannot_be_configured_away() -> None:
 def test_the_main_thread_is_never_a_dispatch_thread() -> None:
     """CPython runs signal handlers only on the main thread, between bytecodes."""
     core = FakeCore([work_activation(i, "x", factory="solo") for i in range(5)])
-    pool = ThreadExecutor(core, _deps(core), base=2).start()
+    pool = ThreadExecutor(core, _deps(core)).start()
     try:
         assert _until(lambda: len(core.completed) == 5)
         assert threading.main_thread().ident not in core.dispatch_threads
@@ -218,7 +218,7 @@ def test_ordering_is_identical_under_either_executor(kind: str) -> None:
     """
     payloads = [f"v{i}" for i in range(12)]
     core = FakeCore()
-    pool = build(kind, core, _deps(core), base=2).start()
+    pool = build(kind, core, _deps(core)).start()
     try:
         for index, payload in enumerate(payloads):
             core.offer(work_activation(index, payload, factory="solo"))
@@ -231,7 +231,7 @@ def test_ordering_is_identical_under_either_executor(kind: str) -> None:
 
 def test_the_asyncio_executor_polls_on_a_real_thread_and_completes_on_the_loop() -> None:
     core = FakeCore([work_activation(i, "x", factory="solo") for i in range(4)])
-    pool = AsyncioExecutor(core, _deps(core), base=2).start()
+    pool = AsyncioExecutor(core, _deps(core)).start()
     try:
         assert _until(lambda: len(core.completed) == 4)
         loop_threads = {
@@ -262,7 +262,7 @@ def test_an_async_handler_is_driven_under_either_executor(kind: str) -> None:
     core = FakeCore([work_activation(i, f"v{i}", factory="async_op") for i in range(4)])
     deps = deps_for(async_op, core)
 
-    pool = build(kind, core, deps, base=2).start()
+    pool = build(kind, core, deps).start()
     try:
         assert _until(lambda: len(core.completed) == 4)
         assert sorted(_payload_of(r) for r in core.completed) == ["V0", "V1", "V2", "V3"]
@@ -289,19 +289,20 @@ def test_a_drain_has_a_time_limit_and_says_what_it_abandoned(
     def wedge(c: flezha.Channels) -> None:
         c.input("in").into(Wedged).output()
 
-    core = FakeCore([work_activation(1, "x", factory="wedge")])
+    core = FakeCore([work_activation(1, "x", factory="wedge")], base=1, drain_ms=300)
     deps = deps_for(wedge, core)
 
-    pool = build(kind, core, deps, base=1).start()
+    pool = build(kind, core, deps).start()
     try:
         assert entered.wait(timeout=5), "the handler never started"
         with caplog.at_level("WARNING", logger="flezha.executor"):
             started = time.monotonic()
             undrained = pool.stop()
             elapsed = time.monotonic() - started
-        assert elapsed < executor_module.DRAIN_TIMEOUT_S + 3
-        if undrained:
-            assert "still running after" in caplog.text
+        # The drain bound is the core's, here shortened through the policy.
+        assert elapsed < 0.3 + 3
+        assert undrained >= 1
+        assert "still running after the 0.3s drain" in caplog.text
     finally:
         never.set()
 
@@ -309,7 +310,7 @@ def test_a_drain_has_a_time_limit_and_says_what_it_abandoned(
 def test_a_shutting_down_core_ends_every_worker() -> None:
     core = FakeCore()
     core.shut_down = True
-    pool = ThreadExecutor(core, _deps(core), base=2).start()
+    pool = ThreadExecutor(core, _deps(core)).start()
     try:
         assert _until(lambda: pool.size <= 1, timeout=5)
     finally:
@@ -326,8 +327,8 @@ def test_a_blocked_poll_does_not_freeze_the_interpreter() -> None:
     _assert_releases_the_gil(lambda core: core.poll(400))
 
 
-def test_a_blocked_starvation_wait_does_not_freeze_the_interpreter() -> None:
-    _assert_releases_the_gil(lambda core: core.wait_starvation(400))
+def test_a_blocked_pool_supervisor_does_not_freeze_the_interpreter() -> None:
+    _assert_releases_the_gil(lambda core: (core.pool_open(1), core.pool_supervise()))
 
 
 def _assert_releases_the_gil(blocking_call: Any) -> None:

@@ -178,7 +178,7 @@ def test_the_context_is_callable_from_a_thread_that_did_not_create_it() -> None:
     def poll_from_another_thread() -> None:
         try:
             answers.append(core.poll(50))
-            answers.append(core.wait_starvation(50))
+            answers.append(core.pool_supervise())
         except BaseException as error:  # noqa: BLE001 - the panic is the defect
             errors.append(error)
 
@@ -187,7 +187,8 @@ def test_the_context_is_callable_from_a_thread_that_did_not_create_it() -> None:
     worker.join(timeout=10)
     try:
         assert errors == [], errors
-        assert answers == [None, 0]
+        # No pool is open on this context, so its supervisor is told to stop.
+        assert answers == [None, 2]
     finally:
         core.free()
 

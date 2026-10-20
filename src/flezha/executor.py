@@ -7,12 +7,14 @@ its dispatch has returned, so ordering holds for any executor that does not
 complete early. That invariant is this seam's entire contract: an executor can
 affect throughput and latency; it cannot affect correctness.
 
-Three things are shared rather than written once per executor, because they are
-properties of the host and not of either member: the threads and their
-bounded drain (:class:`_Pool`), the fetch-and-run worker (:func:`_fetch_and_run`), and
-the starvation supervisor (:class:`_Supervisor`) — whose answer to an
-observation is one more fetch-and-run **thread** under either executor, because
-a thread is what a parked completion needs and a stalled loop cannot supply.
+How many threads is the core's pool governor's to say: this host opens the
+pool over its processor count and answers its supervisor's decisions. Three
+things are shared rather than written once per executor, because they are
+properties of the host and not of either member: the threads and their bounded
+drain (:class:`_Pool`), the fetch-and-run worker (:func:`_fetch_and_run`), and
+the supervisor (:meth:`_Host._supervise`) — whose answer to a grown seat is one
+more fetch-and-run **thread** under either executor, because a thread is what a
+parked completion needs and a stalled loop cannot supply.
 """
 
 from __future__ import annotations
@@ -27,59 +29,27 @@ from typing import Any, Protocol
 from .dispatch import DispatchDeps, close_thread_loop, dispatch, dispatch_now
 from .errors import FlezhaError
 from .logger import log_notices, logger
-from .native import load_extension
 
 __all__ = [
     "Executor",
     "ThreadExecutor",
     "AsyncioExecutor",
-    "POLL_TIMEOUT_MS",
-    "base_size",
-    "ceiling_size",
     "build",
     "EXECUTORS",
 ]
 
 _log = logger("executor")
 
-#: How long a worker parks in one ``poll``.
-#:
-#: ``flz_core_shutdown`` wakes *every* poller, so the ABI has no per-thread wake
-#: and none is in scope to add. This value is therefore the documented upper
-#: bound on how quickly ``KeyboardInterrupt``, a termination signal and runner
-#: close are observed: a stated bound, not an accident. It is the Java and Ruby
-#: hosts' value, for the same reason.
-POLL_TIMEOUT_MS = 250
-
-#: How long the supervisor parks in one starvation wait. Shorter than the poll
-#: timeout would only spin; longer would delay the first grown worker.
-STARVATION_WAIT_MS = 250
-
-#: How long a drain has before the runner stops waiting for it.
-#:
-#: A handler that never returns holds its worker forever — the ``wedge`` fixture
-#: is exactly that, and so is any real handler that blocks on something that
-#: never answers. A drain that joined it unconditionally would never finish, and
-#: a runner stopped by closing its pipes would leak a process per wedge rather
-#: than exiting. So what is in flight gets this long, and then the runner goes
-#: away regardless: the alternative is not "no work is lost", it is "the runner
-#: never leaves".
-DRAIN_TIMEOUT_S = 5.0
-
-#: Consecutive idle polls after which an above-base worker retires. At the poll
-#: timeout above this is two seconds of no work, which is long enough that a
-#: burst does not churn the pool and short enough that a spike does not leave
-#: threads parked for the life of the process.
-IDLE_RETIREMENT_STREAK = 8
-
 #: How far the asyncio executor's fetchers may run ahead of its loop. The core's
 #: in-flight cap bounds the total either way; this only stops one fetcher
 #: monopolising the hand-off.
 QUEUE_DEPTH = 64
 
-#: The ABI's three answers to ``wait_starvation``.
-STARVATION_OBSERVED = 1
-STARVATION_SHUTTING_DOWN = 2
+#: What ``pool_supervise`` answers: spawn a base worker, stop, spawn a grown one;
+#: anything else is nothing to do this wait.
+POOL_SPAWN_BASE = 1
+POOL_STOP = 2
+POOL_SPAWN_GROWN = 3
 
 #: What ``poll`` answers when every poller has been released.
 SHUTTING_DOWN = "shutting_down"
@@ -103,40 +73,12 @@ class Executor(Protocol):
     def stop(self) -> int: ...
 
 
-def base_size() -> int:
-    """The base pool size: the machine's processor count unless told otherwise.
-
-    The same knob the Rust host reads, deliberately — this host is the Rust
-    host's model, and a second vocabulary for the same decision is what makes a
-    fleet hard to reason about.
-    """
-    return _positive("FLEZHA_WORKER_POOL_SIZE", os.cpu_count() or 1)
-
-
-def ceiling_size(base: int) -> int:
-    """The ceiling: ten times the base unless told otherwise, never below it.
-
-    A ceiling under the floor would retire the pool the runner was told to keep.
-    """
-    return max(_positive("FLEZHA_WORKER_POOL_MAX", base * 10), base)
-
-
-def _positive(name: str, fallback: int) -> int:
-    """A count from the environment by the core's knob rule; ``fallback`` for anything else."""
-    parsed = load_extension().knob("positive", os.environ.get(name, ""))
-    return fallback if parsed is None else parsed
-
-
-def _deadline() -> float:
-    return time.monotonic() + DRAIN_TIMEOUT_S
-
-
 def _remaining(deadline: float) -> float:
     """How long is left of a drain, never negative."""
     return max(deadline - time.monotonic(), 0.0)
 
 
-def _report_undrained(count: int) -> None:
+def _report_undrained(count: int, drain_s: float) -> None:
     """Say what the drain did not finish.
 
     Silence here is the failure mode the bound exists to avoid reintroducing: a
@@ -146,16 +88,17 @@ def _report_undrained(count: int) -> None:
     if not count:
         return
     _log.warning(
-        "%d activation(s) were still running after the %.0fs drain; the runner is exiting "
+        "%d activation(s) were still running after the %gs drain; the runner is exiting "
         "anyway. The core re-hands unanswered work on the next bind — find the handler that "
         "does not return.",
         count,
-        DRAIN_TIMEOUT_S,
+        drain_s,
     )
 
 
 def fetch(
     core: Any,
+    poll_ms: int,
     stopping: Callable[[], bool],
     on_activation: Callable[[Any], Any],
     on_core_shutdown: Callable[[], None] = lambda: None,
@@ -174,7 +117,7 @@ def fetch(
     to signal.
     """
     while not stopping():
-        activation = core.poll(POLL_TIMEOUT_MS)
+        activation = core.poll(poll_ms)
         if activation == SHUTTING_DOWN:
             on_core_shutdown()
             return
@@ -187,38 +130,38 @@ def _fetch_and_run(
     deps: DispatchDeps,
     stopping: Callable[[], bool],
     *,
-    retire_when_idle: bool,
-    on_exit: Callable[[], None] = lambda: None,
+    poll_ms: int,
+    retire_ms: int,
     on_core_shutdown: Callable[[], None] = lambda: None,
 ) -> None:
     """One worker: ``poll -> dispatch -> complete``, on this thread.
 
-    The body of both the thread executor's base pool and the worker either
-    executor's supervisor starts on a starvation observation, because those are
-    the same worker — what differs is only whether it retires when the work
-    stops.
+    The body of both the thread executor's base pool and the grown worker the
+    supervisor starts under either executor, because those are the same
+    worker — what differs is only whether it retires after ``retire_ms`` of
+    timed-out polls (a base worker passes 0 and never does). Its seat goes back
+    to the governor however it ends.
     """
     idle = 0
 
     def served(activation: Any) -> Any:
         nonlocal idle
         if activation is None:
-            idle += 1
-            return "stop" if retire_when_idle and idle >= IDLE_RETIREMENT_STREAK else None
+            idle += poll_ms
+            return "stop" if retire_ms and idle >= retire_ms else None
         idle = 0
         dispatch_now(activation, core, deps)
         return None
 
     try:
-        fetch(core, stopping, served, on_core_shutdown)
+        fetch(core, poll_ms, stopping, served, on_core_shutdown)
     except Exception as error:  # noqa: BLE001 - a silent death is the defect
-        # A worker that dies silently is a pool that shrinks with no report; the
-        # supervisor grows it back only if the core starves, which it will not
-        # while the remaining workers keep up.
+        # A worker that dies silently is a pool that shrinks with no report;
+        # the governor replaces it, but only this line says why it left.
         _log.error("a worker thread ended on %s", error, exc_info=error)
     finally:
         close_thread_loop()
-        on_exit()
+        core.pool_left()
 
 
 class _Pool:
@@ -256,102 +199,41 @@ class _Pool:
         return undrained
 
 
-class _Supervisor:
-    """Parked in the core's starvation wait; one worker per observation.
-
-    Not an optimisation and not optional. A completion can block: an emit onto a
-    full ``DropNothing`` consumer mailbox parks the completing thread, and
-    ``routing::install_inline_serve`` — the hook that rescues the in-process
-    Rust host by draining the consumer inline — takes a Rust function pointer
-    and is not reachable over the C ABI. A host whose only thread is parked in a
-    completion is therefore not entering ``poll``, which is exactly what the
-    core reports as starvation, and the worker started here is what drains the
-    consumer and releases the producer.
-
-    Both executors run one, and under both the worker it starts is a real
-    fetch-and-run thread: a stalled event loop cannot rescue itself, so growing
-    the loop's concurrency would rescue nothing.
-    """
-
-    def __init__(
-        self,
-        core: Any,
-        *,
-        base: int,
-        ceiling: int,
-        grow: Callable[[], None],
-    ) -> None:
-        self._core = core
-        self._base = base
-        self._ceiling = ceiling
-        self._grow = grow
-        self._grown = 0
-        self._lock = threading.Lock()
-
-    @property
-    def grown(self) -> int:
-        with self._lock:
-            return self._grown
-
-    def worker_retired(self) -> None:
-        with self._lock:
-            self._grown -= 1
-
-    def run(self, stopping: Callable[[], bool]) -> None:
-        at_ceiling_logged = False
-        try:
-            while not stopping():
-                log_notices(self._core.take_notices())
-                status = self._core.wait_starvation(STARVATION_WAIT_MS)
-                if status == STARVATION_SHUTTING_DOWN:
-                    return
-                if status != STARVATION_OBSERVED:
-                    continue
-                with self._lock:
-                    room = self._base + self._grown < self._ceiling
-                    if room:
-                        self._grown += 1
-                if room:
-                    self._grow()
-                    at_ceiling_logged = False
-                elif not at_ceiling_logged:
-                    _log.warning(
-                        "the core is starving and the worker pool is at its ceiling of %d; "
-                        "raise FLEZHA_WORKER_POOL_MAX, or find what is holding the handlers",
-                        self._ceiling,
-                    )
-                    at_ceiling_logged = True
-        except Exception as error:  # noqa: BLE001 - the pool would stop growing
-            _log.error("the starvation supervisor ended on %s", error, exc_info=error)
-
-
 class _Host:
-    """What both executors are: a pool, a supervisor and a bounded drain."""
+    """What both executors are: a pool the core's governor sizes, its
+    supervisor, and a bounded drain.
+
+    The supervisor is not an optimisation and not optional. A completion can
+    block: an emit onto a full ``DropNothing`` consumer mailbox parks the
+    completing thread, and ``routing::install_inline_serve`` — the hook that
+    rescues the in-process Rust host by draining the consumer inline — takes a
+    Rust function pointer and is not reachable over the C ABI. A host whose
+    only thread is parked in a completion is therefore not entering ``poll``,
+    which is exactly what the core reports as starvation, and the worker the
+    governor then asks for is what drains the consumer and releases the
+    producer.
+    """
 
     def __init__(
         self,
         core: Any,
         deps: DispatchDeps,
         *,
-        base: int | None = None,
-        ceiling: int | None = None,
         on_core_shutdown: Callable[[], None] = lambda: None,
     ) -> None:
         self._core = core
         self._deps = deps
-        # Resolved here rather than in each member: the defaults are a property
-        # of the host, and both members were spelling the same two lines.
-        self.base = base or base_size()
-        self.ceiling = ceiling or ceiling_size(self.base)
+        self.base, self.ceiling, self._poll_ms, self._retire_ms, drain_ms = core.pool_open(
+            os.cpu_count() or 1
+        )
+        self._drain_s = drain_ms / 1000
         # What a controller-initiated close reaches. Shutdown is observed three
         # ways — a signal, closed standard input, and the core's own stop — and
         # this is the third: the runner's own wait must end on it too.
         self._on_core_shutdown = on_core_shutdown
         self._pool = _Pool()
         self._stopping = False
-        self._supervisor = _Supervisor(
-            core, base=self.base, ceiling=self.ceiling, grow=self._spawn_rescue_worker
-        )
+        self._spawned = 0
 
     @property
     def name(self) -> str:
@@ -374,27 +256,50 @@ class _Host:
         """
         return f"{self.name} executor, {self.size} threads, base {self.base} ceiling {self.ceiling}"
 
-    def _start_supervisor(self) -> None:
-        self._pool.spawn("flezha-starvation", lambda: self._supervisor.run(self._is_stopping))
+    def _start_pool(self) -> None:
+        """The base workers in the seats the governor reserved, then its supervisor."""
+        for _ in range(self.base):
+            self._spawn(grown=False)
+        self._pool.spawn("flezha-supervisor", self._supervise)
+
+    def _supervise(self) -> None:
+        """One governor answer per wait, at most a second apart, and the core's
+        notices written on each, so an idle runner's notices still reach its log."""
+        try:
+            while not self._stopping:
+                answer = self._core.pool_supervise()
+                log_notices(self._core.take_notices())
+                if answer == POOL_STOP or self._stopping:
+                    return
+                if answer in (POOL_SPAWN_BASE, POOL_SPAWN_GROWN):
+                    self._spawn(grown=answer == POOL_SPAWN_GROWN)
+        except Exception as error:  # noqa: BLE001 - the pool would stop growing
+            _log.error("the pool supervisor ended on %s", error, exc_info=error)
+
+    def _spawn(self, *, grown: bool) -> None:
+        """One worker into a seat the governor reserved; a failed start gives it back."""
+        self._spawned += 1
+        try:
+            self._spawn_worker(f"flezha-worker-{self._spawned}", grown=grown)
+        except RuntimeError as error:
+            self._core.pool_left()
+            _log.warning("could not start a worker thread: %s", error)
 
     def _is_stopping(self) -> bool:
         return self._stopping
 
-    def _spawn_worker(self, name: str, *, retire_when_idle: bool) -> None:
+    def _spawn_worker(self, name: str, *, grown: bool) -> None:
         self._pool.spawn(
             name,
             lambda: _fetch_and_run(
                 self._core,
                 self._deps,
                 self._is_stopping,
-                retire_when_idle=retire_when_idle,
-                on_exit=self._supervisor.worker_retired if retire_when_idle else (lambda: None),
+                poll_ms=self._poll_ms,
+                retire_ms=self._retire_ms if grown else 0,
                 on_core_shutdown=self._on_core_shutdown,
             ),
         )
-
-    def _spawn_rescue_worker(self) -> None:
-        self._spawn_worker(f"flezha-rescue-{self._supervisor.grown}", retire_when_idle=True)
 
     def stop_fetching(self) -> None:
         """Stop fetching without the core's word.
@@ -414,25 +319,25 @@ class _Host:
         shutting down, which the core reports only once the shutdown sequence
         has shipped every Cell's state through these same workers. A worker
         inside a handler finishes it, completes it, and only then observes it.
-        Bounded by :data:`DRAIN_TIMEOUT_S` — a handler that never returns must
-        not keep the runner alive forever — and the flag is raised after the
-        join so a worker spawned late still leaves.
+        Bounded by the governor's drain bound — a handler that never returns
+        must not keep the runner alive forever — and the flag is raised after
+        the join so a worker spawned late still leaves.
         """
-        undrained = self._pool.join(_deadline())
+        undrained = self._pool.join(time.monotonic() + self._drain_s)
         self._stopping = True
-        _report_undrained(undrained)
+        _report_undrained(undrained, self._drain_s)
         log_notices(self._core.take_notices())
         return undrained
 
 
 class ThreadExecutor(_Host):
     """The default: a base pool of threads each looping ``poll -> dispatch ->
-    complete`` on itself, plus the supervisor that grows it.
+    complete`` on itself, plus the governor's supervisor that grows it.
 
     This is the Rust host's model rather than Java's hand-off, and the reason is
     the reason behind both shipped hosts: Java hands off because a parked
     virtual thread costs a stack and nothing else — which is also exactly why
-    Java never starves and never calls ``wait_starvation``. A CPython thread is
+    Java's fetchers never wait on user code. A CPython thread is
     a real OS thread with a real stack, so hand-off would buy nothing and cost a
     thread per activation up to the core's in-flight cap.
 
@@ -445,9 +350,7 @@ class ThreadExecutor(_Host):
         return "thread"
 
     def start(self) -> ThreadExecutor:
-        for index in range(self.base):
-            self._spawn_worker(f"flezha-worker-{index}", retire_when_idle=False)
-        self._start_supervisor()
+        self._start_pool()
         return self
 
 
@@ -473,9 +376,9 @@ class AsyncioExecutor(_Host):
         deps: DispatchDeps,
         *,
         loop_factory: Callable[[], asyncio.AbstractEventLoop] | None = None,
-        **sizing: Any,
+        **host: Any,
     ) -> None:
-        super().__init__(core, deps, **sizing)
+        super().__init__(core, deps, **host)
         self._loop_factory = loop_factory or _default_loop_factory
         self._loop: asyncio.AbstractEventLoop | None = None
         self._ready = threading.Event()
@@ -492,12 +395,18 @@ class AsyncioExecutor(_Host):
                 "runtime.executor_unavailable",
                 {"executor": "asyncio", "reason": "its event loop did not start within 10 s"},
             )
-        for index in range(self.base):
-            self._pool.spawn(f"flezha-fetcher-{index}", self._run_fetcher)
-        self._start_supervisor()
+        self._start_pool()
         return self
 
     # -- internals ---------------------------------------------------------
+
+    def _spawn_worker(self, name: str, *, grown: bool) -> None:
+        """A fetcher, or for a grown seat a fetch-and-run thread: a stalled loop
+        cannot rescue itself, so growing the loop's concurrency would rescue nothing."""
+        if grown:
+            super()._spawn_worker(name, grown=True)
+        else:
+            self._pool.spawn(name, self._run_fetcher)
 
     def _run_loop(self) -> None:
         loop = self._loop_factory()
@@ -519,10 +428,10 @@ class AsyncioExecutor(_Host):
         pool's join does — and is time-limited the same way.
         """
         while not self._stopping:
-            await asyncio.sleep(POLL_TIMEOUT_MS / 1000)
+            await asyncio.sleep(self._poll_ms / 1000)
         pending = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
         if pending:
-            await asyncio.wait(pending, timeout=DRAIN_TIMEOUT_S)
+            await asyncio.wait(pending, timeout=self._drain_s)
 
     def _run_fetcher(self) -> None:
         def served(activation: Any) -> Any:
@@ -535,9 +444,11 @@ class AsyncioExecutor(_Host):
             return None
 
         try:
-            fetch(self._core, self._is_stopping, served, self._on_core_shutdown)
+            fetch(self._core, self._poll_ms, self._is_stopping, served, self._on_core_shutdown)
         except Exception as error:  # noqa: BLE001
             _log.error("a fetcher thread ended on %s", error, exc_info=error)
+        finally:
+            self._core.pool_left()
 
     async def _dispatch(self, activation: Any) -> None:
         try:
@@ -561,13 +472,15 @@ EXECUTORS: dict[str, Callable[..., Any]] = {
 }
 
 
-def build(kind: str, core: Any, deps: DispatchDeps, **options: Any) -> Executor:
-    """The executor named by ``kind``, or a refusal listing the seam's members.
+def build(kind: str | None, core: Any, deps: DispatchDeps, **options: Any) -> Executor:
+    """The executor named by ``kind``, else by ``FLEZHA_PYTHON_EXECUTOR`` (``thread``
+    by default), or a refusal listing the seam's members.
 
-    Every member runs the starvation supervisor: there is no configuration that
+    Every member runs the governor's supervisor: there is no configuration that
     omits it, because a host whose threads are all parked in a completion has no
     other way back.
     """
+    kind = kind or os.environ.get("FLEZHA_PYTHON_EXECUTOR", "thread")
     factory = EXECUTORS.get(kind)
     if factory is None:
         raise FlezhaError(
