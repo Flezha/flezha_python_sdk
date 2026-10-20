@@ -1,18 +1,16 @@
-"""Cell identity bytes, and the replay-stable identifier derived from them.
+"""The replay-stable identifier of a cell.
 
-Both algorithms are fixed by the SDK contract rather than by a library, so
-every SDK derives the same value from the same cell: the identity is
-length-prefixed ``instance | tasklet | key``, and the identifier is FNV-1a
-over ``identity | change seq | per-invocation ordinal``.
+The algorithm is fixed by the SDK contract rather than by a library, so every
+SDK derives the same value from the same cell: FNV-1a over ``identity | change
+seq | per-invocation ordinal``, where the identity is the bytes the core hands
+with the cell's first activation.
 """
 
 from __future__ import annotations
 
 import struct
 
-from .errors import FlezhaError
-
-__all__ = ["cell_identity", "stable_id"]
+__all__ = ["stable_id"]
 
 _FNV128_OFFSET_BASIS = 0x6C62272E07BB014262B821756295C58D
 _FNV128_PRIME = 0x0000000001000000000000000000013B
@@ -25,34 +23,6 @@ def _fnv1a128(seed: int, data: bytes) -> int:
         value = (value ^ byte) & _MASK128
         value = (value * _FNV128_PRIME) & _MASK128
     return value
-
-
-def cell_identity(instance_id: str, tasklet_name: str, cell_key: str | None) -> bytes:
-    """``[len instance][instance][len tasklet][tasklet][u16 len key][key]``.
-
-    Big-endian lengths, the same layout every SDK writes, so an identifier
-    derived here matches one derived there for the same cell.
-    """
-    instance = instance_id.encode()
-    tasklet = tasklet_name.encode()
-    key = (cell_key or "").encode()
-    for part, value, limit in (
-        ("relay id", instance_id, 255),
-        ("tasklet name", tasklet_name, 255),
-        ("cell key", cell_key or "", 0xFFFF),
-    ):
-        if len(value.encode()) > limit:
-            raise FlezhaError(
-                "runtime.identity_too_long", {"part": part, "value": value, "limit": limit}
-            )
-    return (
-        struct.pack("B", len(instance))
-        + instance
-        + struct.pack("B", len(tasklet))
-        + tasklet
-        + struct.pack(">H", len(key))
-        + key
-    )
 
 
 def stable_id(identity: bytes, change_seq: int, ordinal: int) -> str:

@@ -19,11 +19,12 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 from . import codec as _codec
 from .builder import DROPPED, ChannelSpec, ClassSpec, ConsumerEdge, TaskNode, apply_transforms
 from .errors import FlezhaError, NonRetryableError
-from .identity import cell_identity, stable_id
+from .identity import stable_id
 from .native import load_extension
 
 if TYPE_CHECKING:
     from .codec import ValueCodec
+    from .dispatch import Cell
     from .native import Core
 
 __all__ = [
@@ -115,14 +116,13 @@ class Ctx(Generic[S, O_contra]):
         "_spec",
         "_node",
         "_outgoing",
-        "_relay",
+        "_cell",
         "_change_seq",
         "_now",
         "_bridge",
         "_token",
         "_item",
         "_offset",
-        "_identity",
         "_ordinal",
         "_compensating",
         "changes",
@@ -141,7 +141,7 @@ class Ctx(Generic[S, O_contra]):
         spec: ClassSpec,
         node: TaskNode,
         outgoing: list[ChannelSpec],
-        relay: str,
+        cell: Cell,
         cell_key: str | None,
         change_seq: int,
         now: int,
@@ -156,7 +156,7 @@ class Ctx(Generic[S, O_contra]):
         self._spec = spec
         self._node = node
         self._outgoing = outgoing
-        self._relay = relay
+        self._cell = cell
         self._change_seq = change_seq
         self._now = now
         self._bridge = bridge
@@ -168,7 +168,6 @@ class Ctx(Generic[S, O_contra]):
         # carries it so a crash re-run of the same input resolves to the worker
         # the first run spawned.
         self._offset = offset
-        self._identity: bytes | None = None
         self._ordinal = 0
         self._compensating = compensating
         self.cell_key = cell_key
@@ -191,11 +190,7 @@ class Ctx(Generic[S, O_contra]):
 
     def stable_id(self) -> str:
         """A replay-stable identifier, distinct per call within the invocation."""
-        if self._identity is None:
-            # Lazily, because most invocations never ask and the identity is
-            # the one part of the derivation that costs an allocation.
-            self._identity = cell_identity(self._relay, self._node.name, self.cell_key)
-        answer = stable_id(self._identity, self._change_seq, self._ordinal)
+        answer = stable_id(self._cell.identity, self._change_seq, self._ordinal)
         self._ordinal += 1
         return answer
 

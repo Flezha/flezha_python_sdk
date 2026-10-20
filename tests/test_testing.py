@@ -12,7 +12,7 @@ import flezha
 from conftest import Bumped, Counter, compensating, count_up, echo
 from flezha.builder import apply_transforms
 from flezha.cell_state import fold_restore
-from flezha.identity import cell_identity
+from flezha.identity import stable_id
 from flezha.testing import ReplayMismatch, TaskletTestHarness, replay_equals
 
 
@@ -258,14 +258,10 @@ def test_a_runtime_misuse_raises_the_one_error_with_its_code(
     assert (caught.value.code, caught.value.details) == (code, details)
 
 
-def test_an_identity_part_over_its_length_is_refused_naming_it() -> None:
-    with pytest.raises(flezha.FlezhaError) as caught:
-        cell_identity("op", "t" * 256, None)
-    assert (caught.value.code, caught.value.details["part"], caught.value.details["limit"]) == (
-        "runtime.identity_too_long",
-        "tasklet name",
-        255,
-    )
+def test_stable_id_matches_the_cross_language_vector() -> None:
+    assert stable_id(b"instance/op/key", 42, 0) == "bbf81fd4955afd1724203700a240e822"
+    assert stable_id(b"instance/op/key", 42, 1) == "bbf81fd4965afd1724203700a240e95d"
+    assert stable_id(b"", 0, 0) == "15915375576d2f389a938dc3a9940c9d"
 
 
 @pytest.mark.parametrize(

@@ -68,6 +68,10 @@ class Cell:
         return self.node.name
 
     @property
+    def identity(self) -> bytes:
+        return self.registered.identities[self.address]
+
+    @property
     def state(self) -> Any:
         """The live state, created from the declaration on first touch."""
         return self.registered.state_of(self)
@@ -80,7 +84,7 @@ class Cell:
 class RegisteredClass:
     """A declared class, with the lookups dispatch needs, and its live cells."""
 
-    __slots__ = ("spec", "outgoing", "_cells", "_lock")
+    __slots__ = ("spec", "outgoing", "_cells", "identities", "_lock")
 
     def __init__(self, spec: ClassSpec) -> None:
         self.spec = spec
@@ -92,6 +96,8 @@ class RegisteredClass:
         # factory on this runner, such as each steps instance, and each has
         # cells of its own under the same tasklet and key.
         self._cells: dict[tuple[str, int, str | None], Any] = {}
+        # The core hands a cell's identity bytes once, until the cell leaves.
+        self.identities: dict[tuple[str, int, str | None], bytes] = {}
         # Cells of one class are touched from every worker thread, and the
         # core's per-cell exclusivity does not extend to this dict: two
         # different cells of the same class run concurrently by design.
@@ -108,14 +114,19 @@ class RegisteredClass:
         with self._lock:
             self._cells[cell.address] = state
 
+    def keep_identity(self, cell: Cell, identity: bytes) -> None:
+        with self._lock:
+            self.identities[cell.address] = identity
+
     def forget(self, cell: Cell, whole_relay: bool) -> None:
         """Drop a cell that left this runner, or every cell of its relay."""
         with self._lock:
-            if whole_relay:
-                for address in [a for a in self._cells if a[0] == cell.relay]:
-                    del self._cells[address]
-            else:
-                self._cells.pop(cell.address, None)
+            for table in (self._cells, self.identities):
+                if whole_relay:
+                    for address in [a for a in table if a[0] == cell.relay]:
+                        del table[address]
+                else:
+                    table.pop(cell.address, None)
 
     def cell(self, node: TaskNode, relay: str, key: str | None) -> Cell:
         """The handle every activation kind operates through."""
@@ -315,7 +326,7 @@ async def invoke(
         spec=cell.registered.spec,
         node=cell.node,
         outgoing=cell.registered.outgoing[cell.node.index],
-        relay=cell.relay,
+        cell=cell,
         cell_key=cell.key,
         change_seq=activation.get("change_seq", 0),
         now=now,
@@ -362,6 +373,8 @@ async def answer(activation: dict[str, Any], deps: DispatchDeps) -> dict[str, An
         cell = registered.cell(
             tasklets[index], activation.get("relay", ""), activation.get("cell_key")
         )
+        if (identity := activation.get("cell_identity")) is not None:
+            registered.keep_identity(cell, identity)
         return await _answer_kind(cell, activation, registered, deps)
     except Exception as error:  # noqa: BLE001 - every failure becomes a result
         return failed(token, error_message(error), non_retryable=is_non_retryable(error))

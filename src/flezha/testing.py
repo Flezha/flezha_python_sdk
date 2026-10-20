@@ -127,7 +127,9 @@ class TaskletTestHarness(Generic[S]):
         # The dispatcher's own cell store, so the state this harness reports
         # is the state a runner would hold.
         self._registered = RegisteredClass(self._spec)
+        # No core runs here, so the harness names the cell's identity itself.
         self._cell = self._registered.cell(self._node, relay, cell_key)
+        self._registered.keep_identity(self._cell, f"{relay}/{task.name}/{cell_key}".encode())
         self._deps = DispatchDeps(registry=None, bridge=self)
         self.log: list[bytes] = []
         # Pending timers by (kind, scheduled_at), as the core keeps them.
