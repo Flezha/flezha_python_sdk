@@ -465,17 +465,14 @@ class Ctx(Generic[S, O_contra]):
         key: str | None,
         metadata: Mapping[str, Any] | Iterable[tuple[str, Any]] | None,
     ) -> None:
-        # In steps a value rides the edge path to its first consumer, and an
-        # inter-tasklet terminal's value to the core as the pass's handoff (a
-        # chained loop's carry); a plugin-bound terminal releases nothing there.
+        # In steps a value rides the edge path to its first consumer, and a
+        # terminal the core derived inter-tasklet hands it to the core as the
+        # pass's handoff (a chained loop's carry); any other releases nothing.
         if self._spec.runs_in_steps:
             if channel.consumers:
                 consumer = channel.consumers[0].tasklet
-            elif channel.kind == "inter_task" and channel.sink is None:
-                # The core reads no consumer for a terminal's handoff.
-                consumer = channel.producer
             else:
-                consumer = None
+                consumer = channel.producer if channel.derived_kind == "inter_task" else None
             if consumer is not None:
                 self.outputs.append(self._steps_output(channel, consumer, value))
         else:

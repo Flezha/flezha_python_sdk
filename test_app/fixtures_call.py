@@ -85,8 +85,7 @@ class OrderPriced:
 order_priced = flezha.tasklet(OrderPriced, name="order_priced")
 
 
-@flezha.relay("call_orders")
-def call_orders_relay(c: flezha.Channels) -> None:
+def call_orders_graph(c: flezha.Channels) -> None:
     (
         c.input("in", codec="text")
         .into(stateless_step("order_ask", lambda value, ctx: ctx.emit(value)))
@@ -95,6 +94,11 @@ def call_orders_relay(c: flezha.Channels) -> None:
         .into(order_priced)
         .output("priced")
     )
+
+
+call_orders_relay = flezha.relay("call_orders")(call_orders_graph)
+#: ``call_orders`` as a session: ``order_ask``'s channel ends only in the call.
+call_orders_steps = flezha.relay("call_orders_steps", **LOOP_KNOBS)(call_orders_graph)
 
 
 async def _agent_turn(value: str, ctx: flezha.Ctx[None, Any]) -> None:
@@ -191,6 +195,7 @@ ALL: list[flezha.Relay] = [
     call_agent_steps,
     call_gateway_relay,
     call_tool_session_steps,
+    call_orders_steps,
 ]
 
 #: The ``relay_api`` fixtures.

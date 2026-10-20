@@ -148,6 +148,8 @@ class ChannelSpec:
     """
     consumers: list[ConsumerEdge] = field(default_factory=list)
     """The consumer edges the core derived. Empty until ``validate`` runs."""
+    derived_kind: str | None = None
+    """The kind the core derived, which ``kind`` (as declared) need not be."""
     overflow: str = "drop_nothing"
     retry_max: int | None = None
     retry_backoff_ms: int | None = None

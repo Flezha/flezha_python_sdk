@@ -62,6 +62,7 @@ def validate(spec: ClassSpec, core: Core) -> dict[str, Any]:
     for channel in derived["channels"]:
         declared = spec.channels[channel["index"]]
         declared.name = channel["name"]
+        declared.derived_kind = channel["kind"]
         # The runtime edges ARE the core's answer: it says which chains
         # produced a consumer and in what order, and the host attaches the
         # closures that chain declared.

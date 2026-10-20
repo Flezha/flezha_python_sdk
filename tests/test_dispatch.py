@@ -548,6 +548,20 @@ def test_a_steps_terminal_nothing_consumes_hands_its_value_to_the_core_as_the_ca
     ] == [("edge", 1, 0, 3)]
 
 
+@flezha.relay("steps_call_end", run={"steps": {"each": "per_input"}})
+def _steps_call_end(c: flezha.Channels) -> None:
+    asked = c.input("in").into(StepsProducer).named("ask")
+    asked.call("pricing", deadline_ms=1_000).map(lambda response: response.value).into(StepsC)
+
+
+def test_a_steps_terminal_ending_in_a_call_hands_the_core_no_edge_output(
+    fake_core: FakeCore,
+) -> None:
+    deps = deps_for(_steps_call_end, fake_core)
+    (effect,) = answered(work_activation(44, 5, factory="steps_call_end"), deps)["effects"]
+    assert [(o["target"], o["plugin_channel"]) for o in effect["outputs"]] == [("plugin", "ask")]
+
+
 def test_an_edge_payload_is_the_encoders_own_bytes(
     fake_core: FakeCore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
