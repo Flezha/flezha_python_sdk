@@ -219,15 +219,6 @@ class ClassSpec:
         """Whether an instance keeps its work anywhere: ``durable`` is not ``False``."""
         return _branch(self.durable) != "false"
 
-    @property
-    def records_effects(self) -> bool:
-        """Whether each invocation's output rides one effect record the
-        controller stamps at flush: under the effectively-once tier, and for a
-        durable steps class, whose stage commit names the record."""
-        flow = self.run.get("flow") if isinstance(self.run, dict) else None
-        exactly = flow.get("exactly") if isinstance(flow, dict) else None
-        return _branch(exactly) == "effectively_once" or (self.runs_in_steps and self.keeps_work)
-
 
 class Channels:
     """The fluent builder a relay's declaration function receives."""

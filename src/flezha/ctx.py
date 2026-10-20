@@ -42,19 +42,6 @@ O_contra = TypeVar("O_contra", contravariant=True)
 #: Metadata keys the runtime owns. A handler that sets one is refused.
 RESERVED_PREFIX = "flz."
 
-#: The identity stamps a non-tier keyed plugin emit carries.
-#:
-#: Under the effectively-once tier, and for a durable steps relay, the controller
-#: derives them at flush time from the effect record, so none ride on the frame;
-#: otherwise the frame is written straight to the wire and the stamps have
-#: nowhere else to come from.
-#: Byte-shape and condition both mirror the Java host, because an output
-#: deduplicates on them and two SDKs disagreeing about the shape is an output that
-#: silently stops deduplicating.
-CELL_STAMP = "flz.cell"
-SEQ_STAMP = "flz.seq"
-KEY_STAMP = "flz.key"
-
 #: The item index of an invocation that runs no work item; the core refuses its
 #: part.
 NO_ITEM = 2**32 - 1
@@ -137,7 +124,6 @@ class Ctx(Generic[S, O_contra]):
         "_offset",
         "_identity",
         "_ordinal",
-        "_emit_ordinal",
         "_compensating",
         "changes",
         "outputs",
@@ -184,11 +170,6 @@ class Ctx(Generic[S, O_contra]):
         self._offset = offset
         self._identity: bytes | None = None
         self._ordinal = 0
-        # Separate from the `stable_id` ordinal on purpose: one counts
-        # identifiers a handler asked for, the other counts frames it produced,
-        # and a handler that does one and not the other must not shift the
-        # sequence the output deduplicates on.
-        self._emit_ordinal = 0
         self._compensating = compensating
         self.cell_key = cell_key
         self.replay = replay
@@ -582,8 +563,6 @@ class Ctx(Generic[S, O_contra]):
         resolved = None if key is None else str(key)
         # `output` sets the encoder with the output, so a plugin channel has one.
         assert channel.sink_encode is not None
-        stamps = self._meta_list(metadata) + self._identity_stamps(channel, resolved)
-        self._emit_ordinal += 1
         return {
             "target": "plugin",
             "channel": None,
@@ -591,25 +570,9 @@ class Ctx(Generic[S, O_contra]):
             "plugin_channel": channel.name,
             "key": resolved,
             "event_time": None,
-            "metadata": stamps,
+            "metadata": self._meta_list(metadata),
             "payload": channel.sink_encode(value),
         }
-
-    def _identity_stamps(self, channel: ChannelSpec, key: str | None) -> list[tuple[str, str]]:
-        """The output identity a keyed plugin frame carries when the class
-        records no effects.
-
-        Applied after user metadata, which is what makes them unspoofable: the
-        reserved namespace is refused on the way in, and these are written on
-        the way out.
-        """
-        if not channel.keyed or self._spec.records_effects:
-            return []
-        return [
-            (CELL_STAMP, f"{self._relay}/{self._node.name}/{self.cell_key or ''}"),
-            (SEQ_STAMP, f"{self._change_seq}.{self._emit_ordinal}"),
-            (KEY_STAMP, key or ""),
-        ]
 
     def _meta_list(
         self, metadata: Mapping[str, Any] | Iterable[tuple[str, Any]] | None
