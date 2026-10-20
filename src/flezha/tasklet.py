@@ -69,6 +69,7 @@ class TaskletSettings(TypedDict, total=False):
     idle_ttl_seconds: int | None
     max_cells: int | None
     mailbox_capacity: int | None
+    max_timers_per_cell: int | None
     schema_version: int | None
     min_readable_schema_version: int | None
     state: type | None
@@ -120,6 +121,7 @@ class Tasklet(Generic[I, O]):
         "idle_ttl_seconds",
         "max_cells",
         "mailbox_capacity",
+        "max_timers_per_cell",
         "schema_version",
         "min_readable_schema_version",
         "state_type",
@@ -151,6 +153,7 @@ class Tasklet(Generic[I, O]):
         idle_ttl_seconds: int | None = None,
         max_cells: int | None = None,
         mailbox_capacity: int | None = None,
+        max_timers_per_cell: int | None = None,
         schema_version: int | None = None,
         min_readable_schema_version: int | None = None,
         state: type | None = None,
@@ -173,6 +176,7 @@ class Tasklet(Generic[I, O]):
         self.idle_ttl_seconds = idle_ttl_seconds
         self.max_cells = max_cells
         self.mailbox_capacity = mailbox_capacity
+        self.max_timers_per_cell = max_timers_per_cell
         self.schema_version = schema_version
         self.min_readable_schema_version = min_readable_schema_version
 

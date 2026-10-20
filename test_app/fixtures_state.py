@@ -1,6 +1,7 @@
 """Fixtures whose subject is persisted Cell state: the keyed upsert the
 bench and tier classes share, the counter and resume twins, schema evolution,
-and the effectively-once tier store with its checkpoint variants.
+the effectively-once tier store with its checkpoint variants, and the Cell
+timers.
 """
 
 from __future__ import annotations
@@ -429,3 +430,72 @@ def bench_checkpoint_relay(c: flezha.Channels) -> None:
     c.input("input", codec="text").on_full("drop_nothing").into(bench_checkpoint).keyed().output(
         "sink"
     )
+
+
+# -- session_timeout ---------------------------------------------------------
+#
+# The worked session-timeout shape (`cell_timers`): each input pushes the idle
+# deadline out, and the firing closes the session. Single-cell so the e2e's
+# crash-resume half exercises a durable Cell. The timeout is read from
+# `TIMER_TEST_TIMEOUT_MS` (the e2e sets it short).
+
+
+class SessionTimeout:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], bytes]) -> None:
+        ctx.change({"touched": value})
+        # A processing-time timer, because the answer to "nothing has arrived"
+        # cannot be an event-time one: nothing would advance the clock.
+        ctx.timer_after(_env_int("TIMER_TEST_TIMEOUT_MS", 1_000) or 1_000)
+
+    def on_timer(self, timer: dict[str, Any], ctx: flezha.Ctx[dict[str, Any], bytes]) -> None:
+        fired_at = int(timer["scheduled_at"])
+        ctx.change({"closed": fired_at})
+        ctx.emit(f"closed@{fired_at}".encode())
+
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
+        return {"touched": [], "closed_at": []}
+
+    def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
+        if "touched" in change:
+            state["touched"].append(change["touched"])
+        else:
+            state["closed_at"].append(change["closed"])
+
+
+session_timeout = flezha.tasklet(SessionTimeout, name="session_timeout_tasklet")
+
+
+@flezha.relay("session_timeout")
+def session_timeout_relay(c: flezha.Channels) -> None:
+    c.input("input", codec="text").into(session_timeout).output("kafka")
+
+
+# -- timer_cap ---------------------------------------------------------------
+#
+# The core's refusal of a Cell's timers when the item settles (`cell_timers`):
+# past the cap of two pending timers, or an event-time timer under a tasklet
+# whose clock is not event time. `event` asks for the event-time timer, a
+# number `n` for a processing-time one `n` hours ahead; the change follows.
+
+
+class TimerCap:
+    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], bytes]) -> None:
+        if value == "event":
+            ctx.timer_at_event_time(1)
+        else:
+            ctx.timer_after(int(value) * 3_600_000)
+        ctx.change({"touched": value})
+
+    def init_state(self, cell_key: str | None) -> dict[str, Any]:
+        return {"touched": []}
+
+    def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
+        state["touched"].append(change["touched"])
+
+
+timer_cap = flezha.tasklet(TimerCap, name="timer_cap_tasklet", max_timers_per_cell=2)
+
+
+@flezha.relay("timer_cap")
+def timer_cap_relay(c: flezha.Channels) -> None:
+    c.input("input", codec="text").into(timer_cap).output("kafka")

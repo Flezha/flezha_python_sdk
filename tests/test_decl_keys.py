@@ -85,6 +85,7 @@ keyed = flezha.tasklet(
     idle_ttl_seconds=60,
     max_cells=1024,
     mailbox_capacity=2048,
+    max_timers_per_cell=16,
     schema_version=3,
     min_readable_schema_version=1,
 )

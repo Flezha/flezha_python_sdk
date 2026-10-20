@@ -133,6 +133,7 @@ def _tasklet_json(spec: ClassSpec, node: TaskNode) -> dict[str, Any]:
             "compensate_overridden": task.compensate is not None,
             "clock": task.clock,
             "mailbox_capacity": task.mailbox_capacity,
+            "max_timers_per_cell": task.max_timers_per_cell,
             # A tasklet that folds no change has the empty Change type, so a
             # logical clock over it would never advance; a class that journals
             # nothing has it for every tasklet.

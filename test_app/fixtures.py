@@ -29,11 +29,13 @@ from fixtures_state import (
     resume_probe_relay,
     schema_evolution_v1_relay,
     schema_evolution_v2_relay,
+    session_timeout_relay,
     sleeping_counter_relay,
     stateful_counter_relay,
     store_input_relay,
     tier_chain_relay,
     tier_store_relay,
+    timer_cap_relay,
 )
 from fixtures_steps import (
     LOOP_KNOBS,
@@ -479,44 +481,6 @@ def wedge_probe_relay(c: flezha.Channels) -> None:
     c.input("input", codec="text").into(WedgeProbe).output("out")
 
 
-# -- session_timeout ---------------------------------------------------------
-#
-# The worked session-timeout shape (`cell_timers`): each input pushes the idle
-# deadline out, and the firing closes the session. Single-cell so the e2e's
-# crash-resume half exercises a durable Cell. The timeout is read from
-# `TIMER_TEST_TIMEOUT_MS` (the e2e sets it short).
-
-
-class SessionTimeout:
-    def run(self, value: str, ctx: flezha.Ctx[dict[str, Any], bytes]) -> None:
-        ctx.change({"touched": value})
-        # A processing-time timer, because the answer to "nothing has arrived"
-        # cannot be an event-time one: nothing would advance the clock.
-        ctx.timer_after(_env_int("TIMER_TEST_TIMEOUT_MS", 1_000) or 1_000)
-
-    def on_timer(self, timer: dict[str, Any], ctx: flezha.Ctx[dict[str, Any], bytes]) -> None:
-        fired_at = int(timer["scheduled_at"])
-        ctx.change({"closed": fired_at})
-        ctx.emit(f"closed@{fired_at}".encode())
-
-    def init_state(self, cell_key: str | None) -> dict[str, Any]:
-        return {"touched": [], "closed_at": []}
-
-    def apply_change(self, state: dict[str, Any], change: dict[str, Any]) -> None:
-        if "touched" in change:
-            state["touched"].append(change["touched"])
-        else:
-            state["closed_at"].append(change["closed"])
-
-
-session_timeout = flezha.tasklet(SessionTimeout, name="session_timeout_tasklet")
-
-
-@flezha.relay("session_timeout")
-def session_timeout_relay(c: flezha.Channels) -> None:
-    c.input("input", codec="text").into(session_timeout).output("kafka")
-
-
 # -- bounded_mailbox_{drop_nothing,drop_newest,drop_oldest} ------------------
 
 
@@ -785,6 +749,7 @@ ALL: list[flezha.Relay] = [
     poison_probe_relay,
     wedge_probe_relay,
     session_timeout_relay,
+    timer_cap_relay,
     *BOUNDED_MAILBOX,
     partition_pass_relay,
     dynamic_cell_relay,

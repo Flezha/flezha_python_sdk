@@ -148,7 +148,8 @@
       "dynamic_cell"
     ],
     "cell_timers": [
-      "session_timeout"
+      "session_timeout",
+      "timer_cap"
     ],
     "state_persistence": [
       "store_input",
