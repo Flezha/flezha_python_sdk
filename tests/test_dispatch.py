@@ -170,7 +170,7 @@ def test_a_key_request_answers_one_entry_per_payload(fake_core: FakeCore) -> Non
 
     result = answered(key_request(9, "routed_op", b'{"k": "a"}', b'{"k": "b"}'), deps)
     assert result["outcome"] == "prepared"
-    assert [answer["keys"] for answer in result["prepared"]] == [["a"], ["b"]]
+    assert [keys_answered(answer) for answer in result["prepared"]] == [["a"], ["b"]]
 
 
 def test_a_key_request_answers_the_keyed_consumer_behind_an_unkeyed_one(
@@ -189,7 +189,7 @@ def test_a_key_request_answers_the_keyed_consumer_behind_an_unkeyed_one(
 
     crossing = key_request(11, "split_keyed", b"a:1", b"drop")
     prepared = answered(crossing, deps_for(split_keyed, fake_core))["prepared"]
-    assert [answer["keys"] for answer in prepared] == [["a"], []]
+    assert [keys_answered(answer) for answer in prepared] == [["a"], []]
 
 
 def test_a_per_payload_refusal_does_not_fail_the_whole_crossing(fake_core: FakeCore) -> None:
@@ -212,7 +212,7 @@ def test_a_per_payload_refusal_does_not_fail_the_whole_crossing(fake_core: FakeC
     crossing = key_request(10, "picky_keys", b'{"k": "bad"}', b'{"k": "ok"}')
     answers = answered(crossing, deps)["prepared"]
     assert "no key" in answers[0]["error"]
-    assert answers[1]["keys"] == ["ok"]
+    assert keys_answered(answers[1]) == ["ok"]
 
 
 def test_a_live_state_read_answers_json(deps: DispatchDeps) -> None:
@@ -699,6 +699,11 @@ def test_an_unreadable_message_is_told_apart_from_a_handler_failure(
 # keyed, so a work activation names the cell it is handed to.
 
 
+def keys_answered(answer: dict[str, Any]) -> list[str]:
+    """Every key a prepare answer's values name, in answer order."""
+    return [key for value in answer["values"] for key in value["keys"]]
+
+
 def _plugin_payloads(result: dict[str, Any]) -> list[bytes]:
     return [
         output["payload"]
@@ -728,7 +733,7 @@ def test_a_merged_entry_source_is_keyed_on_its_mapped_value(fake_core: FakeCore)
         result = answered(
             key_request(71, "merged_input", b"AAPL:1", b"MSFT", channel=channel), deps
         )
-        assert [answer["keys"] for answer in result["prepared"]] == [["AAPL"], ["MSFT"]]
+        assert [keys_answered(answer) for answer in result["prepared"]] == [["AAPL"], ["MSFT"]]
 
 
 @flezha.relay("merged_edge")
@@ -766,20 +771,51 @@ def test_a_fan_of_three_runs_the_handler_three_times_under_one_effect(fake_core:
     assert _plugin_payloads(result) == [b"A:1", b"A:2", b"A:3"]
 
 
-def test_a_fan_then_key_by_answers_every_key_once_at_the_crossing(fake_core: FakeCore) -> None:
-    activation = key_request(81, "transform_chain", b"a:1,b:2,c:3", b"a:1,a:2", b"drop")
-    result = answered(activation, deps_for(fixtures.transform_chain_relay, fake_core))
-    assert [answer["keys"] for answer in result["prepared"]] == [["A", "B", "C"], ["A"], []]
-
-
-def test_a_cell_handed_a_fanned_payload_runs_only_the_values_keyed_to_it(
+def test_a_fan_then_key_by_answers_every_value_with_its_key_at_the_crossing(
     fake_core: FakeCore,
 ) -> None:
-    """The core hands the raw payload to every key the crossing answered, and
-    each cell re-applies the chain."""
-    deps = deps_for(fixtures.transform_chain_relay, fake_core)
-    result = answered(wire_work(82, "transform_chain", (0, b"a:1,b:2,c:3"), cell="B"), deps)
-    assert _plugin_payloads(result) == [b"B:2"]
+    activation = key_request(81, "transform_chain", b"a:1,b:2,c:3", b"a:1,a:2", b"drop")
+    result = answered(activation, deps_for(fixtures.transform_chain_relay, fake_core))
+    assert [keys_answered(answer) for answer in result["prepared"]] == [
+        ["A", "B", "C"],
+        ["A", "A"],
+        [],
+    ]
+
+
+@flezha.relay("decoded_once")
+def _decoded_once(c: flezha.Channels) -> None:
+    c.input("trades", decode=_counted_decode).flat_map(lambda trade: trade.split(",")).key_by(
+        fixture_support.prefix
+    ).into(fixtures.transform_label).keyed().output("transformed")
+
+
+_DECODED: list[bytes] = []
+
+
+def _counted_decode(raw: bytes) -> str:
+    _DECODED.append(raw)
+    return raw.decode()
+
+
+def test_a_keyed_entry_payload_is_decoded_and_transformed_once(fake_core: FakeCore) -> None:
+    """The crossing decodes the payload and runs the chain once; each Cell runs
+    its own prepared values with neither the entry decoder nor the edge."""
+    _DECODED.clear()
+    deps = deps_for(_decoded_once, fake_core)
+    (answer,) = answered(key_request(87, "decoded_once", b"a:1,a:2,b:3"), deps)["prepared"]
+    by_cell: dict[str, list[bytes]] = {}
+    for value in answer["values"]:
+        (key,) = value["keys"]
+        by_cell.setdefault(key, []).append(value["bytes"])
+
+    ran = {}
+    for cell, values in by_cell.items():
+        activation = wire_work(88, "decoded_once", (0, b"a:1,a:2,b:3"), cell=cell)
+        activation["items"][0].update(form="prepared", values=values)
+        ran[cell] = _plugin_payloads(answered(activation, deps))
+    assert ran == {"a": [b"a:1", b"a:2"], "b": [b"b:3"]}
+    assert _DECODED == [b"a:1,a:2,b:3"]
 
 
 @flezha.relay("fanned_static")
@@ -789,19 +825,17 @@ def _fanned_static(c: flezha.Channels) -> None:
     ).output()
 
 
-def test_a_fan_into_a_static_consumer_runs_each_value_only_where_its_router_names(
+def test_a_fan_into_a_static_consumer_answers_each_value_with_the_cells_its_router_names(
     fake_core: FakeCore,
 ) -> None:
     deps = deps_for(_fanned_static, fake_core)
     crossing = key_request(85, "fanned_static", b"a:1,b:2,x:3")
-    assert [answer["keys"] for answer in answered(crossing, deps)["prepared"]] == [["a", "b", "d"]]
-    # `c` is named by no value, so it runs nothing even when handed the payload.
-    assert {
-        cell: _plugin_payloads(
-            answered(wire_work(86, "fanned_static", (0, b"a:1,b:2,x:3"), cell=cell), deps)
-        )
-        for cell in ("a", "b", "c", "d")
-    } == {"a": [b"a:1"], "b": [b"b:2"], "c": [], "d": [b"x:3"]}
+    (answer,) = answered(crossing, deps)["prepared"]
+    assert [(value["keys"], codec.decode(value["bytes"])) for value in answer["values"]] == [
+        (["a"], "a:1"),
+        (["b"], "b:2"),
+        (["d"], "x:3"),
+    ]
 
 
 @flezha.relay("fanned_edge")
