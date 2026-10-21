@@ -195,7 +195,8 @@ def test_a_parameterised_builtin_starts_empty() -> None:
         flezha.tasklet(Totals, name="totals")
     )
     assert harness.state == {}
-    harness.apply_inputs(["x", "y", "x"])
+    for value in ["x", "y", "x"]:
+        harness.feed(value)
     assert harness.state == {"x": 2, "y": 1}
 
 
@@ -211,7 +212,8 @@ def test_an_unbuildable_state_class_is_refused_naming_it_and_init_state() -> Non
 def test_a_restore_folds_from_the_state_class_default() -> None:
     task = flezha.tasklet(SeesWords, name="sees_words")
     live: TaskletTestHarness[Seen] = TaskletTestHarness(task)
-    live.apply_inputs(["a", "b", "c"])
+    for value in ["a", "b", "c"]:
+        live.feed(value)
     restored: TaskletTestHarness[Seen] = TaskletTestHarness(task)
     assert restored.restore(changes=live.log) == live.state == Seen(words=["a", "b", "c"])
 
@@ -239,6 +241,7 @@ def test_a_typed_dict_state_and_change_are_plain_dicts() -> None:
     task = flezha.tasklet(Windows, name="windows")
     assert (task.state_codec, task.change_codec) == (None, None)
     harness: TaskletTestHarness[Window] = TaskletTestHarness(task)
-    harness.apply_inputs([1.5, 2.5])
+    for value in [1.5, 2.5]:
+        harness.feed(value)
     assert harness.state == {"prices": [1.5, 2.5]}
     assert harness.replay_equals()

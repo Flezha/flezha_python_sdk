@@ -23,7 +23,8 @@ def test_a_handler_is_testable_with_no_runtime_and_no_controller() -> None:
     def shout(value: str) -> str:
         return value.upper()
 
-    outcomes = TaskletTestHarness(echo).apply_inputs(["plain", "again"])
+    harness: TaskletTestHarness[None] = TaskletTestHarness(echo)
+    outcomes = [harness.feed(value) for value in ["plain", "again"]]
     assert [outcome.outputs for outcome in outcomes] == [["plain"], ["again"]]
     assert shout.tasklet is not None
     assert shout.tasklet("plain") == "PLAIN"
@@ -37,9 +38,10 @@ def test_the_harness_reports_state_changes_and_emits() -> None:
     assert outcome.outputs == [{"total": 4}]
 
 
-def test_apply_inputs_runs_them_in_order() -> None:
+def test_inputs_fed_one_by_one_run_in_order() -> None:
     harness: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
-    harness.apply_inputs(["a", "bb", "ccc"])
+    for value in ["a", "bb", "ccc"]:
+        harness.feed(value)
     assert harness.state == Counter(count=6, seen=["1", "2", "3"])
 
 
@@ -53,7 +55,8 @@ def test_construction_from_an_initial_state() -> None:
 
 def test_construction_from_a_restore_payload() -> None:
     source: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
-    source.apply_inputs(["a", "bb"])
+    for value in ["a", "bb"]:
+        source.feed(value)
     snapshot = source.snapshot()
 
     restored: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
@@ -62,7 +65,8 @@ def test_construction_from_a_restore_payload() -> None:
 
 def test_the_replay_gate_passes_on_a_pure_fold() -> None:
     harness: TaskletTestHarness[Counter] = TaskletTestHarness(count_up)
-    harness.apply_inputs(["a", "bb", "ccc"])
+    for value in ["a", "bb", "ccc"]:
+        harness.feed(value)
     assert harness.replay_equals()
 
 
@@ -84,7 +88,8 @@ def test_the_replay_gate_reports_both_states_on_a_mismatch() -> None:
 
     task = flezha.tasklet(Impure, name="impure")
     harness: TaskletTestHarness[dict[str, int]] = TaskletTestHarness(task)
-    harness.apply_inputs(["a", "b"])
+    for value in ["a", "b"]:
+        harness.feed(value)
     with pytest.raises(ReplayMismatch) as caught:
         harness.replay_equals()
     assert caught.value.live != caught.value.replayed

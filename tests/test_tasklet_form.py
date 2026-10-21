@@ -94,7 +94,8 @@ def test_a_renamed_class_keeps_its_name_and_its_state() -> None:
 
     assert (before.name, after.name, _record(renamed)["name"]) == ("tally", "tally", "tally")
     saved: TaskletTestHarness[dict[str, int]] = TaskletTestHarness(before)
-    saved.apply_inputs(["a", "b", "a"])
+    for value in ["a", "b", "a"]:
+        saved.feed(value)
     restarted: TaskletTestHarness[dict[str, int]] = TaskletTestHarness(after)
     assert restarted.restore(changes=saved.log) == {"a": 2, "b": 1}
 

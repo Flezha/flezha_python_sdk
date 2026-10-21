@@ -255,10 +255,6 @@ class TaskletTestHarness(Generic[S]):
         self._core.finish_input()
         return outcome
 
-    def apply_inputs(self, values: Iterable[Any], *, now: int = 0) -> list[Outcome]:
-        """Run the tasklet against several inputs, in order."""
-        return [self.feed(value, now=now) for value in values]
-
     def fire_timer(self, kind: str, scheduled_at: int) -> Outcome:
         """Fire a per-cell timer. ``now`` IS the scheduled time, as it is live."""
         if self._task.on_timer is None:

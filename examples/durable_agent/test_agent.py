@@ -29,7 +29,8 @@ def test_a_turn_is_recorded_and_answered() -> None:
 def test_the_transcript_survives_a_restart() -> None:
     """What the fold produces from the log IS what a restart produces."""
     h = harness()
-    h.apply_inputs(["first", "second", "book table-9"])
+    for value in ["first", "second", "book table-9"]:
+        h.feed(value)
     assert h.replay_equals()
     assert h.state.booked == ["table-9"]
 
@@ -62,7 +63,8 @@ def test_compensation_cancels_what_the_turn_booked() -> None:
 
 def test_a_session_keeps_its_goal_and_turns_and_records_nothing_on_done() -> None:
     h: TaskletTestHarness[Session] = TaskletTestHarness(session_turn)
-    h.apply_inputs([{"goal": "book a table"}, "hello", "again"])
+    for value in [{"goal": "book a table"}, "hello", "again"]:
+        h.feed(value)
     assert (h.state.goal, h.state.turns) == ("book a table", 2)
     assert h.replay_equals()
     ending = h.feed("done")
