@@ -304,15 +304,7 @@ class TaskletTestHarness(Generic[S]):
 
         The same call the dispatcher answers ``restore_fold`` with.
         """
-        state = fold_restore(
-            self._task,
-            {
-                "snapshot": {"bytes": snapshot} if snapshot is not None else None,
-                "changes": [{"bytes": body} for body in changes],
-            },
-            self._cell_key,
-            self._task.name,
-        )
+        state = self._fold(snapshot, changes)
         self._cell.state = state
         return state
 
@@ -329,18 +321,24 @@ class TaskletTestHarness(Generic[S]):
         for a declared class but not for a plain dict — and an ``apply_change``
         that is not a pure fold.
         """
-        replayed = fold_restore(
-            self._task,
-            {"snapshot": None, "changes": [{"bytes": body} for body in self.log]},
-            self._cell_key,
-            self._task.name,
-        )
+        replayed = self._fold(None, self.log)
         live = self.state
         if replayed != live:
             raise ReplayMismatch(self._task.name, live, replayed)
         return True
 
     # -- internals -----------------------------------------------------------
+
+    def _fold(self, snapshot: bytes | None, changes: Iterable[bytes]) -> S:
+        return fold_restore(
+            self._task,
+            {
+                "snapshot": {"bytes": snapshot} if snapshot is not None else None,
+                "changes": [{"bytes": body} for body in changes],
+            },
+            self._cell_key,
+            self._task.name,
+        )
 
     def _run(self, now: int, replay: bool, body: Any, hook: str) -> Outcome:
         activation = {
