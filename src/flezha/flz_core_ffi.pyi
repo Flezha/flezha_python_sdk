@@ -1,4 +1,4 @@
-"""Type stub for the compiled veneer (``flz_core_ffi/src/python_glue.rs``).
+"""Type stub for the compiled veneer (``crates/flz_core_ffi/src/python_glue.rs``).
 
 The package ships ``py.typed``, so the native module needs a stub or every call
 through it is untyped — which would quietly hollow out the checking the rest of

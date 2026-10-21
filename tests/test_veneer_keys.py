@@ -10,7 +10,7 @@ READERS = ("dispatch.py", "cell_state.py")
 
 
 def test_every_record_key_read_is_one_the_veneer_writes():
-    shape = contract.member("flz_core_ffi/src/veneer/shape.rs").read_text()
+    shape = contract.member("crates/flz_core_ffi/src/veneer/shape.rs").read_text()
     written = set(re.findall(r'Key::(?:flat|of)\("([a-z_]+)"', shape))
     read = {
         key

@@ -45,7 +45,7 @@ COPY examples/echo/*.py /app/
 USER runner
 WORKDIR /app
 
-ENV FLEZHA_SOCKET_FILES_PATH=/flezha/app_data/sockets
+ENV FLEZHA_SOCKET_FILES_PATH=/flezha/storage/app/sockets
 
 # -u so the runner's own lines reach `docker compose logs` as they happen.
 ENTRYPOINT ["python", "-u", "/app/runner.py"]

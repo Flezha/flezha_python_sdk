@@ -109,7 +109,7 @@ maturin build --release --out dist --features python-extension,python-abi3 --off
 It needs a Rust toolchain. Build the controller's image from the repository root:
 
 ```sh
-docker build -f docker/prod/Dockerfile.controller -t flezha/flezha:0.1.0 .
+docker build -f deploy/docker/prod/Dockerfile.controller -t flezha/flezha:0.1.0 .
 ```
 
 Then, in this folder, install the wheel into `vendor/` instead of the
