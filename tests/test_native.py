@@ -248,6 +248,16 @@ def test_the_payload_view_is_a_buffer_and_copies_only_on_request() -> None:
     assert view.tobytes() == body
 
 
+def test_a_simple_buffer_consumer_releases_the_view_safely() -> None:
+    """zlib and hashlib ask for a plain buffer with no format string."""
+    import hashlib
+    import zlib
+
+    body = zlib.compress(b"payload")
+    assert zlib.decompress(_view_of(body)) == b"payload"
+    assert hashlib.sha256(_view_of(body)).digest() == hashlib.sha256(body).digest()
+
+
 def test_a_released_view_names_the_rule_rather_than_serving_stale_bytes() -> None:
     view = _view_of(b"\x01\x02")
     view.release()
