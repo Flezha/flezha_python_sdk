@@ -1,7 +1,7 @@
 # flezha
 
 The Flezha Python SDK — a poll host over `flz_core`, the runner kernel the
-Rust, Java, Node and Ruby SDKs also drive.
+Rust, Java, Node, Ruby, PHP, Elixir and Go SDKs also drive.
 
 **Support tier:**
 [tier 2](https://github.com/flezha/flezha/blob/main/docs/public/publishing/maturity.md#sdk-python),
