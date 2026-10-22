@@ -41,6 +41,13 @@ def _until(predicate: Any, timeout: float = 5.0) -> bool:
     return False
 
 
+def _stop(core: FakeCore, pool: Any) -> None:
+    """Stop as the runner does: the core says it is shutting down first, so the
+    pool leaves on its word rather than waiting out the drain bound."""
+    core.shutdown()
+    pool.stop()
+
+
 # ---------------------------------------------------------------------------
 # The pool: the core's governor decides, this host spawns
 # ---------------------------------------------------------------------------
@@ -79,7 +86,7 @@ def test_a_workload_that_never_starves_runs_on_the_base_pool() -> None:
         # The governor asked for nothing more, so nothing is grown.
         assert pool.size == 4  # three workers plus the supervisor
     finally:
-        pool.stop()
+        _stop(core, pool)
 
 
 def test_a_grown_seat_serves_and_retires_once_the_work_stops() -> None:
@@ -110,7 +117,7 @@ def test_a_grown_seat_serves_and_retires_once_the_work_stops() -> None:
         assert core.seats_left == 3, "every retired worker gives its seat back"
     finally:
         release.set()
-        pool.stop()
+        _stop(core, pool)
 
 
 def test_a_worker_that_dies_gives_its_seat_back_and_a_base_seat_replaces_it() -> None:
@@ -134,7 +141,7 @@ def test_a_worker_that_dies_gives_its_seat_back_and_a_base_seat_replaces_it() ->
         # A base worker outlives the retire time a grown one leaves after.
         assert not _until(lambda: pool.size < 2, timeout=0.5)
     finally:
-        pool.stop()
+        _stop(core, pool)
 
 
 def test_an_idle_runner_writes_the_cores_notices_on_each_supervisor_answer(
@@ -147,7 +154,7 @@ def test_an_idle_runner_writes_the_cores_notices_on_each_supervisor_answer(
             core.notices.append(("warn", "flz_core::control_unit", "Connection attempt 2 failed"))
             assert _until(lambda: "Connection attempt 2 failed" in caplog.text, timeout=2)
     finally:
-        pool.stop()
+        _stop(core, pool)
 
 
 def test_a_grown_seat_rescues_a_block_policy_wedge_on_a_base_pool_of_one() -> None:
@@ -186,7 +193,7 @@ def test_a_grown_seat_rescues_a_block_policy_wedge_on_a_base_pool_of_one() -> No
         assert _until(lambda: len(core.completed) == 2, timeout=10)
     finally:
         gate.set()
-        pool.stop()
+        _stop(core, pool)
         watcher.join(timeout=2)
 
 
@@ -215,7 +222,7 @@ def test_the_main_thread_is_never_a_dispatch_thread() -> None:
         assert _until(lambda: len(core.completed) == 5)
         assert threading.main_thread().ident not in core.dispatch_threads
     finally:
-        pool.stop()
+        _stop(core, pool)
 
 
 @pytest.mark.parametrize("kind", ["thread", "asyncio"])
@@ -235,7 +242,7 @@ def test_ordering_is_identical_under_either_executor(kind: str) -> None:
         served = [_payload_of(result) for result in core.completed]
         assert served == payloads
     finally:
-        pool.stop()
+        _stop(core, pool)
 
 
 def test_the_asyncio_executor_polls_on_a_real_thread_and_completes_on_the_loop() -> None:
@@ -251,7 +258,7 @@ def test_the_asyncio_executor_polls_on_a_real_thread_and_completes_on_the_loop()
         assert core.dispatch_threads <= loop_threads
         assert core.polls > 0
     finally:
-        pool.stop()
+        _stop(core, pool)
 
 
 @pytest.mark.parametrize("kind", ["thread", "asyncio"])
@@ -276,7 +283,7 @@ def test_an_async_handler_is_driven_under_either_executor(kind: str) -> None:
         assert _until(lambda: len(core.completed) == 4)
         assert sorted(_payload_of(r) for r in core.completed) == ["V0", "V1", "V2", "V3"]
     finally:
-        pool.stop()
+        _stop(core, pool)
 
 
 @pytest.mark.parametrize("kind", ["thread", "asyncio"])
