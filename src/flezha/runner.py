@@ -208,35 +208,38 @@ class Runner:
         own the waiting, and so the startup order is something a test can
         observe rather than a comment.
         """
-        self._claim_slot()
-        try:
-            # Before anything else: a native library built against a different
-            # activation schema is refused here, with no controller connection
-            # attempted.
-            self._core = core or Core.create()
-            determinism.install()
-            for relay in self._relays:
-                self._declare(relay)
-            self._core.start(self._namespace)
-            self._observe_shutdown()
+        # A close from another thread waits until the start is done, then
+        # releases everything it built.
+        with self._closing:
+            self._claim_slot()
+            try:
+                # Before anything else: a native library built against a
+                # different activation schema is refused here, with no
+                # controller connection attempted.
+                self._core = core or Core.create()
+                determinism.install()
+                for relay in self._relays:
+                    self._declare(relay)
+                self._core.start(self._namespace)
+                self._observe_shutdown()
 
-            self._executor = self._build_executor()
-            self._executor.start()
-            self._started = True
-        except BaseException:
-            # The core holds what it said while connecting until a take; no
-            # supervisor is left to take it.
-            if self._core is not None:
-                log_notices(self._core.take_notices())
-            self._release_slot()
-            raise
+                self._executor = self._build_executor()
+                self._executor.start()
+                self._started = True
+            except BaseException:
+                # The core holds what it said while connecting until a take; no
+                # supervisor is left to take it.
+                if self._core is not None:
+                    log_notices(self._core.take_notices())
+                self._release_slot()
+                raise
 
-        _log.info(
-            "runner up on namespace %s: %s tier, %s",
-            self._namespace,
-            build_tier(),
-            self._executor.describe(),
-        )
+            _log.info(
+                "runner up on namespace %s: %s tier, %s",
+                self._namespace,
+                build_tier(),
+                self._executor.describe(),
+            )
         return self
 
     def _claim_slot(self) -> None:
