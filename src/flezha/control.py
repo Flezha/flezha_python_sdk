@@ -116,8 +116,9 @@ class Control:
         return self.call("PluginManager.disable", name, {})
 
     def list_relays(self) -> Any:
-        """The relays in this namespace, one row each: its id, health, runner and
-        node, and a partition group's width and members."""
+        """The relays in this namespace across the cluster: ``rows``, one row each
+        (its id, health, runner and node, and a partition group's width and
+        members), and ``unreachable``, the controllers that did not answer."""
         return self.call("Relay.list")
 
     def list_plugins(self) -> Any:
