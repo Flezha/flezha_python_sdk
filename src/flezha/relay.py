@@ -105,6 +105,7 @@ Run = Literal["flow", "steps"] | _Flow | _Steps
 
 class KeptSettings(TypedDict, total=False):
     sleep_after: int | Literal[False]
+    keep_finished: int | bool
 
 
 class _Local(TypedDict):

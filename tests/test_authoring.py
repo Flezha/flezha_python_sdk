@@ -477,6 +477,8 @@ def test_a_flow_class_may_keep_its_work_remote() -> None:
         (None, None),
         (False, False),
         ({"local": {"sleep_after": False}}, {"local": {"sleep_after": False}}),
+        ({"remote": {"keep_finished": 24}}, {"remote": {"keep_finished": 24}}),
+        ({"local": {"keep_finished": True}}, {"local": {"keep_finished": True}}),
     ],
 )
 def test_the_durability_reaches_the_declaration_as_written(durable: Any, written: Any) -> None:

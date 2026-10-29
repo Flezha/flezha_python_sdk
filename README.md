@@ -38,7 +38,10 @@ flezha.create_runner("default").register_factory(echo_relay).run()
   `{"steps": {"each": "per_input", "on_failure": "keep_progress"}}`), `durable`
   (`False`, `"local"`, the default, or `"remote"`, with `sleep_after` in
   milliseconds; by default a flow never sleeps and a steps class sleeps after
-  six hours), `max_duration_ms` and `description`. The
+  six hours, and with `keep_finished`: a finished instance keeps nothing unless
+  it gives hours, or `True` for the controller's window,
+  `FLEZHA_STEPS_RETENTION_HOURS`, 72 by default, so `flz relay info` can still
+  show its Cells and result), `max_duration_ms` and `description`. The
   core refuses a setting under a parent that does not carry it, naming both.
 - **Preview an output while it is produced.** `ctx.part(value)` sends a
   listener a preview of the tasklet's output while `run` is still working; an
