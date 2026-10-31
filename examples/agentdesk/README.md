@@ -103,7 +103,7 @@ checkout's core, since the core has no release tag yet either:
 ```sh
 pip install "maturin>=1.9,<2.0"
 maturin build --release --out dist --features python-extension,python-abi3 --offline \
-  --config "patch.\"https://github.com/flezha/flezha\".flz_core_ffi.path=\"$PWD/../../flz_core_ffi\""
+  --config "patch.\"https://github.com/flezha/flezha\".flz_core_ffi.path=\"$PWD/../../crates/flz_core_ffi\""
 ```
 
 It needs a Rust toolchain. Build the controller's image from the repository root:
