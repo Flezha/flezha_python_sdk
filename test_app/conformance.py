@@ -256,12 +256,15 @@ class Interpreter:
 
 
 def fixture_path() -> Path:
-    """The fixture, from wherever the app was launched.
+    """The fixture, from wherever the app was launched: a member of the
+    contract set, found by the suite's own resolver in the core's tree around
+    a checkout inside it, or in `contract/` beside a standalone package."""
+    tests = str(Path(__file__).resolve().parents[1] / "tests")
+    if tests not in sys.path:
+        sys.path.append(tests)
+    import contract
 
-    The drill runs it from the repository root and a developer from the app's
-    own directory, so the app's own location settles it.
-    """
-    return Path(__file__).resolve().parents[3] / FIXTURE
+    return contract.member(FIXTURE)
 
 
 def rows() -> list[dict[str, str]]:
