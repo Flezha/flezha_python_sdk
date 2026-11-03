@@ -96,9 +96,9 @@ builds the images and deploys `k8s/agentdesk.yaml` on k3s.
 
 ## Building from a checkout
 
-The package is not on PyPI yet, and the controller's image `flezha/flezha:0.1.0` has to
-be built. From the SDK's folder, `../..`, build a wheel with maturin, pointed at your
-checkout's core, since the core has no release tag yet either:
+The controller's image `flezha/flezha:0.1.0` has to be built. To run the project against
+a Flezha checkout instead of the published package, first build a wheel with maturin from
+the SDK's folder, `../..`, pointed at your checkout's core rather than the released one:
 
 ```sh
 pip install "maturin>=1.9,<2.0"
@@ -118,8 +118,6 @@ Then, in this folder, install the wheel into `vendor/` instead of the
 ```sh
 python3 -m pip install --target vendor ../../dist/flezha-0.1.0-*.whl
 ```
-
-Once the package is published, the step goes away.
 
 ## Where to go next
 

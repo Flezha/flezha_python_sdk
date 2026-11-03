@@ -1,9 +1,9 @@
 # The echo runner: the three files of examples/echo, and the SDK
 # they need.
 #
-# Two stages, because the flezha wheel is BUILT here rather than installed.
-# The package is not on PyPI yet. When it is published, delete the wheel stage
-# and install the package directly instead:
+# Two stages, because the flezha wheel is BUILT here from this checkout rather
+# than installed. To use the published package instead, delete the wheel stage
+# and install it directly:
 #
 #     RUN pip install --no-cache-dir flezha==0.1.0
 #

@@ -68,7 +68,7 @@ flezha.create_runner("default").register_factory(echo_relay).run()
 pip install flezha
 ```
 
-`flezha` 0.1.0 is not on PyPI yet. Until it is, build a wheel from a checkout as
+To work on the SDK itself, build a wheel from a checkout as
 [`examples/echo`](examples/echo/README.md#building-from-a-checkout) shows.
 Optional extras: `flezha[pydantic]`, `flezha[attrs]`, `flezha[uvloop]`; the SDK
 imports none of them unconditionally.

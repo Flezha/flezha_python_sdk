@@ -48,9 +48,9 @@ docker compose down -v
 ```
 
 **The first build compiles the SDK's native extension from source, so it takes
-a few minutes.** The `flezha` package is not on PyPI yet; once it is, the
-build stage in `Dockerfile` is deleted and replaced by one `pip install` line,
-and the first run becomes immediate.
+a few minutes.** The image builds the `flezha` wheel from this checkout rather
+than installing the published package; replacing the build stage in
+`Dockerfile` with one `pip install` line makes the first run immediate.
 
 ## Without Docker
 
