@@ -23,8 +23,8 @@ env:
   # The core release every tier is proven against. One tag decides the
   # extension module, the fake controller and the contract set, so a change to
   # it is one line.
-  CORE_VERSION: "0.1.0"
-  CORE_RELEASE: https://github.com/flezha/flezha/releases/download/v0.1.0
+  CORE_VERSION: "0.1.1"
+  CORE_RELEASE: https://github.com/flezha/flezha/releases/download/v0.1.1
   CARGO_TERM_COLOR: always
 
 jobs:

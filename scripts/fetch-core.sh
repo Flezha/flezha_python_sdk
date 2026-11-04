@@ -7,7 +7,7 @@
 # manifest, so obtaining them is a download and a checksum rather than a
 # checkout and a Rust toolchain, and nothing is used before its digest matches.
 #
-#   scripts/fetch-core.sh --from <dir|url> [--version 0.1.0] [--python <interpreter>]
+#   scripts/fetch-core.sh --from <dir|url> [--version 0.1.1] [--python <interpreter>]
 #
 # `--from` is a staged release directory (what `scripts/build-dist.sh
 # --stage-release` writes in the core's tree) or the URL a GitHub release
@@ -23,7 +23,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 FROM=""
-VERSION="0.1.0"
+VERSION="0.1.1"
 PYTHON="python3"
 while [[ $# -gt 0 ]]; do
   case "$1" in

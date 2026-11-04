@@ -5,7 +5,7 @@
 # than installed. To use the published package instead, delete the wheel stage
 # and install it directly:
 #
-#     RUN pip install --no-cache-dir flezha==0.1.0
+#     RUN pip install --no-cache-dir flezha==0.1.1
 #
 # The wheel is abi3, built against the 3.11 floor and valid on every later
 # interpreter, so the build stage's Python version does not have to match the

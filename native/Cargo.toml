@@ -8,7 +8,7 @@
 # dependency line and nothing else.
 [package]
 name = "flezha-python-native"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 publish = false
 
@@ -40,4 +40,4 @@ python-abi3 = ["veneer/python-abi3"]
 [dependencies]
 # Renamed, because a dependency spelled like this crate's own lib target is
 # ambiguous at the glob below.
-veneer = { package = "flz_core_ffi", version = "0.1.0", git = "https://github.com/flezha/flezha", tag = "v0.1.0", default-features = false }
+veneer = { package = "flz_core_ffi", version = "0.1.1", git = "https://github.com/flezha/flezha", tag = "v0.1.1", default-features = false }
